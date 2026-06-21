@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from phrasplit import split_with_offsets
 
 from spinetx.models import Chunk, Placeholder, Record
+from spinetx.placeholders import collect_tokens
 
 __all__ = [
     "ProseSpan",
@@ -65,9 +66,9 @@ class ProseSpan:
 
     ``text`` is the prose with names/tags already replaced by placeholder
     tokens. ``placeholders`` lists every placeholder that appears anywhere in
-    ``text``; they are attached to *each* record derived from this span so the
-    validator and build steps can restore them. ``protected_terms`` is the
-    subset of names relevant to this span (for the ``protected_terms`` field).
+    ``text``. Segmentation filters that list per record so each record carries
+    only placeholders visible in its own source. ``protected_terms`` is the
+    subset of names relevant to this span.
     """
 
     text: str
@@ -97,8 +98,8 @@ def segment_spans(spans: list[ProseSpan], *, language: str = "en") -> list[Recor
     """Segment every span into one :class:`Record` per sentence.
 
     Empty/whitespace-only sentences are dropped so a span never yields a blank
-    record. Each record inherits the full placeholder + protected-term list of
-    its parent span (the contract lists them per record).
+    record. Each record carries only placeholders and protected terms visible
+    in that record's source text.
     """
     records: list[Record] = []
     counter = 0
@@ -110,13 +111,20 @@ def segment_spans(spans: list[ProseSpan], *, language: str = "en") -> list[Recor
             cleaned = sentence.strip()
             if not cleaned:
                 continue
+            visible_tokens = set(collect_tokens(cleaned))
+            record_placeholders = [
+                p for p in span.placeholders if p.token in visible_tokens
+            ]
+            record_terms = [
+                p.original for p in record_placeholders if p.kind == "name"
+            ]
             counter += 1
             records.append(
                 Record(
                     id=f"{counter:06d}",  # provisional; repack reassigns
                     source=cleaned,
-                    protected_terms=list(span.protected_terms),
-                    placeholders=list(span.placeholders),
+                    protected_terms=record_terms,
+                    placeholders=record_placeholders,
                 )
             )
     return records

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from spinetx.chunking import ProseSpan, pack_chunks, segment_spans, spans_to_chunks
-from spinetx.models import Record
+from spinetx.models import Placeholder, Record
 
 
 def _rec(id_: str, source: str) -> Record:
@@ -31,8 +31,6 @@ def test_segment_drops_blank_sentences():
 
 
 def test_segment_carries_placeholders_and_terms():
-    from spinetx.models import Placeholder
-
     spans = [
         ProseSpan(
             text="__NAME_001__ met Bob.",
@@ -47,6 +45,51 @@ def test_segment_carries_placeholders_and_terms():
     rec = records[0]
     assert rec.protected_terms == ["Alice"]
     assert rec.placeholders[0].original == "Alice"
+
+
+def test_segment_filters_placeholders_to_visible_record_tokens():
+    spans = [
+        ProseSpan(
+            text=(
+                "__TAG_001__First__TAG_002__ sentence. "
+                "Second sentence without tags."
+            ),
+            placeholders=[
+                Placeholder(token="__TAG_001__", original="<i>", kind="tag"),
+                Placeholder(token="__TAG_002__", original="</i>", kind="tag"),
+            ],
+            protected_terms=[],
+        )
+    ]
+
+    records = segment_spans(spans, language="en")
+
+    assert [p.token for p in records[0].placeholders] == [
+        "__TAG_001__",
+        "__TAG_002__",
+    ]
+    assert records[1].source == "Second sentence without tags."
+    assert records[1].placeholders == []
+
+
+def test_segment_protected_terms_follow_visible_name_tokens():
+    spans = [
+        ProseSpan(
+            text="__NAME_001__ arrived. Nobody mentioned the other name.",
+            placeholders=[
+                Placeholder(token="__NAME_001__", original="Alice", kind="name"),
+                Placeholder(token="__NAME_002__", original="Bob", kind="name"),
+            ],
+            protected_terms=["Alice", "Bob"],
+        )
+    ]
+
+    records = segment_spans(spans, language="en")
+
+    assert records[0].protected_terms == ["Alice"]
+    assert [p.token for p in records[0].placeholders] == ["__NAME_001__"]
+    assert records[1].protected_terms == []
+    assert records[1].placeholders == []
 
 
 def test_pack_assigns_contract_ids():

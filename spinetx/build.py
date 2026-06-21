@@ -13,6 +13,8 @@ caller is expected to run :func:`spinetx.validate.validate_project` first.
 
 from __future__ import annotations
 
+import re
+import zipfile
 from pathlib import Path
 
 from spinetx.chunking import ProseSpan
@@ -27,6 +29,8 @@ __all__ = [
     "build_project",
     "records_to_span_text",
 ]
+
+_UNRESOLVED_TOKEN_RE = re.compile(rb"__(?:TAG|NAME)_\d+__|__SPANTX_\d+__")
 
 
 class BuildError(Exception):
@@ -52,6 +56,22 @@ def _load_translated(project: Project) -> dict[str, TranslatedChunk]:
             ) from exc
         out[tc.chunk_id] = tc
     return out
+
+
+def _assert_no_unresolved_tokens_in_epub(path: Path) -> None:
+    """Raise BuildError if generated EPUB XHTML/HTML still has internal tokens."""
+    with zipfile.ZipFile(path) as zf:
+        for name in zf.namelist():
+            if not name.lower().endswith((".xhtml", ".html")):
+                continue
+            data = zf.read(name)
+            match = _UNRESOLVED_TOKEN_RE.search(data)
+            if match is None:
+                continue
+            token = match.group(0).decode("ascii", "replace")
+            raise BuildError(
+                f"built EPUB contains unresolved placeholder {token} in {name}"
+            )
 
 
 def records_to_span_text(span: ProseSpan, targets: list[str]) -> str:
@@ -151,6 +171,7 @@ def _build_epub(project: Project) -> BuildResult:
     out_path = _output_path(project, source, suffix=".epub")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     build_epub(str(source), str(out_path), extraction, replacements)
+    _assert_no_unresolved_tokens_in_epub(out_path)
     return BuildResult(output_path=out_path, format="epub", span_count=len(spans))
 
 

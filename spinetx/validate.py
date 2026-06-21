@@ -23,7 +23,6 @@ exits non-zero on any mandatory failure.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,7 +30,7 @@ from pathlib import Path
 from spinetx.config import Project
 from spinetx.context import GlossaryEntry, TranslationContext, load_context
 from spinetx.models import Chunk, Placeholder, TranslatedChunk
-from spinetx.placeholders import TOKEN_RE
+from spinetx.placeholders import TOKEN_RE, collect_tokens
 
 __all__ = [
     "Severity",
@@ -113,8 +112,6 @@ class ValidationReport:
 
 # --- per-pair validation -----------------------------------------------------
 
-_TOKEN_ORIGINAL_RE = re.compile(r"__(?:NAME|TAG)_\d+__")
-
 
 def _load_source_chunk(path: Path) -> Chunk:
     return Chunk.model_validate_json(path.read_text("utf-8"))
@@ -157,9 +154,9 @@ def _check_placeholders_preserved(
 ) -> list[Finding]:
     """Ensure every placeholder token in the source appears unchanged in target."""
     findings: list[Finding] = []
-    src_tokens = {p.token for p in source_rec.placeholders}
+    src_tokens = set(collect_tokens(source_rec.source))
     tgt_text = target_rec.target
-    tgt_tokens = set(_TOKEN_ORIGINAL_RE.findall(tgt_text))
+    tgt_tokens = set(collect_tokens(tgt_text))
     missing = src_tokens - tgt_tokens
     for tok in sorted(missing):
         findings.append(
@@ -204,8 +201,11 @@ def _check_protected_names_preserved(
     matches the spec.
     """
     findings: list[Finding] = []
+    visible_tokens = set(collect_tokens(source_rec.source))
     name_tokens = {
-        p.token: p.original for p in source_rec.placeholders if p.kind == "name"
+        p.token: p.original
+        for p in source_rec.placeholders
+        if p.kind == "name" and p.token in visible_tokens
     }
     tgt_text = target_rec.target
     for token, original in name_tokens.items():

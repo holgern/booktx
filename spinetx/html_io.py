@@ -205,35 +205,23 @@ def _extract_block_span(
 
 def _translatable_blocks(soup: BeautifulSoup) -> list[Tag]:
     blocks: list[Tag] = []
-    for name in TRANSLATABLE_BLOCK_TAGS:
-        for tag in soup.find_all(name):
-            # Skip blocks that live inside a skipped ancestor.
-            if any(p.name in SKIP_BLOCK_TAGS for p in tag.parents):
-                continue
-            # Skip blocks that contain a block-level child (they are not leaf
-            # prose containers); their inner blocks are extracted separately.
-            has_block_child = any(
-                isinstance(c, Tag)
-                and c.name in _BLOCK_TAG_UNIVERSE
-                and c.name not in TRANSLATABLE_BLOCK_TAGS
-                for c in tag.children
-            )
-            if has_block_child:
-                continue
-            blocks.append(tag)
-
-    # Sort by document order using source position where available.
-    def _key(t: Tag) -> int:
-        try:
-            sourceline = getattr(t, "sourceline", None)
-            sourcepos = getattr(t, "sourcepos", None)
-            if sourceline is not None:
-                return int(sourceline) * 10000 + int(sourcepos or 0)
-        except Exception:  # noqa: BLE001
-            pass
-        return 0
-
-    blocks.sort(key=_key)
+    for tag in soup.find_all(True):
+        if tag.name not in TRANSLATABLE_BLOCK_TAGS:
+            continue
+        # Skip blocks that live inside a skipped ancestor.
+        if any(p.name in SKIP_BLOCK_TAGS for p in tag.parents):
+            continue
+        # Skip blocks that contain a block-level child (they are not leaf
+        # prose containers); their inner blocks are extracted separately.
+        has_block_child = any(
+            isinstance(c, Tag)
+            and c.name in _BLOCK_TAG_UNIVERSE
+            and c.name not in TRANSLATABLE_BLOCK_TAGS
+            for c in tag.children
+        )
+        if has_block_child:
+            continue
+        blocks.append(tag)
     return blocks
 
 

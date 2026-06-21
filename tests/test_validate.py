@@ -23,7 +23,7 @@ def _src_chunk(chunk_id: str = "0001") -> Chunk:
         records=[
             Record(
                 id=f"{chunk_id}-000001",
-                source="Alice looked at Mr. Smith here.",
+                source="__NAME_001__ looked at __NAME_002__ here.",
                 protected_terms=["Alice", "Mr. Smith"],
                 placeholders=[
                     Placeholder(token="__NAME_001__", original="Alice", kind="name"),
@@ -130,6 +130,74 @@ def test_rule_placeholder_added(tmp_path: Path):
     report = validate_project(load_project(proj_path))
     assert "placeholder_added" in {f.rule for f in report.findings}
     assert not report.passed
+
+
+def test_placeholder_metadata_only_tokens_do_not_require_target_tokens(tmp_path: Path):
+    chunk = Chunk(
+        chunk_id="0001",
+        source_language="en",
+        target_language="de",
+        records=[
+            Record(
+                id="0001-000001",
+                source="No visible placeholder here.",
+                protected_terms=[],
+                placeholders=[
+                    Placeholder(token="__TAG_001__", original="<i>", kind="tag"),
+                    Placeholder(token="__TAG_002__", original="</i>", kind="tag"),
+                ],
+            )
+        ],
+    )
+    translated = tmp_path / "0001.json"
+    translated.write_text(
+        json.dumps(
+            {
+                "chunk_id": "0001",
+                "records": [
+                    {
+                        "id": "0001-000001",
+                        "target": "Hier ist kein sichtbarer Platzhalter.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = validate_chunk_pair(chunk, translated)
+
+    assert [f.as_dict() for f in findings] == []
+
+
+def test_placeholder_visible_source_tokens_still_required(tmp_path: Path):
+    chunk = Chunk(
+        chunk_id="0001",
+        source_language="en",
+        target_language="de",
+        records=[
+            Record(
+                id="0001-000001",
+                source="Run __TAG_001__ now.",
+                protected_terms=[],
+                placeholders=[],
+            )
+        ],
+    )
+    translated = tmp_path / "0001.json"
+    translated.write_text(
+        json.dumps(
+            {
+                "chunk_id": "0001",
+                "records": [{"id": "0001-000001", "target": "Jetzt ausführen."}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = validate_chunk_pair(chunk, translated)
+
+    assert "placeholder_removed_or_changed" in {f.rule for f in findings}
 
 
 def test_rule_protected_name_translated(tmp_path: Path):

@@ -74,6 +74,41 @@ def test_extract_protects_names(tmp_path):
     assert len(alice_tokens) == 1
 
 
+def test_extract_title_like_xhtml_uses_document_order(tmp_path):
+    book = epub.EpubBook()
+    book.set_identifier("test-id-title")
+    book.set_title("Title Order")
+    book.set_language("en")
+    title = epub.EpubHtml(title="Title", file_name="title.xhtml", lang="en")
+    title.content = (
+        '<html xmlns="http://www.w3.org/1999/xhtml">'
+        "<head><title>Title</title></head><body>"
+        '<section epub:type="title">'
+        '<h3 class="chapter-subtitle1">Subtitle</h3>'
+        '<h2 class="book-author">Author</h2>'
+        '<p class="flush-centered">Centered</p>'
+        '<h1 class="book-title" id="title">Book <i>Three</i></h1>'
+        '<p class="publisher-logo">Logo</p>'
+        "</section></body></html>"
+    )
+    book.add_item(title)
+    book.add_item(epub.EpubNav())
+    book.add_item(epub.EpubNcx())
+    book.spine = ["nav", title]
+    epub_path = tmp_path / "title.epub"
+    epub.write_epub(str(epub_path), book, {})
+
+    ext = extract_epub(str(epub_path))
+
+    assert [span.text for span in ext.spans][-5:] == [
+        "Subtitle",
+        "Author",
+        "Centered",
+        "Book __TAG_001__Three__TAG_002__",
+        "Logo",
+    ]
+
+
 def test_build_roundtrips_structure_and_content(tmp_path):
     epub_path = tmp_path / "book.epub"
     out_path = tmp_path / "book.de.epub"

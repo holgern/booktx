@@ -9,7 +9,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from spinetx.build import build_project, records_to_span_text
+import pytest
+
+from spinetx.build import BuildError, build_project, records_to_span_text
 from spinetx.chunking import ProseSpan, spans_to_chunks
 from spinetx.config import find_source_file, init_project, load_project
 from spinetx.html_io import build_xhtml  # noqa: F401  (sanity import)
@@ -181,3 +183,39 @@ def test_build_epub_identity_roundtrip(tmp_path: Path):
     assert "<strong>Bob</strong>" in content
     assert "do_not_translate();" in content
     assert "<code>pip install</code>" in content
+
+
+def test_build_epub_fails_on_unresolved_placeholder_token(tmp_path: Path):
+    import warnings
+
+    import tests.test_epub_io as epub_fixtures
+    from spinetx.epub_io import extract_epub
+
+    warnings.filterwarnings("ignore")
+    proj = init_project(tmp_path / "book", target_language="de")
+    epub_path = proj.source_dir / "book.epub"
+    epub_fixtures._make_epub(epub_path)
+    find_source_file(proj)
+    proj = load_project(proj.root)
+
+    extraction = extract_epub(str(epub_path))
+    chunks = spans_to_chunks(
+        extraction.spans,
+        source_language=proj.config.source_language,
+        target_language=proj.config.target_language,
+        chunk_size=proj.config.chunk_size,
+    )
+    proj.chunks_dir.mkdir(parents=True, exist_ok=True)
+    for c in chunks:
+        (proj.chunks_dir / f"{c.chunk_id}.json").write_text(
+            c.model_dump_json(), encoding="utf-8"
+        )
+
+    translations = _identity_translation(chunks)
+    for chunk_payload in translations.values():
+        for record in chunk_payload["records"]:
+            record["target"] = "__TAG_999__"
+    _write_translations(proj, translations)
+
+    with pytest.raises(BuildError, match="unresolved placeholder __TAG_999__"):
+        build_project(proj)
