@@ -12,6 +12,7 @@ A *project* is a directory laid out like this (see
         names.json
         chunks/
         translated/
+        ingest/
         reports/
       output/
 
@@ -59,6 +60,8 @@ __all__ = [
     "write_translation_store",
     "translation_task_dir",
     "translation_task_path",
+    "translation_ingest_dir",
+    "translation_ingest_path",
     "load_translation_task",
     "write_translation_task",
 ]
@@ -97,6 +100,7 @@ class Project:
     chunks_dir: Path
     translated_dir: Path
     tasks_dir: Path
+    ingest_dir: Path
     reports_dir: Path
     output_dir: Path
     config: ProjectConfig
@@ -156,6 +160,7 @@ def init_project(
     chunks_dir = booktx_dir / "chunks"
     translated_dir = booktx_dir / "translated"
     tasks_dir = booktx_dir / "tasks"
+    ingest_dir = booktx_dir / "ingest"
     reports_dir = booktx_dir / "reports"
     output_dir = root / "output"
     for d in (
@@ -164,6 +169,7 @@ def init_project(
         chunks_dir,
         translated_dir,
         tasks_dir,
+        ingest_dir,
         reports_dir,
         output_dir,
     ):
@@ -226,6 +232,7 @@ def load_project(root: Path | str) -> Project:
         chunks_dir=booktx_dir / "chunks",
         translated_dir=booktx_dir / "translated",
         tasks_dir=booktx_dir / "tasks",
+        ingest_dir=booktx_dir / "ingest",
         reports_dir=booktx_dir / "reports",
         output_dir=r / "output",
         config=cfg,
@@ -309,6 +316,19 @@ def translation_task_dir(project: Project) -> Path:
 def translation_task_path(project: Project, task_id: str) -> Path:
     """Path for one persisted translation task."""
     return translation_task_dir(project) / f"{task_id}.json"
+
+
+def translation_ingest_dir(project: Project) -> Path:
+    """Directory holding user/agent-authored translation submissions."""
+    return project.ingest_dir
+
+
+def translation_ingest_path(project: Project, task_id: str) -> Path:
+    """Path for the durable JSON submission file for one translation task."""
+    safe_task_id = Path(task_id).name
+    if safe_task_id != task_id or not safe_task_id:
+        raise _err("invalid_task_id", f"Invalid task id for ingest path: {task_id!r}")
+    return translation_ingest_dir(project) / f"{safe_task_id}.json"
 
 
 def load_translation_task(project: Project, task_id: str) -> TranslationTask | None:

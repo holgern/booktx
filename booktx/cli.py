@@ -37,6 +37,7 @@ from booktx.config import (
     load_translation_store,
     load_translation_task,
     project_source_sha256,
+    translation_ingest_path,
     translation_task_path,
     write_translation_store,
     write_translation_task,
@@ -820,6 +821,32 @@ def _select_translation_record_ids(
     return (unit, _limit_records_by_words(pending, source_by_id, max_words))
 
 
+def _project_relative(path: Path, root: Path) -> str:
+    """Return a stable project-relative display path when possible."""
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
+def _write_ingest_template(proj, task: TranslationTask) -> Path:
+    """Create the durable submission file for a task without overwriting work."""
+    path = translation_ingest_path(proj, task.task_id)
+    if path.exists():
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": 1,
+        "task_id": task.task_id,
+        "records": [{"id": record.id, "target": ""} for record in task.records],
+    }
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def _make_task_id(chapter_id: str, first_record_id: str, record_ids: list[str]) -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
     record_part = first_record_id.replace("-", "")
@@ -857,6 +884,7 @@ def _create_translation_task(
         ],
     )
     write_translation_task(proj, task)
+    _write_ingest_template(proj, task)
     return task
 
 
@@ -920,7 +948,15 @@ def _print_status_human(summary: dict[str, Any], chapter: dict[str, Any] | None)
     )
 
 
-def _print_translate_task(task: TranslationTask, *, as_json: bool, output_format: str) -> None:
+def _print_translate_task(
+    task: TranslationTask,
+    proj,
+    *,
+    as_json: bool,
+    output_format: str,
+) -> None:
+    ingest_path = translation_ingest_path(proj, task.task_id)
+    ingest_display = _project_relative(ingest_path, proj.root)
     payload = {
         "version": 1,
         "task_id": task.task_id,
@@ -932,8 +968,9 @@ def _print_translate_task(task: TranslationTask, *, as_json: bool, output_format
         "source_words": task.source_words,
         "record_count": task.record_count,
         "records": [record.model_dump(mode="json") for record in task.records],
+        "ingest_path": ingest_display,
         "submit_hint": (
-            f"booktx translate insert . --task-id {task.task_id} --stdin"
+            f"booktx translate insert . --task-id {task.task_id} --json-file {ingest_display}"
         ),
     }
     if as_json:
@@ -945,7 +982,10 @@ def _print_translate_task(task: TranslationTask, *, as_json: bool, output_format
         for record in task.records:
             console.print(f"{record.id}\t{record.source}")
         console.print(
-            f"# submit: booktx translate insert . --task-id {task.task_id} --stdin"
+            f"# write translation JSON to: {ingest_display}"
+        )
+        console.print(
+            f"# submit: booktx translate insert . --task-id {task.task_id} --json-file {ingest_display}"
         )
         return
     console.print(f"task: {task.task_id}")
@@ -960,8 +1000,13 @@ def _print_translate_task(task: TranslationTask, *, as_json: bool, output_format
         console.print(record.id)
         console.print(record.source)
     console.print()
+    console.print("Write translation JSON to:")
+    console.print(ingest_display)
     console.print("Submit with:")
-    console.print(f"booktx translate insert . --task-id {task.task_id} --stdin")
+    console.print(
+        f"booktx translate insert . --task-id {task.task_id} "
+        f"--json-file {ingest_display}"
+    )
 
 
 def _load_translation_task_or_exit(proj, task_id: str) -> TranslationTask:
@@ -1241,7 +1286,7 @@ def translate_next(
         unit=actual_unit,
         record_ids=record_ids,
     )
-    _print_translate_task(task, as_json=as_json, output_format=output_format)
+    _print_translate_task(task, proj, as_json=as_json, output_format=output_format)
 
 
 @translate_app.command(name="insert")
@@ -1251,7 +1296,11 @@ def translate_insert(
     stdin: bool = typer.Option(False, "--stdin", help="Read the payload from stdin."),
     record_id: str | None = typer.Option(None, "--record-id", help="Single record id."),
     target: str | None = typer.Option(None, "--target", help="Single target text."),
-    json_file: Path | None = typer.Option(None, "--json-file", help="Read JSON payload from a file."),
+    json_file: Path | None = typer.Option(
+        None,
+        "--json-file",
+        help="Read JSON payload from a durable file, normally .booktx/ingest/TASK.json.",
+    ),
     input_format: str = typer.Option(
         "json", "--format", help="Input format for stdin payloads: json or tsv."
     ),

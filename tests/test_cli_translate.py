@@ -110,7 +110,7 @@ def test_status_and_translate_next_respect_boundary_overlap(tmp_path: Path):
     ]
 
 
-def test_translate_next_and_insert_json_updates_store(tmp_path: Path):
+def test_translate_next_creates_ingest_file_and_insert_updates_store(tmp_path: Path):
     project_dir = _make_project(tmp_path)
 
     next_res = runner.invoke(
@@ -119,18 +119,37 @@ def test_translate_next_and_insert_json_updates_store(tmp_path: Path):
     )
     assert next_res.exit_code == 0, next_res.output
     task = json.loads(next_res.output)
+    ingest_file = project_dir / task["ingest_path"]
+
+    assert task["ingest_path"].startswith(".booktx/ingest/")
+    assert f"--json-file {task['ingest_path']}" in task["submit_hint"]
+    assert ingest_file.is_file()
+    template = json.loads(ingest_file.read_text("utf-8"))
+    assert template["task_id"] == task["task_id"]
+    assert [record["target"] for record in template["records"]] == [""] * len(
+        task["records"]
+    )
 
     payload = {
         "task_id": task["task_id"],
         "records": [{"id": record["id"], "target": record["source"]} for record in task["records"]],
     }
+    ingest_file.write_text(json.dumps(payload), encoding="utf-8")
     insert_res = runner.invoke(
         app,
-        ["translate", "insert", str(project_dir), "--stdin"],
-        input=json.dumps(payload),
+        [
+            "translate",
+            "insert",
+            str(project_dir),
+            "--task-id",
+            task["task_id"],
+            "--json-file",
+            str(ingest_file),
+        ],
     )
 
     assert insert_res.exit_code == 0, insert_res.output
+    assert ingest_file.is_file()
     assert (project_dir / ".booktx" / "translation-store.json").is_file()
     assert not list((project_dir / ".booktx" / "translated").glob("*.json"))
 

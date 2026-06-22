@@ -17,6 +17,7 @@ from booktx.config import (
     load_project,
     project_source_sha256,
     translation_store_path,
+    translation_ingest_path,
     translation_task_path,
     write_translation_store,
     write_translation_task,
@@ -39,6 +40,7 @@ def test_init_creates_full_layout(tmp_path: Path):
         proj.chunks_dir,
         proj.translated_dir,
         proj.tasks_dir,
+        proj.ingest_dir,
         proj.reports_dir,
         proj.output_dir,
     ):
@@ -151,6 +153,7 @@ def test_translation_task_helpers_roundtrip(tmp_path: Path):
     )
 
     assert translation_task_path(proj, "bt-task-1").name == "bt-task-1.json"
+    assert translation_ingest_path(proj, "bt-task-1").name == "bt-task-1.json"
     assert load_translation_task(proj, "bt-task-1") is None
 
     write_translation_task(proj, task)

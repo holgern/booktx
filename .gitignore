@@ -220,3 +220,6 @@ workspace/
 todo.md
 uv.lock
 /plan.md
+
+# Do not ignore .booktx/ingest; it is intentionally durable.
+# Optional ignores remain okay for generated reports/output if desired.

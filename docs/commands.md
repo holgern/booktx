@@ -153,10 +153,10 @@ Returns the next pending work unit, persists a task id, and prints a submit hint
 booktx translate insert PROJECT_DIR --task-id TASK --stdin
 booktx translate insert PROJECT_DIR --record-id 0001-000001 --target "..."
 booktx translate insert PROJECT_DIR --stdin --format tsv
-booktx translate insert PROJECT_DIR --json-file payload.json
+booktx translate insert PROJECT_DIR --json-file .booktx/ingest/TASK.json
 ```
 
-Validates submitted records before writing `.booktx/translation-store.json`.
+`booktx translate next` creates `.booktx/ingest/TASK.json`; fill that file and pass it to `--json-file`. The file is intentionally left in place after insert so it can be version-controlled and audited. `translate insert` validates submitted records before writing `.booktx/translation-store.json`.
 Invalid submissions are rejected atomically.
 
 ### Legacy import/export

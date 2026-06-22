@@ -15,6 +15,7 @@ book/
     chapter-map.json
     translation-store.json
     tasks/
+    ingest/
     chunks/
       0001.json
       0002.json
@@ -76,6 +77,10 @@ here atomically.
 
 Owned by `booktx`. `booktx translate next` stores task payloads here so later
 submissions can be checked against an explicit task id.
+
+## `.booktx/ingest/`
+
+Durable user/agent-authored translation submissions. `booktx translate next` creates `.booktx/ingest/TASK.json` as a fill-in template. Agents should edit this file and submit it with `booktx translate insert --json-file .booktx/ingest/TASK.json` instead of writing to `/tmp` or piping ephemeral stdin. The directory is intended to be kept in version control so unfinished or failed translation attempts are not lost.
 
 ## `.booktx/translated/`
 

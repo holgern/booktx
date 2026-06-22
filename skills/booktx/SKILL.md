@@ -100,10 +100,7 @@ booktx translate next . --json
 booktx translate next . --unit chapter --json
 ```
 
-Open `.booktx/context.md` first, then use `booktx translate next` to fetch the
-exact records to translate. Submit results with `booktx translate insert`. Do
-not edit `.booktx/translated/*.json` directly; that directory is compatibility
-output managed by `booktx`.
+Open `.booktx/context.md` first, then use `booktx translate next` to fetch the exact records to translate. The command also creates `.booktx/ingest/TASK.json`; write translated records there and submit with `booktx translate insert --json-file .booktx/ingest/TASK.json`. Do not write translation payloads to `/tmp`. Do not edit `.booktx/translated/*.json` directly; that directory is compatibility output managed by `booktx`.
 
 After writing translations:
 

@@ -35,8 +35,7 @@ or a chapter-focused task from:
 booktx translate next . --unit chapter --json
 ```
 
-`booktx translate next` returns a task id, the exact record ids to translate, and
-a submit hint. Do not infer chunk ranges manually.
+`booktx translate next` returns a task id, the exact record ids to translate, an `ingest_path`, and a submit hint. It also creates `.booktx/ingest/TASK.json` as a durable submission template. Do not infer chunk ranges manually.
 
 ## Translate only JSON records
 
@@ -87,12 +86,19 @@ The first replaces placeholders with originals. The second changes token padding
 
 ## Submit through the CLI
 
-```bash
-booktx translate insert . --task-id TASK --stdin
+Write the translated payload to the template path returned by `translate next`:
+
+```text
+.booktx/ingest/TASK.json
 ```
 
-Do not edit `.booktx/translated/*.json` directly during normal work. That
-directory is compatibility output managed by `booktx translate export`.
+Then submit that durable file:
+
+```bash
+booktx translate insert . --task-id TASK --json-file .booktx/ingest/TASK.json
+```
+
+Do not use `/tmp` for translation payloads. On Termux it may not exist, and on any platform it is too easy to lose work. Do not edit `.booktx/translated/*.json` directly during normal work. That directory is compatibility output managed by `booktx translate export`.
 
 ## Validate often
 

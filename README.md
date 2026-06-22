@@ -125,8 +125,7 @@ and reported as warnings.
 }
 ```
 
-`booktx translate insert` accepts translated records and stores them in
-`.booktx/translation-store.json`. When you need compatibility chunk files,
+`booktx translate next` creates a durable `.booktx/ingest/TASK.json` template for the translated payload. `booktx translate insert --json-file .booktx/ingest/TASK.json` accepts translated records and stores them in `.booktx/translation-store.json`. This keeps agent-authored JSON under version control and avoids ephemeral `/tmp` files. When you need compatibility chunk files,
 `booktx translate export` materializes `.booktx/translated/NNNN.json` from the
 accepted store entries:
 
