@@ -94,7 +94,7 @@ Ask for the next task:
 
 ```bash
 booktx status ./demo
-booktx translate next ./demo --unit batch --max-words 700 --format block
+booktx translate next ./demo --unit batch --max-words 500 --format block
 ```
 
 The command returns a task id and the exact records to translate. Submit the

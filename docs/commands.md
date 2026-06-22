@@ -141,26 +141,46 @@ Reports deterministic record-, chunk-, chapter-, and word-level progress.
 booktx translate next PROJECT_DIR
 booktx translate next PROJECT_DIR --json
 booktx translate next PROJECT_DIR --unit paragraph
-booktx translate next PROJECT_DIR --unit batch --max-words 700 --format block
-booktx translate next PROJECT_DIR --chapter 0006 --unit batch --max-words 700 --format block
+booktx translate next PROJECT_DIR --unit batch --max-words 500 --format block
+booktx translate next PROJECT_DIR --chapter 0006 --unit batch --max-words 500 --format block
+booktx translate next PROJECT_DIR --format block --show-sources
 booktx translate next PROJECT_DIR --format tsv
 ```
 
-Returns the next pending work unit, persists a task id, and prints a submit hint.
+Returns the next pending work unit, persists a task id, and prints a concise summary with the source file, the durable block file, and a submit command. By default `--format block` does NOT print the source text or heredoc body; add `--show-sources` or `--show-template` to print them inline. It writes `.booktx/tasks/TASK.source.block.txt` (source text), `.booktx/ingest/TASK.block.txt` (editable durable target file with metadata headers), and `.booktx/ingest/TASK.json` for JSON compatibility.
 
 ### Insert translated records
 
 ```bash
-booktx translate insert PROJECT_DIR --task-id TASK --stdin --format block
 booktx translate insert PROJECT_DIR --task-id TASK --file .booktx/ingest/TASK.block.txt --format block
+booktx translate insert PROJECT_DIR --task-id TASK --stdin --format block
 booktx translate insert PROJECT_DIR --task-id TASK --stdin
 booktx translate insert PROJECT_DIR --record-id 0001-000001 --target "..."
 booktx translate insert PROJECT_DIR --stdin --format tsv
 booktx translate insert PROJECT_DIR --json-file .booktx/ingest/TASK.json
 ```
 
-Prefer `--stdin --format block` for normal agent submissions. `booktx translate next` also creates `.booktx/ingest/TASK.block.txt` for durable block-text submissions and keeps `.booktx/ingest/TASK.json` for compatibility tooling. `translate insert` validates submitted records before writing `.booktx/translation-store.json`.
-Invalid submissions are rejected atomically.
+Prefer submitting the generated `.booktx/ingest/TASK.block.txt` durable file for normal agent work; use a stdin heredoc only for very small manual fixes. `translate insert` validates submitted records before writing `.booktx/translation-store.json`. Invalid submissions are rejected atomically.
+
+### Task status
+
+```bash
+booktx translate task-status PROJECT_DIR --task-id TASK
+booktx translate task-status PROJECT_DIR --task-id TASK --json
+```
+
+Reports how many task records are accepted vs missing (and stale), the first missing record id, and the source/ingest/submit paths. Makes interrupted runs diagnosable without inspecting JSON. Exits `0` only when every task record is accepted and current, otherwise `1`.
+
+### Set a single record
+
+```bash
+booktx translate set-record PROJECT_DIR --task-id TASK --record-id RECORD_ID --stdin
+booktx translate set-record PROJECT_DIR --task-id TASK --record-id RECORD_ID --target "..."
+```
+
+Commits one translated record at a time. Reads the target from stdin (multiline text preserved) or `--target`, validates that single record, writes it to `.booktx/translation-store.json`, and prints accepted progress. Use this when worried about truncation; committed work survives interruption.
+
+Missing or unreadable submission files (for `--file` / `--json-file`) produce a concise `error: submission file not found: ...` message with an ingest hint, never a Python traceback. Never use `/tmp`.
 
 ### Legacy import/export
 

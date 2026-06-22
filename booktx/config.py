@@ -61,7 +61,7 @@ __all__ = [
     "translation_task_dir",
     "translation_task_path",
     "translation_ingest_dir",
-    "translation_ingest_path",
+    "translation_task_source_block_path",
     "translation_ingest_block_path",
     "load_translation_task",
     "write_translation_task",
@@ -317,6 +317,19 @@ def translation_task_dir(project: Project) -> Path:
 def translation_task_path(project: Project, task_id: str) -> Path:
     """Path for one persisted translation task."""
     return translation_task_dir(project) / f"{task_id}.json"
+
+
+def translation_task_source_block_path(project: Project, task_id: str) -> Path:
+    """Path for the durable source-view block file for one translation task.
+
+    This is booktx-authored task metadata (not an agent submission): it holds the
+    original source text for the records in a task so an agent can translate
+    against a stable file rather than a large stdout dump.
+    """
+    safe_task_id = Path(task_id).name
+    if safe_task_id != task_id or not safe_task_id:
+        raise _err("invalid_task_id", f"Invalid task id for source path: {task_id!r}")
+    return translation_task_dir(project) / f"{safe_task_id}.source.block.txt"
 
 
 def translation_ingest_dir(project: Project) -> Path:

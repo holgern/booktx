@@ -96,20 +96,28 @@ From a project root:
 booktx extract .
 booktx context status .
 booktx status .
-booktx translate next . --unit batch --max-words 700 --format block
-booktx translate next . --chapter 0010 --unit batch --max-words 700 --format block
+booktx translate next . --unit batch --max-words 500 --format block
+booktx translate next . --chapter 0010 --unit batch --max-words 500 --format block
 ```
 
-Open `.booktx/context.md` first, then use `booktx translate next` to fetch the exact records to translate. Submit normal agent work directly:
+Open `.booktx/context.md` first, then use `booktx translate next` to fetch the exact records to translate. The command prints a concise summary and writes `.booktx/tasks/TASK.source.block.txt` (source text) plus `.booktx/ingest/TASK.block.txt` (editable durable target file). Prefer the durable-file workflow for normal agent work:
 
 ```bash
-booktx translate insert . --task-id TASK --stdin --format block <<'BOOKTX'
->>> RECORD_ID
-translated target
-BOOKTX
+# 1. fetch the task (writes the source + editable block files)
+booktx translate next . --unit batch --max-words 500 --format block
+# 2. read the source file, then fill .booktx/ingest/TASK.block.txt
+# 3. submit the durable file
+booktx translate insert . --task-id TASK --file .booktx/ingest/TASK.block.txt --format block
 ```
 
-Use `.booktx/ingest/TASK.block.txt` only when you want a durable submission file. Keep `.booktx/ingest/TASK.json` and `--json-file` for compatibility tooling. Do not request `--unit chapter --json` for normal translation, do not write Python helper scripts to create translation submissions, and do not edit `.booktx/translated/*.json` directly.
+Diagnose an interrupted run and commit one record at a time when truncation is a concern:
+
+```bash
+booktx translate task-status . --task-id TASK
+booktx translate set-record . --task-id TASK --record-id RECORD_ID --stdin
+```
+
+Keep `.booktx/ingest/TASK.json` and `--json-file` for compatibility tooling. Use a stdin heredoc only for very small manual fixes. Never use `/tmp`; Termux and some restricted environments do not provide it. Do not request `--unit chapter --json` for normal translation, do not write Python helper scripts to create translation submissions, and do not edit `.booktx/translated/*.json` directly.
 
 After writing translations:
 

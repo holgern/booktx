@@ -69,8 +69,10 @@ booktx context answer ./book Q001 --text de-DE # answer one context question
 booktx context mark-ready ./book               # mark ready after required answers
 booktx status ./book                           # report translation progress
 booktx chapters ./book                         # list detected chapter ranges
-booktx translate next ./book --unit batch --max-words 700 --format block
-booktx translate insert ./book --stdin --format block
+booktx translate next ./book --unit batch --max-words 500 --format block
+booktx translate insert ./book --task-id TASK --file .booktx/ingest/TASK.block.txt --format block
+booktx translate task-status ./book --task-id TASK
+booktx translate set-record ./book --task-id TASK --record-id RECORD_ID --stdin
 booktx translate import-legacy ./book          # import valid translated/*.json
 booktx translate export ./book                 # export full translated chunks
 booktx next ./book                             # legacy next-chunk summary
@@ -126,7 +128,7 @@ and reported as warnings.
 }
 ```
 
-`booktx translate next` creates a durable `.booktx/ingest/TASK.block.txt` template for block-text submissions and keeps `.booktx/ingest/TASK.json` for compatibility tooling. Prefer `booktx translate insert --stdin --format block` for normal agent work, or submit the durable `.block.txt` file when you want the payload version-controlled. `booktx translate insert --json-file .booktx/ingest/TASK.json` remains available for JSON-based tooling. When you need compatibility chunk files,
+`booktx translate next --format block` prints a concise summary (task id, chapter, unit, record count, source words, and the source/durable-file/submit-command paths) instead of dumping source text. It writes `.booktx/tasks/TASK.source.block.txt` with the source text, an editable `.booktx/ingest/TASK.block.txt` durable target file with metadata headers, and `.booktx/ingest/TASK.json` for JSON compatibility. Prefer filling and submitting the durable `.block.txt` file for normal agent work (it is resumable and version-control friendly); use a stdin heredoc only for tiny manual fixes. `booktx translate task-status` diagnoses interrupted runs, `booktx translate set-record` commits one record at a time, and `booktx translate insert --json-file .booktx/ingest/TASK.json` remains available for JSON-based tooling. Never use `/tmp`; missing submission files produce a concise error, not a traceback. When you need compatibility chunk files,
 `booktx translate export` materializes `.booktx/translated/NNNN.json` from the
 accepted store entries:
 
@@ -230,7 +232,7 @@ cp book.md ./demo/source/
 booktx extract ./demo
 booktx context init ./demo --non-interactive
 booktx context mark-ready ./demo --force
-booktx translate next ./demo --unit batch --max-words 700 --format block
+booktx translate next ./demo --unit batch --max-words 500 --format block
 
 # Submit the returned records through the CLI, then:
 
@@ -245,7 +247,7 @@ booktx init ./demo --target de --source-file book.epub
 booktx extract ./demo
 booktx context init ./demo --non-interactive
 booktx context mark-ready ./demo --force
-booktx translate next ./demo --chapter 0001 --unit batch --max-words 700 --format block
+booktx translate next ./demo --chapter 0001 --unit batch --max-words 500 --format block
 
 # Submit translated records with booktx translate insert, then:
 

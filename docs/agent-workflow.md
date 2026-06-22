@@ -10,7 +10,7 @@ From the project root:
 booktx extract .
 booktx context status .
 booktx status .
-booktx translate next . --unit batch --max-words 700 --format block
+booktx translate next . --unit batch --max-words 500 --format block
 ```
 
 If context is missing or not ready, stop translating and build the context first.
@@ -26,17 +26,17 @@ Read:
 Then request the next task from:
 
 ```bash
-booktx translate next . --unit batch --max-words 700 --format block
+booktx translate next . --unit batch --max-words 500 --format block
 ```
 
 or a chapter-focused task from:
 
 ```bash
 booktx status . --chapter 0010
-booktx translate next . --chapter 0010 --unit batch --max-words 700 --format block
+booktx translate next . --chapter 0010 --unit batch --max-words 500 --format block
 ```
 
-`booktx translate next` returns a task id, the exact record ids to translate, ingest paths, and submit hints. It also creates `.booktx/ingest/TASK.json` for JSON compatibility and `.booktx/ingest/TASK.block.txt` as a durable block template. Do not infer chunk ranges manually.
+`booktx translate next` returns a task id and a concise summary: the chapter, unit, record count, source words, the source file, the editable durable block file, and the submit command. It writes three files per task: `.booktx/tasks/TASK.source.block.txt` (the source text to translate), `.booktx/ingest/TASK.block.txt` (the editable durable target file you fill in), and `.booktx/ingest/TASK.json` for JSON compatibility. Do not infer chunk ranges manually.
 
 ## Translate only task records
 
@@ -87,22 +87,36 @@ The first replaces placeholders with originals. The second changes token padding
 
 ## Submit through the CLI
 
-Prefer a direct heredoc for normal agent work:
+Prefer the generated durable block file for normal agent work:
+
+1. Run `booktx translate next . --unit batch --max-words 500 --format block`.
+2. Read `.booktx/tasks/TASK.source.block.txt` for the source text.
+3. Fill `.booktx/ingest/TASK.block.txt` with the translated targets under each `>>> RECORD_ID` header (small edits are fine; work already committed to `translation-store.json` survives interruption).
+4. Submit it:
+
+```bash
+booktx translate insert . --task-id TASK --file .booktx/ingest/TASK.block.txt --format block
+```
+
+Check progress after an interruption without inspecting JSON by hand:
+
+```bash
+booktx translate task-status . --task-id TASK
+```
+
+To commit one record at a time (for example when worried about truncation), read the target from stdin — multiline text is preserved:
+
+```bash
+booktx translate set-record . --task-id TASK --record-id RECORD_ID --stdin
+```
+
+Use a direct stdin heredoc only for very small manual fixes:
 
 ```bash
 booktx translate insert . --task-id TASK --stdin --format block <<'BOOKTX'
 >>> RECORD_ID
 Translated target.
-
->>> NEXT_RECORD_ID
-Translated target.
 BOOKTX
-```
-
-Use `.booktx/ingest/TASK.block.txt` only when you want a durable submission file under version control:
-
-```bash
-booktx translate insert . --task-id TASK --file .booktx/ingest/TASK.block.txt --format block
 ```
 
 JSON remains available for compatibility:
@@ -111,7 +125,7 @@ JSON remains available for compatibility:
 booktx translate insert . --task-id TASK --json-file .booktx/ingest/TASK.json
 ```
 
-Do not request `--unit chapter --json` for normal translation, do not write Python helper scripts to build submission payloads, and do not edit `.booktx/translated/*.json` directly during normal work. That directory is compatibility output managed by `booktx translate export`.
+Never use `/tmp`; Termux and some restricted environments do not provide it, and booktx reports a missing submission file with a concise error rather than a traceback. Do not request `--unit chapter --json` for normal translation, do not write Python helper scripts to build submission payloads, and do not edit `.booktx/translated/*.json` directly during normal work. That directory is compatibility output managed by `booktx translate export`.
 
 ## Validate often
 
@@ -143,7 +157,7 @@ Use chapter-aware progress to keep style continuity while still translating in m
 ```bash
 booktx chapters .
 booktx status . --chapter 0010
-booktx translate next . --chapter 0010 --unit batch --max-words 700 --format block
+booktx translate next . --chapter 0010 --unit batch --max-words 500 --format block
 ```
 
 Repeat batch requests until `booktx status . --chapter 0010` reports zero remaining records. After completing the chapter, add or update chapter notes in the context if new terminology, voice decisions, or open issues appeared.

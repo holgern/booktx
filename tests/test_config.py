@@ -20,6 +20,7 @@ from booktx.config import (
     translation_ingest_path,
     translation_store_path,
     translation_task_path,
+    translation_task_source_block_path,
     write_translation_store,
     write_translation_task,
 )
@@ -158,6 +159,15 @@ def test_translation_task_helpers_roundtrip(tmp_path: Path):
     assert (
         translation_ingest_block_path(proj, "bt-task-1").name == "bt-task-1.block.txt"
     )
+    assert (
+        translation_task_source_block_path(proj, "bt-task-1").name
+        == "bt-task-1.source.block.txt"
+    )
+    assert (
+        translation_task_source_block_path(proj, "bt-task-1").parent == proj.tasks_dir
+    )
+    with pytest.raises(BooktxError):
+        translation_task_source_block_path(proj, "bt-task/1")
     assert load_translation_task(proj, "bt-task-1") is None
 
     write_translation_task(proj, task)

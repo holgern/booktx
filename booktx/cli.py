@@ -41,6 +41,7 @@ from booktx.config import (
     translation_ingest_block_path,
     translation_ingest_path,
     translation_task_path,
+    translation_task_source_block_path,
     write_translation_store,
     write_translation_task,
 )
@@ -102,6 +103,36 @@ def _die(message: str, code: int = 1) -> None:
     """Print an error and exit with ``code``."""
     console.print(f"[red]error:[/red] {message}")
     raise typer.Exit(code=code)
+
+
+def _read_submission_file_or_die(path: Path) -> str:
+    """Read a submission file, dying with a concise CLI error on failure.
+
+    Missing/unreadable files produce a short error message (never a Python
+    traceback). When the path looks like it lives outside ``.booktx/ingest``
+    we add a hint pointing the agent at the generated durable ingest file,
+    since that is the recommended submission location.
+    """
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        message = f"submission file not found: {path}"
+    except PermissionError:
+        message = f"submission file is not readable: {path}"
+    except OSError as exc:
+        message = f"could not read submission file {path}: {exc}"
+    resolved = path.expanduser().resolve()
+    parts = resolved.parts
+    ingest_parts = (".booktx", "ingest")
+    looks_outside_ingest = bool(parts) and not any(
+        parts[i : i + 2] == ingest_parts for i in range(len(parts) - 1)
+    )
+    if looks_outside_ingest:
+        message += (
+            "\nhint: use the generated .booktx/ingest/<task>.block.txt file "
+            "instead of /tmp or other temporary locations"
+        )
+    _die(message)
 
 
 def _handle_booktx_error(exc: BooktxError) -> None:
@@ -874,12 +905,62 @@ def _write_ingest_template(proj, task: TranslationTask) -> Path:
 
 
 def _write_block_ingest_template(proj, task: TranslationTask) -> Path:
-    """Create the durable block submission file for a task without overwriting work."""
+    """Create the durable block submission file for a task without overwriting work.
+
+    The file starts with metadata comment headers (ignored by the block parser)
+    followed by one `>>> RECORD_ID` header per record. The agent fills in the
+    target text under each header.
+    """
     path = translation_ingest_block_path(proj, task.task_id)
     if path.exists():
         return path
     path.parent.mkdir(parents=True, exist_ok=True)
-    parts = [f">>> {record.id}\n" for record in task.records]
+    source_display = _project_relative(
+        translation_task_source_block_path(proj, task.task_id), proj.root
+    )
+    block_display = _project_relative(path, proj.root)
+    submit_hint = (
+        f"booktx translate insert . --task-id {task.task_id} "
+        f"--file {block_display} --format block"
+    )
+    headers = [
+        "# booktx block submission",
+        f"# task: {task.task_id}",
+        f"# source: {source_display}",
+        f"# submit: {submit_hint}",
+        "",
+    ]
+    parts = [f">>> {record.id}" for record in task.records]
+    path.write_text(
+        "\n".join(headers + parts).rstrip() + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_task_source_block(proj, task: TranslationTask) -> Path:
+    """Create the durable source-view file for a task without overwriting work.
+
+    Holds the original source text for each record in the task so a coding
+    agent can translate against a stable file instead of a large stdout dump.
+    """
+    path = translation_task_source_block_path(proj, task.task_id)
+    if path.exists():
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    parts = [
+        f"# task: {task.task_id}",
+        f"# chapter: {task.chapter_id} {task.chapter_title}".rstrip(),
+        f"# unit: {task.unit}",
+        f"# records: {task.record_count}",
+        f"# source words: {task.source_words}",
+        "",
+    ]
+    for idx, record in enumerate(task.records):
+        if idx:
+            parts.append("")
+        parts.append(f">>> {record.id}")
+        parts.append(record.source)
     path.write_text("\n".join(parts).rstrip() + "\n", encoding="utf-8")
     return path
 
@@ -925,6 +1006,7 @@ def _create_translation_task(
     write_translation_task(proj, task)
     _write_ingest_template(proj, task)
     _write_block_ingest_template(proj, task)
+    _write_task_source_block(proj, task)
     return task
 
 
@@ -1007,11 +1089,15 @@ def _print_translate_task(
     *,
     as_json: bool,
     output_format: str,
+    show_sources: bool = False,
+    show_template: bool = False,
 ) -> None:
     ingest_path = translation_ingest_path(proj, task.task_id)
     ingest_display = _project_relative(ingest_path, proj.root)
     block_ingest_path = translation_ingest_block_path(proj, task.task_id)
     block_ingest_display = _project_relative(block_ingest_path, proj.root)
+    source_block_path = translation_task_source_block_path(proj, task.task_id)
+    source_block_display = _project_relative(source_block_path, proj.root)
     json_submit_hint = (
         f"booktx translate insert . --task-id {task.task_id} "
         f"--json-file {ingest_display}"
@@ -1024,6 +1110,7 @@ def _print_translate_task(
         f"booktx translate insert . --task-id {task.task_id} "
         "--stdin --format block <<'BOOKTX'"
     )
+    view_sources_hint = f"cat {source_block_display}"
     payload = {
         "version": 1,
         "task_id": task.task_id,
@@ -1037,6 +1124,7 @@ def _print_translate_task(
         "records": [record.model_dump(mode="json") for record in task.records],
         "ingest_path": ingest_display,
         "block_ingest_path": block_ingest_display,
+        "source_block_path": source_block_display,
         "submit_hint": json_submit_hint,
         "block_submit_hint": block_submit_hint,
     }
@@ -1058,26 +1146,30 @@ def _print_translate_task(
         console.print(f"records: {task.record_count}")
         console.print(f"source words: {task.source_words}")
         console.print()
-        console.print("Submit translated targets with:")
-        console.print()
-        console.print(block_stdin_submit_hint)
-        for idx, record in enumerate(task.records):
-            console.print(f">>> {record.id}")
-            console.print("<target>")
-            if idx != len(task.records) - 1:
-                console.print()
-        console.print("BOOKTX")
-        console.print()
-        console.print(f"Durable block template: {block_ingest_display}")
-        console.print(f"Submit durable file with: {block_submit_hint}")
-        console.print()
-        console.print("Sources:")
-        console.print()
-        for idx, record in enumerate(task.records):
-            console.print(f">>> {record.id}")
-            console.print(record.source)
-            if idx != len(task.records) - 1:
-                console.print()
+        console.print(f"Source file: {source_block_display}", soft_wrap=True)
+        console.print(f"Durable block template: {block_ingest_display}", soft_wrap=True)
+        console.print(f"Submit durable file with: {block_submit_hint}", soft_wrap=True)
+        console.print(f"View sources: {view_sources_hint}", soft_wrap=True)
+        if show_template:
+            console.print()
+            console.print("Heredoc template (optional, for tiny manual fixes):")
+            console.print()
+            console.print(block_stdin_submit_hint, soft_wrap=True)
+            for idx, record in enumerate(task.records):
+                console.print(f">>> {record.id}")
+                console.print("<target>")
+                if idx != len(task.records) - 1:
+                    console.print()
+            console.print("BOOKTX")
+        if show_sources:
+            console.print()
+            console.print("Sources:")
+            console.print()
+            for idx, record in enumerate(task.records):
+                console.print(f">>> {record.id}")
+                console.print(record.source)
+                if idx != len(task.records) - 1:
+                    console.print()
         return
     console.print(f"task: {task.task_id}")
     console.print(f"chapter: {task.chapter_id}  {task.chapter_title}".rstrip())
@@ -1165,7 +1257,15 @@ def _parse_block_submission(text: str) -> list[dict[str, str]]:
         nonlocal current_id, current_lines
         if current_id is None:
             return
-        target = _trim_blank_edge_lines(current_lines)
+        # Strip trailing separator lines (blank or comment) that sit between
+        # this record and the next header (or EOF). Internal and leading
+        # comment lines are preserved as target text.
+        lines = list(current_lines)
+        while lines and (
+            not lines[-1].strip() or lines[-1].lstrip().startswith("#")
+        ):
+            lines.pop()
+        target = _trim_blank_edge_lines(lines)
         if not target:
             _die(f"empty target for record {current_id}")
         parsed.append({"id": current_id, "target": target})
@@ -1184,7 +1284,8 @@ def _parse_block_submission(text: str) -> list[dict[str, str]]:
             current_lines = []
             continue
         if current_id is None:
-            if raw_line.strip():
+            stripped = raw_line.strip()
+            if stripped and not stripped.startswith("#"):
                 _die(
                     f"malformed block submission line {line_no}: "
                     "expected '>>> <record-id>' before target text"
@@ -1234,7 +1335,7 @@ def _next_chapter(proj, *, print_context: bool) -> None:
     console.print(
         "[dim]next command:[/dim] "
         f"booktx translate next . --chapter {chapter['chapter_id']} --unit batch "
-        "--max-words 700 --format block"
+        "--max-words 500 --format block"
     )
     raise typer.Exit(code=0)
 
@@ -1397,6 +1498,16 @@ def translate_next(
         "--format",
         help="Human output format: text, tsv, or block.",
     ),
+    show_sources: bool = typer.Option(
+        False,
+        "--show-sources",
+        help="Print source records inline (block format only).",
+    ),
+    show_template: bool = typer.Option(
+        False,
+        "--show-template",
+        help="Print the heredoc submit template inline (block format only).",
+    ),
     allow_missing_context: bool = typer.Option(
         False,
         "--allow-missing-context",
@@ -1438,7 +1549,14 @@ def translate_next(
         unit=actual_unit,
         record_ids=record_ids,
     )
-    _print_translate_task(task, proj, as_json=as_json, output_format=output_format)
+    _print_translate_task(
+        task,
+        proj,
+        as_json=as_json,
+        output_format=output_format,
+        show_sources=show_sources,
+        show_template=show_template,
+    )
 
 
 @translate_app.command(name="insert")
@@ -1488,10 +1606,10 @@ def translate_insert(
         submitted = [{"id": record_id, "target": target}]
     elif json_file is not None:
         payload_task_id, submitted = _parse_json_submission(
-            json_file.read_text(encoding="utf-8")
+            _read_submission_file_or_die(json_file)
         )
     elif input_file is not None:
-        raw = input_file.read_text(encoding="utf-8")
+        raw = _read_submission_file_or_die(input_file)
         if input_format == "json":
             payload_task_id, submitted = _parse_json_submission(raw)
         elif input_format == "tsv":
@@ -1585,7 +1703,7 @@ def translate_insert(
         console.print(
             "next: "
             f"booktx translate next . --chapter {chapter['chapter_id']} --unit batch "
-            "--max-words 700 --format block"
+            "--max-words 500 --format block"
         )
 
 
@@ -1677,6 +1795,200 @@ def translate_export(
         )
         exported += 1
     console.print(f"exported: {exported} chunk(s) to {proj.translated_dir}")
+
+
+@translate_app.command(name="task-status")
+def translate_task_status(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    task_id: str = typer.Option(..., "--task-id", help="Task id to inspect."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    """Report accepted vs missing progress for one persisted translation task.
+
+    Makes interrupted translation runs diagnosable without inspecting the store
+    by hand. Exits 0 only when every task record is accepted and current.
+    """
+    try:
+        proj = load_project(project_dir)
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
+        return
+    _require_chunks(proj)
+    task = _load_translation_task_or_exit(proj, task_id)
+    store = load_translation_store(proj)
+
+    accepted_ids: list[str] = []
+    missing_ids: list[str] = []
+    stale_ids: list[str] = []
+    for record in task.records:
+        stored = store.records.get(record.id)
+        if stored is None:
+            missing_ids.append(record.id)
+            continue
+        expected_sha = source_record_sha256(record.source)
+        if stored.source_sha256 and stored.source_sha256 != expected_sha:
+            stale_ids.append(record.id)
+            continue
+        accepted_ids.append(record.id)
+
+    total = len(task.records)
+    accepted = len(accepted_ids)
+    not_current = total - accepted
+    first_missing = (missing_ids[0] if missing_ids
+                     else (stale_ids[0] if stale_ids else None))
+    complete = not_current == 0
+
+    source_display = _project_relative(
+        translation_task_source_block_path(proj, task.task_id), proj.root
+    )
+    block_ingest_display = _project_relative(
+        translation_ingest_block_path(proj, task.task_id), proj.root
+    )
+    json_ingest_display = _project_relative(
+        translation_ingest_path(proj, task.task_id), proj.root
+    )
+    submit_hint = (
+        f"booktx translate insert . --task-id {task.task_id} "
+        f"--file {block_ingest_display} --format block"
+    )
+
+    payload = {
+        "version": 1,
+        "task_id": task.task_id,
+        "chapter_id": task.chapter_id,
+        "chapter_title": task.chapter_title,
+        "records_total": total,
+        "records_accepted": accepted,
+        "records_missing": len(missing_ids),
+        "records_stale": len(stale_ids),
+        "missing_ids": missing_ids,
+        "stale_ids": stale_ids,
+        "first_missing": first_missing,
+        "complete": complete,
+        "source_block_path": source_display,
+        "block_ingest_path": block_ingest_display,
+        "json_ingest_path": json_ingest_display,
+        "submit_hint": submit_hint,
+    }
+    if as_json:
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        raise typer.Exit(code=0 if complete else 1)
+
+    console.print(f"task: {task.task_id}")
+    console.print(f"chapter: {task.chapter_id}  {task.chapter_title}".rstrip())
+    console.print(
+        f"records: {accepted} / {total} accepted, {not_current} missing"
+    )
+    if stale_ids:
+        console.print(f"stale: {len(stale_ids)} record(s) need re-translation")
+    if first_missing is not None:
+        console.print(f"first missing: {first_missing}")
+    console.print(f"source file: {source_display}", soft_wrap=True)
+    console.print(f"ingest file: {block_ingest_display}", soft_wrap=True)
+    console.print(f"submit: {submit_hint}", soft_wrap=True)
+    raise typer.Exit(code=0 if complete else 1)
+
+
+@translate_app.command(name="set-record")
+def translate_set_record(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    task_id: str = typer.Option(..., "--task-id", help="Task id owning the record."),
+    record_id: str = typer.Option(..., "--record-id", help="Record id to set."),
+    stdin: bool = typer.Option(
+        False,
+        "--stdin",
+        help="Read the target text from stdin (default source).",
+    ),
+    target: str | None = typer.Option(None, "--target", help="Inline target text."),
+    allow_missing_context: bool = typer.Option(
+        False,
+        "--allow-missing-context",
+        help="Legacy override: allow set-record without a ready context.",
+    ),
+) -> None:
+    """Commit a single translated record from stdin (or --target).
+
+    Lets an agent safely commit one record at a time so work already written to
+    translation-store.json survives interruption. Prefer this over embedding a
+    whole chapter section in one shell command when truncation is a concern.
+    """
+    try:
+        proj = load_project(project_dir)
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
+        return
+    _require_chunks(proj)
+    _require_ready_context(proj, allow_missing_context=allow_missing_context)
+    task = _load_translation_task_or_exit(proj, task_id)
+    if record_id not in {record.id for record in task.records}:
+        _die(f"record {record_id} is not part of task {task.task_id}")
+
+    if target is not None:
+        target_text = target
+    elif stdin:
+        target_text = sys.stdin.read()
+        # Drop a single trailing newline (common shell/heredoc artifact) while
+        # preserving all internal multiline text.
+        if target_text.endswith("\r\n"):
+            target_text = target_text[:-2]
+        elif target_text.endswith("\n"):
+            target_text = target_text[:-1]
+    else:
+        _die("provide the target text with --stdin or --target")
+
+    if not target_text.strip():
+        _die(f"empty target for record {record_id}")
+
+    summary = _project_status_snapshot(proj)
+    source_by_id = summary["_source_by_id"]
+    source_chunks = summary["_source_chunks"]
+    if record_id not in source_by_id:
+        _die(f"unknown source record id: {record_id}")
+    source_view = source_by_id[record_id]
+    source_chunk = source_chunks[source_view.chunk_id]
+    source_record = next(
+        record for record in source_chunk.records if record.id == record_id
+    )
+    translated = TranslatedRecord(id=record_id, target=target_text)
+    failures = validate_record_pair(
+        source_record, translated, source_chunk.chunk_id, load_context(proj)
+    )
+    if any(finding.severity == Severity.ERROR for finding in failures):
+        _render_submission_failures(
+            [finding for finding in failures if finding.severity == Severity.ERROR]
+        )
+        raise typer.Exit(code=1)
+
+    store = load_translation_store(proj)
+    store.source_sha256 = summary["source"]["source_sha256"]
+    updated_at = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    store.records[record_id] = StoredTranslationRecord(
+        chunk_id=source_view.chunk_id,
+        source_sha256=source_view.source_sha256,
+        target=target_text,
+        updated_at=updated_at,
+    )
+    write_translation_store(proj, store)
+
+    refreshed = _project_status_snapshot(proj)
+    chapter_id = refreshed["_record_to_chapter"].get(record_id, "")
+    chapter = refreshed["_chapters_by_id"].get(chapter_id)
+    target_words = count_words(target_text)
+    console.print(
+        f"accepted: 1 record, {target_words} target word(s)"
+    )
+    if chapter is not None:
+        console.print(f"chapter: {chapter['chapter_id']} {chapter['title']}".rstrip())
+        console.print(
+            f"progress: {chapter['records_translated']} / "
+            f"{chapter['records_total']} records translated, "
+            f"{chapter['records_remaining']} remaining"
+        )
 
 
 # --- validate ----------------------------------------------------------------
