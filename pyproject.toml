@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Deterministic CLI that prepares Markdown and EPUB documents for translation by a coding agent."
 readme = "README.md"
 requires-python = ">=3.10"
-license = "AGPL-3.0-or-later"
+license = "MIT"
 license-files = { paths = ["LICENSE"] }
 authors = [{ name = "booktx contributors" }]
 keywords = ["translation", "epub", "markdown", "cli", "localization"]
@@ -16,7 +16,7 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    'License :: OSI Approved :: MIT License',
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",

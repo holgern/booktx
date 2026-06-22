@@ -16,9 +16,6 @@ to process. The license of booktx applies only to the software, not to input
 books or generated translations. Do not redistribute translated books unless
 you have the rights to do so.
 
-booktx is licensed under **AGPL-3.0-or-later** (it uses
-[`EbookLib`](https://github.com/aerkalov/ebooklib), which is AGPL).
-
 ---
 
 ## Install
@@ -269,4 +266,4 @@ ruff check .
 
 ## License
 
-AGPL-3.0-or-later. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
