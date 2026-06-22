@@ -44,18 +44,18 @@ preserve the structure and all required tokens.
 
 A translated chunk is invalid if any of these are true:
 
-| Rule | Why it matters |
-|---|---|
-| JSON is invalid | Build and validation need machine-readable files |
+| Rule                                       | Why it matters                                            |
+| ------------------------------------------ | --------------------------------------------------------- |
+| JSON is invalid                            | Build and validation need machine-readable files          |
 | Commentary appears outside the JSON object | Agents must not wrap translations in prose or code fences |
-| `chunk_id` changed | The file no longer maps to the source chunk |
-| Record count changed | Booktx cannot align source and target streams |
-| Any record `id` changed | The record mapping is broken |
-| A `target` is empty | The translation is incomplete |
-| A visible placeholder was removed | Rebuild cannot restore protected material |
-| A visible placeholder was changed | Rebuild cannot safely identify the protected material |
-| A new placeholder was invented | The new token has no stored original |
-| A protected name appears translated | Protected terms must survive exactly |
+| `chunk_id` changed                         | The file no longer maps to the source chunk               |
+| Record count changed                       | Booktx cannot align source and target streams             |
+| Any record `id` changed                    | The record mapping is broken                              |
+| A `target` is empty                        | The translation is incomplete                             |
+| A visible placeholder was removed          | Rebuild cannot restore protected material                 |
+| A visible placeholder was changed          | Rebuild cannot safely identify the protected material     |
+| A new placeholder was invented             | The new token has no stored original                      |
+| A protected name appears translated        | Protected terms must survive exactly                      |
 
 ## Placeholder rules
 
@@ -93,9 +93,7 @@ Do not merge records:
 must not become:
 
 ```json
-[
-  { "id": "0001-000001", "target": "... ..." }
-]
+[{ "id": "0001-000001", "target": "... ..." }]
 ```
 
 Do not split one source record into multiple translated records.

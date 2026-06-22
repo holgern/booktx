@@ -528,8 +528,7 @@ def load_effective_translated_chunks(
                         severity=Severity.ERROR,
                         rule="stale_store_record",
                         message=(
-                            f"store record {record_id} has no matching source "
-                            "record"
+                            f"store record {record_id} has no matching source record"
                         ),
                         record_id=record_id,
                     )

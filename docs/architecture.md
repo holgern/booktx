@@ -45,21 +45,21 @@ output/book.<target>.<ext>
 
 ## Main modules
 
-| Module | Responsibility |
-|---|---|
-| `booktx.cli` | Typer command surface |
-| `booktx.config` | Project layout, config, names, manifest IO |
-| `booktx.models` | Pydantic models for chunk and manifest contracts |
-| `booktx.context` | Translation context models, questions, glossary, rendering |
-| `booktx.markdown_io` | Markdown extraction and rebuild |
-| `booktx.epub_io` | EPUB extraction and rebuild adapter |
-| `booktx.epub_manifest` | EPUB v2 manifest conversion and raw block mapping |
-| `booktx.html_io` | Legacy/shared XHTML extraction and rebuild helpers |
-| `booktx.chunking` | Sentence segmentation and chunk packing |
-| `booktx.placeholders` | Name/tag placeholder protection and restoration |
-| `booktx.validate` | Contract and context validation |
-| `booktx.build` | Final Markdown/EPUB rebuild |
-| `booktx.chapters` | Chapter detection and chapter map persistence |
+| Module                 | Responsibility                                             |
+| ---------------------- | ---------------------------------------------------------- |
+| `booktx.cli`           | Typer command surface                                      |
+| `booktx.config`        | Project layout, config, names, manifest IO                 |
+| `booktx.models`        | Pydantic models for chunk and manifest contracts           |
+| `booktx.context`       | Translation context models, questions, glossary, rendering |
+| `booktx.markdown_io`   | Markdown extraction and rebuild                            |
+| `booktx.epub_io`       | EPUB extraction and rebuild adapter                        |
+| `booktx.epub_manifest` | EPUB v2 manifest conversion and raw block mapping          |
+| `booktx.html_io`       | Legacy/shared XHTML extraction and rebuild helpers         |
+| `booktx.chunking`      | Sentence segmentation and chunk packing                    |
+| `booktx.placeholders`  | Name/tag placeholder protection and restoration            |
+| `booktx.validate`      | Contract and context validation                            |
+| `booktx.build`         | Final Markdown/EPUB rebuild                                |
+| `booktx.chapters`      | Chapter detection and chapter map persistence              |
 
 ## Project loading
 

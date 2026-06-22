@@ -44,10 +44,10 @@ The core safety rule is simple: a translated chunk must keep the same chunk id, 
 
 ## Supported source formats
 
-| Format | Source suffixes | Extraction path | Rebuild path |
-|---|---|---|---|
-| Markdown | `.md`, `.markdown` | `booktx.markdown_io` | `booktx.markdown_io` |
-| EPUB | `.epub` | `epub2text` via `booktx.epub_io` | `text2epub` via `booktx.build` |
+| Format   | Source suffixes    | Extraction path                  | Rebuild path                   |
+| -------- | ------------------ | -------------------------------- | ------------------------------ |
+| Markdown | `.md`, `.markdown` | `booktx.markdown_io`             | `booktx.markdown_io`           |
+| EPUB     | `.epub`            | `epub2text` via `booktx.epub_io` | `text2epub` via `booktx.build` |
 
 Unsupported formats are rejected during project initialization or source discovery.
 

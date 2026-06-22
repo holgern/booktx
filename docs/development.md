@@ -64,24 +64,24 @@ sphinx-build -b html docs docs/_build/html
 
 ## Current test clusters
 
-| Test file | Area |
-|---|---|
-| `tests/test_build.py` | Markdown/EPUB build behavior |
-| `tests/test_chapters.py` | Chapter detection |
-| `tests/test_chunking.py` | Segmentation and packing |
-| `tests/test_cli.py` | End-to-end CLI behavior |
-| `tests/test_cli_chapters.py` | Chapter CLI workflows |
-| `tests/test_cli_context.py` | Context CLI commands |
-| `tests/test_config.py` | Project config and source discovery |
-| `tests/test_context_io.py` | Context IO/rendering |
-| `tests/test_context_models.py` | Context model contracts |
-| `tests/test_epub_io.py` | EPUB extraction/rebuild |
-| `tests/test_html_io.py` | XHTML helpers |
-| `tests/test_markdown_io.py` | Markdown extraction/rebuild |
-| `tests/test_models.py` | Pydantic contract models |
-| `tests/test_placeholders.py` | Placeholder protection/restoration |
-| `tests/test_validate.py` | Translation contract validation |
-| `tests/test_validate_context.py` | Glossary/context validation |
+| Test file                        | Area                                |
+| -------------------------------- | ----------------------------------- |
+| `tests/test_build.py`            | Markdown/EPUB build behavior        |
+| `tests/test_chapters.py`         | Chapter detection                   |
+| `tests/test_chunking.py`         | Segmentation and packing            |
+| `tests/test_cli.py`              | End-to-end CLI behavior             |
+| `tests/test_cli_chapters.py`     | Chapter CLI workflows               |
+| `tests/test_cli_context.py`      | Context CLI commands                |
+| `tests/test_config.py`           | Project config and source discovery |
+| `tests/test_context_io.py`       | Context IO/rendering                |
+| `tests/test_context_models.py`   | Context model contracts             |
+| `tests/test_epub_io.py`          | EPUB extraction/rebuild             |
+| `tests/test_html_io.py`          | XHTML helpers                       |
+| `tests/test_markdown_io.py`      | Markdown extraction/rebuild         |
+| `tests/test_models.py`           | Pydantic contract models            |
+| `tests/test_placeholders.py`     | Placeholder protection/restoration  |
+| `tests/test_validate.py`         | Translation contract validation     |
+| `tests/test_validate_context.py` | Glossary/context validation         |
 
 ## Coding standards
 

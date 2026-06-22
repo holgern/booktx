@@ -199,7 +199,7 @@ def context_status(
     console.print(f"Status: {status}")
     console.print(f"open_required={len(open_required)} open_total={len(open_total)}")
     console.print(f"glossary_entries={len(ctx.glossary)}")
-    console.print(f"context: {context_markdown_path(proj)}")
+    console.print(f"context: {context_markdown_path(proj)}", soft_wrap=True)
 
 
 @context_app.command(name="render")
@@ -1216,7 +1216,7 @@ def _next_chapter(proj, *, print_context: bool) -> None:
         console.print("All chapter records have accepted translations.")
         raise typer.Exit(code=1)
     if print_context:
-        console.print(f"context: {context_markdown_path(proj)}")
+        console.print(f"context: {context_markdown_path(proj)}", soft_wrap=True)
     console.print(f"chapter: {chapter['chapter_id']}  {chapter['title']}".rstrip())
     console.print(f"status: {chapter['status']}")
     console.print(
@@ -1315,7 +1315,7 @@ def next_cmd(
         console.print("All chunk records have accepted translations.")
         raise typer.Exit(code=1)
     if print_context:
-        console.print(f"context: {context_markdown_path(proj)}")
+        console.print(f"context: {context_markdown_path(proj)}", soft_wrap=True)
     cid = pending_chunks[0]
     chunk_path = proj.chunks_dir / f"{cid}.json"
     records_remaining = next(
@@ -1323,10 +1323,10 @@ def next_cmd(
         for chunk in summary["_chunk_summaries"]
         if chunk["chunk_id"] == cid
     )
-    console.print(f"{cid}\t{chunk_path}")
+    console.print(f"{cid}\t{chunk_path}", soft_wrap=True)
     console.print(f"records remaining: {records_remaining}")
     console.print("[dim]submit with:[/dim]")
-    console.print(f"booktx translate next {project_dir} --unit chunk")
+    console.print(f"booktx translate next {project_dir} --unit chunk", soft_wrap=True)
     console.print("booktx translate insert . --stdin")
     raise typer.Exit(code=0)
 

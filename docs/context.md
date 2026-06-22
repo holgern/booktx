@@ -36,20 +36,20 @@ The command refuses translation work while required questions are open, unless `
 
 The default context asks about:
 
-| Id | Topic | Required |
-|---|---|---|
-| Q001 | Target locale | Yes |
-| Q002 | Overall style | Yes |
-| Q003 | Register | Yes |
-| Q004 | Dialogue style | Yes |
-| Q005 | Names | Yes |
-| Q006 | Invented world terms | Yes |
-| Q007 | Species/culture terms | Yes |
-| Q008 | Honorifics | Yes |
-| Q009 | Place/geopolitical terms | Yes |
-| Q010 | Typography | No |
-| Q011 | Units | No |
-| Q012 | Glossary enforcement | Yes |
+| Id   | Topic                    | Required |
+| ---- | ------------------------ | -------- |
+| Q001 | Target locale            | Yes      |
+| Q002 | Overall style            | Yes      |
+| Q003 | Register                 | Yes      |
+| Q004 | Dialogue style           | Yes      |
+| Q005 | Names                    | Yes      |
+| Q006 | Invented world terms     | Yes      |
+| Q007 | Species/culture terms    | Yes      |
+| Q008 | Honorifics               | Yes      |
+| Q009 | Place/geopolitical terms | Yes      |
+| Q010 | Typography               | No       |
+| Q011 | Units                    | No       |
+| Q012 | Glossary enforcement     | Yes      |
 
 Required questions block `context mark-ready`.
 
@@ -65,14 +65,14 @@ booktx context mark-ready ./book
 
 Some answers hydrate fields in the style profile:
 
-| Question | Hydrated field |
-|---|---|
-| Q001 | `style.target_locale` |
-| Q002 | `style.prose_style` |
-| Q003 | `style.register` |
-| Q004 | `style.dialogue_style` |
-| Q010 | `style.punctuation_policy` |
-| Q011 | `style.units_policy` |
+| Question | Hydrated field             |
+| -------- | -------------------------- |
+| Q001     | `style.target_locale`      |
+| Q002     | `style.prose_style`        |
+| Q003     | `style.register`           |
+| Q004     | `style.dialogue_style`     |
+| Q010     | `style.punctuation_policy` |
+| Q011     | `style.units_policy`       |
 
 Other answers remain as documented decisions in the question list and should inform glossary and style edits.
 
@@ -96,11 +96,11 @@ A glossary entry can approve a target, forbid targets, or both.
 
 Enforcement levels:
 
-| Value | Effect |
-|---|---|
-| `off` | No validation finding |
-| `warn` | Validation warning |
-| `error` | Validation error |
+| Value   | Effect                |
+| ------- | --------------------- |
+| `off`   | No validation finding |
+| `warn`  | Validation warning    |
+| `error` | Validation error      |
 
 Forbidden targets are checked only when the matching source term appears in the source chunk.
 

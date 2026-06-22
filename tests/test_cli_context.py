@@ -160,7 +160,6 @@ def test_context_answers_hydrate_style_profile_in_markdown(tmp_path: Path):
     assert "- Register: neutral" in markdown
     assert "- Dialogue: natural dialogue; keep meaning" in markdown
     assert (
-        "- Punctuation: German quotation marks; preserve dashes and italics"
-        in markdown
+        "- Punctuation: German quotation marks; preserve dashes and italics" in markdown
     )
     assert "- Units: feet -> Fuß, miles -> Meilen" in markdown

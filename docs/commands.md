@@ -23,12 +23,12 @@ Creates the project layout and writes initial config and names files.
 
 Important options:
 
-| Option | Meaning |
-|---|---|
+| Option           | Meaning                                         |
+| ---------------- | ----------------------------------------------- |
 | `--target`, `-t` | Required target language code, for example `de` |
-| `--source`, `-s` | Source language code; default is `en` |
-| `--source-file` | Optional source document copied into `source/` |
-| `--chunk-size` | Maximum records per chunk; default is `50` |
+| `--source`, `-s` | Source language code; default is `en`           |
+| `--source-file`  | Optional source document copied into `source/`  |
+| `--chunk-size`   | Maximum records per chunk; default is `50`      |
 
 ## Inspect
 
@@ -108,11 +108,11 @@ booktx context add-term PROJECT_DIR Lowlands --target "Tieflande" --forbid Niede
 
 `--enforce` accepts:
 
-| Value | Meaning |
-|---|---|
-| `off` | Do not validate this term |
-| `warn` | Emit warnings |
-| `error` | Fail validation |
+| Value   | Meaning                   |
+| ------- | ------------------------- |
+| `off`   | Do not validate this term |
+| `warn`  | Emit warnings             |
+| `error` | Fail validation           |
 
 ### Mark context ready
 
@@ -185,10 +185,10 @@ and `booktx translate insert`.
 
 Exit codes:
 
-| Code | Meaning |
-|---|---|
-| `0` | A pending chunk was found |
-| `1` | Context is missing/not ready, no chunks exist, or every chunk is translated |
+| Code | Meaning                                                                     |
+| ---- | --------------------------------------------------------------------------- |
+| `0`  | A pending chunk was found                                                   |
+| `1`  | Context is missing/not ready, no chunks exist, or every chunk is translated |
 
 The default command requires ready context. Use `--allow-missing-context` only for legacy workflows and tests.
 

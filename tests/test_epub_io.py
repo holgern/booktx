@@ -199,9 +199,10 @@ def test_extract_epub_uses_offsets_not_reparsed_xhtml(tmp_path):
     with read_epub(str(epub_path)) as archive:
         raw = archive.read(title_entry["href"]).decode("utf-8")
     for block in title_entry["blocks"]:
-        assert block["source_fragment"] == raw[
-            block["body_source_start"] : block["body_source_end"]
-        ]
+        assert (
+            block["source_fragment"]
+            == raw[block["body_source_start"] : block["body_source_end"]]
+        )
 
 
 def test_extract_title_page_does_not_raise_raw_block_mapping_error(tmp_path):
