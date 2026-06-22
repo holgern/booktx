@@ -1,3 +1,7 @@
+[![PyPI - Version](https://img.shields.io/pypi/v/booktx)](https://pypi.org/project/booktx/)
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/booktx)
+![PyPI - Downloads](https://img.shields.io/pypi/dm/booktx)
+
 # booktx
 
 `booktx` is a deterministic command-line tool that prepares **Markdown** and
