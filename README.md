@@ -41,7 +41,7 @@ book/
     book.md        # or book.epub — exactly one source document
   .booktx/
     config.toml    # source/target language, format, chunk size
-    manifest.json  # source digest + per-document templates (epub)
+    manifest.json  # source digest + EPUB extraction/rebuild metadata
     names.json     # manually protected verbatim terms (names, brands, places)
     context.json   # authoritative style/glossary/questions context
     context.md     # rendered context that agents must read before translating
@@ -133,7 +133,7 @@ A translated chunk is rejected if any of the following is true:
 - the record count changed;
 - any record id changed;
 - any target is empty;
-- a placeholder (`__NAME_NNN__` / `__TAG_NNN__`) was removed, changed, or added;
+- a placeholder (`__NAME_NNN__` and any visible legacy `__TAG_NNN__`) was removed, changed, or added;
 - a protected name was translated or removed.
 
 The goal is **one source sentence to one translated sentence**. The validator
@@ -141,14 +141,14 @@ never merges or splits records.
 
 ## Placeholders and protected names
 
-Before segmentation, booktx hides non-translatable spans behind stable tokens
-so the translator never sees them, and restores them verbatim during build:
+Before segmentation, booktx hides protected spans behind stable tokens and
+restores them during build:
 
 ```text
 Alice           -> __NAME_001__        (from names.json#protected_terms)
 Mr. Smith       -> __NAME_002__
-inline code     -> __TAG_001__         (markdown: `code`; epub: <code>...</code>)
-link URL        -> __TAG_002__         (markdown: (url); epub: <a href="url">...</a>)
+inline code     -> __TAG_001__         (markdown / legacy EPUB chunks)
+link URL        -> __TAG_002__         (markdown / legacy EPUB chunks)
 ```
 
 Edit `.booktx/names.json` to add names, brands, or places that must survive
@@ -160,8 +160,10 @@ translation untouched:
 }
 ```
 
-The agent **must** preserve every `__NAME_NNN__` and `__TAG_NNN__` token
-exactly. `booktx build` restores the originals after validation.
+The agent **must** preserve every visible `__NAME_NNN__` token and every visible
+legacy `__TAG_NNN__` token exactly. New EPUB extraction no longer emits TAG
+tokens; if they appear in freshly extracted EPUB chunks, treat that as a
+maintenance defect and re-run extraction after upgrading.
 
 ## Markdown handling
 
@@ -175,17 +177,33 @@ reinserts the translated text during build.
 
 ## EPUB handling
 
-- Read with `EbookLib`; process only XHTML spine documents.
-- Preserve images, CSS, metadata, and reading order.
-- Translate visible text nodes only.
-- Do not translate scripts, styles, identifiers, filenames, CSS, or image alt
-  text.
-- Build writes a **new** EPUB; the original is never modified.
+- Extract with `epub2text`; rebuild with `text2epub`.
+- New EPUB chunks contain clean block text plus `__NAME_NNN__` placeholders only.
+- `booktx build` uses the stored `.booktx/manifest.json` extraction data as the
+  source of truth and fails if the source EPUB SHA changed after extract.
+- Identity/no-op EPUB builds are byte-identical to the extracted source EPUB.
+- Changed EPUB blocks rebuild as valid EPUB with no leaked internal tokens.
+- The original source EPUB is never modified.
 
-Inline markup such as `<strong>`, `<em>`, and `<a>` is preserved through
-open/close `__TAG_NNN__` tokens, so the inner text is translated while the tags
-and attributes (e.g. `href`) survive unchanged. Inline `<code>`, `<kbd>`,
-`<samp>`, and `<var>` are opaque — their text is kept verbatim.
+### EPUB MVP inline-formatting tradeoff
+
+The current EPUB rebuild path replaces changed blocks with escaped translated
+text for the whole block body. That means identity/no-op builds preserve
+everything byte-for-byte, but changed blocks may lose inner inline markup such
+as `<strong>` or `<em>` until a future text-run-preserving replacement mode is
+added.
+
+### EPUB migration note
+
+Existing EPUB projects extracted with the legacy TAG-placeholder pipeline should
+be re-extracted after upgrading:
+
+```bash
+booktx extract ./project
+```
+
+Do not mix old EPUB chunks containing `__TAG_NNN__` with the new manifest v2
+pipeline.
 
 ## End-to-end example (Markdown)
 

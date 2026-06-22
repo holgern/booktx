@@ -33,11 +33,11 @@ dependencies = [
     "pydantic>=2",
     "tomli-w",
     "tomli; python_version < \"3.11\"",
-    "ebooklib",
-    "lxml",
     "beautifulsoup4",
     "markdown-it-py",
     "phrasplit",
+    "epub2text>=0.2.4",
+    "text2epub",
 ]
 
 [project.optional-dependencies]

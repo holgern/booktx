@@ -65,7 +65,7 @@ The translated file must be written to `.booktx/translated/0001.json` and must l
 - Keep every record `id` exactly unchanged.
 - Keep the same number and order of records unless the user is explicitly asking to repair source chunks. For normal translation, never merge, split, add, or delete records.
 - Translate only the `source` text into `target` text.
-- Preserve every `__NAME_NNN__` and `__TAG_NNN__` token exactly. Same spelling, same underscores, same digits.
+- Preserve every visible `__NAME_NNN__` token exactly, and preserve any visible legacy `__TAG_NNN__` token exactly. New EPUB chunks should not contain TAG tokens at all.
 - Do not invent new placeholder tokens.
 - Do not replace a `__NAME_NNN__` token with the visible original name. Build restores names later.
 - Do not translate inline code, URLs, tag fragments, or protected names hidden behind placeholders.
@@ -149,7 +149,8 @@ Prefer `booktx validate` as the authoritative check.
 - `booktx/chunking.py`: sentence segmentation and chunk packing.
 - `booktx/markdown_io.py`: Markdown extraction and rebuild.
 - `booktx/html_io.py`: XHTML extraction and rebuild.
-- `booktx/epub_io.py`: EPUB read/extract/build wrapper around EbookLib.
+- `booktx/epub_io.py`: EPUB extraction/build adapter over epub2text and text2epub.
+- `booktx/epub_manifest.py`: EPUB manifest conversion helpers for epub2text/text2epub.
 - `booktx/config.py`: project layout, config TOML, manifest, names, source discovery.
 - `booktx/validate.py`: contract validation and validation report writing.
 - `booktx/build.py`: maps translated records back to spans and rebuilds outputs.
@@ -180,6 +181,11 @@ When editing `booktx/chunking.py`, keep the simple backend forced with
 `use_spacy=False` unless the user explicitly requests an opt-in spaCy mode.
 Do not allow environment-dependent auto-detection in normal extraction.
 
-## EPUB dependency guidance
+## EPUB pipeline guidance
 
-Do not add a plain text EPUB extractor as a core dependency unless it preserves booktx’s span-to-template mapping. A library such as `epub2text` can be useful as a reference for NAV/NCX parsing, chapter listings, page listings, metadata, or optional inspection, but booktx core must preserve XHTML structure and placeholders for rebuild.
+- The current EPUB production path uses `epub2text` for extraction and `text2epub` for rebuilds.
+- New EPUB chunks must not expose `__TAG_NNN__` or `__SPANTX_NNNN__` tokens.
+- For new EPUB projects, visible placeholders should usually be `__NAME_NNN__` only.
+- If a freshly extracted EPUB chunk contains TAG tokens, treat it as a maintenance defect and re-run extraction after fixing the pipeline.
+- Identity/no-op EPUB builds must stay byte-identical to the source EPUB.
+- Changed EPUB blocks may lose inner inline formatting in the current MVP rebuild mode; do not reintroduce TAG placeholders as a workaround.

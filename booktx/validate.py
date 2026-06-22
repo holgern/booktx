@@ -27,8 +27,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from booktx.config import Project
+from booktx.config import Project, load_manifest
 from booktx.context import GlossaryEntry, TranslationContext, load_context
+from booktx.epub_manifest import load_epub_template_from_manifest
 from booktx.models import Chunk, Placeholder, TranslatedChunk
 from booktx.placeholders import TOKEN_RE, collect_tokens
 
@@ -402,6 +403,7 @@ def validate_project(project: Project) -> ValidationReport:
 
     chunk_paths = {p.stem: p for p in project.chunks()}
     translated_paths = {p.stem: p for p in project.translated()}
+    new_epub_pipeline = _uses_new_epub_pipeline(project)
     try:
         context = load_context(project)
     except Exception as exc:  # noqa: BLE001 - surface invalid context as a finding
@@ -418,6 +420,8 @@ def validate_project(project: Project) -> ValidationReport:
     for chunk_id in sorted(chunk_paths):
         source = _load_source_chunk(chunk_paths[chunk_id])
         report.chunks_checked += 1
+        if new_epub_pipeline:
+            report.findings.extend(_check_new_epub_source_chunk(source))
         translated_path = translated_paths.get(chunk_id)
         if translated_path is None:
             report.chunks_missing_translation += 1
@@ -443,6 +447,38 @@ def validate_project(project: Project) -> ValidationReport:
         )
 
     return report
+
+
+def _uses_new_epub_pipeline(project: Project) -> bool:
+    if project.config.format != "epub":
+        return False
+    manifest = load_manifest(project)
+    if manifest is None:
+        return False
+    try:
+        load_epub_template_from_manifest(manifest)
+    except ValueError:
+        return False
+    return True
+
+
+def _check_new_epub_source_chunk(source: Chunk) -> list[Finding]:
+    findings: list[Finding] = []
+    for record in source.records:
+        if "__TAG_" in record.source or "__SPANTX_" in record.source:
+            findings.append(
+                Finding(
+                    chunk_id=source.chunk_id,
+                    severity=Severity.ERROR,
+                    rule="epub_source_contains_legacy_placeholders",
+                    message=(
+                        "new EPUB extraction must not expose __TAG_NNN__ or "
+                        "__SPANTX_NNNN__ placeholders in source records"
+                    ),
+                    record_id=record.id,
+                )
+            )
+    return findings
 
 
 def write_report(project: Project, report: ValidationReport) -> Path:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from ebooklib import epub
@@ -48,17 +49,19 @@ Third sentence. Fourth sentence.
     return project_dir
 
 
-def _make_epub(path: Path) -> None:
+def _make_epub(path: Path, *, headings: bool = True) -> None:
     book = epub.EpubBook()
     book.set_identifier("test-id-001")
     book.set_title("Test Book")
     book.set_language("en")
     book.add_author("Test Author")
+    heading1 = "<h1>Chapter One</h1>" if headings else ""
+    heading2 = "<h1>Chapter Two</h1>" if headings else ""
     ch1 = epub.EpubHtml(title="Chapter One", file_name="ch1.xhtml", lang="en")
     ch1.content = (
         '<html xmlns="http://www.w3.org/1999/xhtml">'
         "<head><title>Chapter One</title></head><body>"
-        "<h1>Chapter One</h1>"
+        f"{heading1}"
         "<p>Alice met Bob. A second sentence.</p>"
         "</body></html>"
     )
@@ -66,22 +69,22 @@ def _make_epub(path: Path) -> None:
     ch2.content = (
         '<html xmlns="http://www.w3.org/1999/xhtml">'
         "<head><title>Chapter Two</title></head><body>"
-        "<h1>Chapter Two</h1>"
+        f"{heading2}"
         "<p>The end.</p>"
         "</body></html>"
     )
     book.add_item(ch1)
     book.add_item(ch2)
-    book.spine = [ch1, ch2]
+    book.spine = ["nav", ch1, ch2]
     book.add_item(epub.EpubNav())
     book.add_item(epub.EpubNcx())
     book.toc = (ch1, ch2)
     epub.write_epub(str(path), book, {})
 
 
-def _make_epub_project(tmp_path: Path) -> Path:
+def _make_epub_project(tmp_path: Path, *, headings: bool = True) -> Path:
     source = tmp_path / "book.epub"
-    _make_epub(source)
+    _make_epub(source, headings=headings)
     project = init_project(
         tmp_path / "epub_book",
         target_language="de",
@@ -93,10 +96,21 @@ def _make_epub_project(tmp_path: Path) -> Path:
     return project.root
 
 
+def _rewrite_manifest(project_dir: Path, transform) -> None:
+    manifest_path = project_dir / ".booktx" / "manifest.json"
+    payload = json.loads(manifest_path.read_text("utf-8"))
+    transform(payload)
+    manifest_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _clear_manifest_navigation(payload: dict[str, object]) -> None:
+    payload["template"].update({"navigation": []})
+
+
 def test_detect_markdown_headings_and_chunk_ranges(tmp_path: Path):
     project_dir = _make_markdown_project(tmp_path)
     chapter_map = detect_chapters(load_project(project_dir))
-    assert [ch.title for ch in chapter_map.chapters] == ["One", "Two"]
+    assert [chapter.title for chapter in chapter_map.chapters] == ["One", "Two"]
     assert chapter_map.chapters[0].chapter_id == "0001"
     assert chapter_map.chapters[0].chunk_ids == ["0001", "0002"]
     assert chapter_map.chapters[0].start_record_id == "0001-000001"
@@ -104,13 +118,36 @@ def test_detect_markdown_headings_and_chunk_ranges(tmp_path: Path):
     assert chapter_map.chapters[1].chunk_ids == ["0002", "0003"]
 
 
-def test_detect_epub_spine_documents_and_headings(tmp_path: Path):
+def test_detect_epub_uses_navigation_entries(tmp_path: Path):
     project_dir = _make_epub_project(tmp_path)
     chapter_map = detect_chapters(load_project(project_dir))
-    titles = [ch.title for ch in chapter_map.chapters]
+    titles = [chapter.title for chapter in chapter_map.chapters]
     assert titles == ["Chapter One", "Chapter Two"]
+
+
+def test_detect_epub_uses_heading_fallback_when_navigation_missing(tmp_path: Path):
+    project_dir = _make_epub_project(tmp_path)
+    _rewrite_manifest(project_dir, _clear_manifest_navigation)
+
+    chapter_map = detect_chapters(load_project(project_dir))
+
+    assert [chapter.title for chapter in chapter_map.chapters] == [
+        "Chapter One",
+        "Chapter Two",
+    ]
+
+
+def test_detect_epub_falls_back_to_single_chapter_without_nav_or_headings(
+    tmp_path: Path,
+):
+    project_dir = _make_epub_project(tmp_path, headings=False)
+    _rewrite_manifest(project_dir, _clear_manifest_navigation)
+
+    chapter_map = detect_chapters(load_project(project_dir))
+
+    assert len(chapter_map.chapters) == 1
+    assert chapter_map.chapters[0].chapter_id == "0001"
     assert chapter_map.chapters[0].chunk_ids
-    assert chapter_map.chapters[1].chunk_ids
 
 
 def test_chapter_map_round_trips(tmp_path: Path):
@@ -120,20 +157,3 @@ def test_chapter_map_round_trips(tmp_path: Path):
     write_chapter_map(project, chapter_map)
     loaded = load_chapter_map(project)
     assert loaded == chapter_map
-
-
-def test_fallback_single_chapter_when_no_headings(tmp_path: Path):
-    src = tmp_path / "plain.md"
-    src.write_text("First sentence. Second sentence.", encoding="utf-8")
-    project = init_project(
-        tmp_path / "plain_book",
-        target_language="de",
-        source_file=src,
-        chunk_size=1,
-    )
-    res = runner.invoke(app, ["extract", str(project.root)])
-    assert res.exit_code == 0, res.output
-    chapter_map = detect_chapters(load_project(project.root))
-    assert len(chapter_map.chapters) == 1
-    assert chapter_map.chapters[0].chapter_id == "0001"
-    assert chapter_map.chapters[0].chunk_ids == ["0001", "0002"]

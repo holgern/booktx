@@ -10,6 +10,9 @@ import json
 
 from booktx.models import (
     Chunk,
+    EpubNavigationRef,
+    EpubSpanRef,
+    EpubTemplateData,
     Manifest,
     ManifestSource,
     NamesFile,
@@ -153,3 +156,42 @@ def test_manifest_roundtrip():
     back = Manifest.model_validate_json(m.model_dump_json())
     assert back.source.filename == "book.md"
     assert back.record_count == 42
+
+
+def test_epub_template_data_roundtrip():
+    template = EpubTemplateData(
+        pipeline="epub2text+text2epub",
+        epub2text_schema="epub2text.structured.v1",
+        text2epub_manifest={"schema_version": 1, "source_sha256": "abc", "entries": []},
+        spans=[
+            EpubSpanRef(
+                span_index=0,
+                block_id="spine-0001:block-000001",
+                document_href="OEBPS/Text/ch1.xhtml",
+                spine_index=1,
+                tag_name="p",
+                source_text="Hello world.",
+                source_text_sha256="deadbeef",
+                placeholders=[
+                    Placeholder(
+                        token="__NAME_001__", original="Alice", kind="name"
+                    )
+                ],
+                protected_terms=["Alice"],
+            )
+        ],
+        navigation=[
+            EpubNavigationRef(
+                id="nav:0:test",
+                title="Chapter One",
+                document_href="OEBPS/Text/ch1.xhtml",
+                spine_index=1,
+                order=0,
+            )
+        ],
+    )
+
+    dumped = json.loads(template.model_dump_json())
+    assert dumped["pipeline"] == "epub2text+text2epub"
+    assert dumped["spans"][0]["block_id"] == "spine-0001:block-000001"
+    assert dumped["navigation"][0]["title"] == "Chapter One"

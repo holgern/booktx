@@ -1,139 +1,79 @@
-"""EPUB extraction and rebuild via :mod:`ebooklib`.
-
-Extraction reads an EPUB, walks the spine (XHTML reading-order documents),
-and runs :mod:`booktx.html_io` on each document. The per-document templates
-and a flat ordered list of prose spans are returned; span order follows spine
-order so chunk ids are deterministic.
-
-Rebuild is the inverse: it loads the same EPUB, applies per-span translated
-text (already name/tag-restored by ``build.py``) into the cached templates,
-and writes a **new** EPUB. Images, CSS, metadata, and spine order are preserved
-because EbookLib round-trips them.
-"""
+"""EPUB extraction and rebuild adapters over epub2text and text2epub."""
 
 from __future__ import annotations
 
-import re
-import warnings
+import zipfile
 from dataclasses import dataclass, field
 
-import ebooklib
-from ebooklib import epub
-
 from booktx.chunking import ProseSpan
-from booktx.html_io import build_xhtml, extract_xhtml
+from booktx.epub_manifest import (
+    assert_source_sha,
+    build_raw_block_index,
+    structured_to_navigation_refs,
+    structured_to_span_refs,
+    structured_to_text2epub_manifest,
+)
+from booktx.models import EpubNavigationRef, EpubSpanRef
 
 __all__ = [
     "EpubExtraction",
-    "EpubTemplate",
-    "extract_epub",
     "build_epub",
+    "extract_epub",
     "read_epub",
 ]
-
-# ebooklib emits a DeprecationWarning about ITEM_DOCUMENT namespace on read.
-warnings.filterwarnings(
-    "ignore",
-    message=".*ITEM_DOCUMENT.*",
-    category=DeprecationWarning,
-    module="ebooklib.*",
-)
-warnings.filterwarnings(
-    "ignore",
-    message=".*In the future.*",
-    category=DeprecationWarning,
-    module="ebooklib.*",
-)
-
-
-@dataclass(slots=True)
-class EpubTemplate:
-    """The template + span indices for one spine document."""
-
-    item_id: str
-    file_name: str
-    template: str
-    #: Number of spans that came from this document (used to slice the global
-    #: span list during rebuild).
-    span_count: int
 
 
 @dataclass(slots=True)
 class EpubExtraction:
-    """Result of :func:`extract_epub`."""
+    """Structured EPUB extraction data used by booktx."""
 
-    templates: list[EpubTemplate] = field(default_factory=list)
     spans: list[ProseSpan] = field(default_factory=list)
+    span_refs: list[EpubSpanRef] = field(default_factory=list)
+    text2epub_manifest: dict[str, object] = field(default_factory=dict)
+    source_sha256: str = ""
+    navigation: list[EpubNavigationRef] = field(default_factory=list)
 
 
-def read_epub(path: str) -> epub.EpubBook:
-    """Read an EPUB file into an :class:`epub.EpubBook`."""
-    return epub.read_epub(str(path), options={})
-
-
-def _spine_documents(book: epub.EpubBook) -> list[epub.EpubHtml]:
-    """Return the XHTML spine items in reading order, deduplicated."""
-    seen: set[str] = set()
-    docs: list[epub.EpubHtml] = []
-    for entry in book.spine:
-        # Spine entries are ``(item_id, linear)`` tuples or bare ids.
-        if isinstance(entry, tuple):
-            item_id = entry[0]
-        else:
-            item_id = getattr(entry, "id", entry)
-        if not isinstance(item_id, str):
-            continue
-        ei = book.get_item_with_id(item_id)
-        if ei is None or ei.id in seen:
-            continue
-        seen.add(ei.id)
-        # Only XHTML spine documents are translated.
-        if ei.get_type() == ebooklib.ITEM_DOCUMENT and ei.file_name.endswith(
-            (".xhtml", ".html", ".htm")
-        ):
-            docs.append(ei)
-    return docs
-
-
-def _item_content_str(item: epub.EpubHtml) -> str:
-    """Return the XHTML content of an item as a decoded string."""
-    raw = item.get_content()
-    if isinstance(raw, bytes):
-        return raw.decode("utf-8", errors="replace")
-    return str(raw)
-
-
-_XML_PROLOG_RE = re.compile(r"^<\?xml[^>]*\?>\s*", re.IGNORECASE)
-_DOCTYPE_RE = re.compile(r"^<!DOCTYPE[^>]*>\s*", re.IGNORECASE)
-
-
-def _strip_xml_preamble(content: str) -> str:
-    """Remove a leading XML prolog / DOCTYPE that ebooklib will re-add."""
-    content = _XML_PROLOG_RE.sub("", content, count=1)
-    content = _DOCTYPE_RE.sub("", content, count=1)
-    return content
+def read_epub(path: str) -> zipfile.ZipFile:
+    """Open an EPUB archive for direct ZIP-level inspection."""
+    return zipfile.ZipFile(str(path))
 
 
 def extract_epub(
     path: str, *, protected_terms: list[str] | None = None
 ) -> EpubExtraction:
-    """Extract translatable spans from every spine document of an EPUB."""
-    protected_terms = protected_terms or []
-    book = read_epub(path)
-    result = EpubExtraction()
-    for doc in _spine_documents(book):
-        content = _item_content_str(doc)
-        html = extract_xhtml(content, protected_terms=protected_terms)
-        result.templates.append(
-            EpubTemplate(
-                item_id=doc.id,
-                file_name=doc.file_name,
-                template=html.template,
-                span_count=len(html.spans),
-            )
-        )
-        result.spans.extend(html.spans)
-    return result
+    """Extract translatable EPUB spans through epub2text structured blocks."""
+    from epub2text import extract_epub_structure
+    from epub2text.structured import ExtractionPolicy
+
+    structured = extract_epub_structure(
+        path,
+        include_raw_documents=True,
+        include_offsets=True,
+        include_inline_runs=True,
+        include_segments=False,
+        policy=ExtractionPolicy(
+            normalize_whitespace=False,
+            remove_duplicate_titles=False,
+            include_nav_documents=False,
+            strict_offsets=False,
+        ),
+    )
+    raw_block_index = build_raw_block_index(structured)
+    spans, span_refs = structured_to_span_refs(
+        structured,
+        protected_terms=protected_terms or [],
+        raw_block_index=raw_block_index,
+    )
+    return EpubExtraction(
+        spans=spans,
+        span_refs=span_refs,
+        text2epub_manifest=structured_to_text2epub_manifest(
+            structured, raw_block_index=raw_block_index
+        ),
+        source_sha256=structured.source_sha256,
+        navigation=structured_to_navigation_refs(structured),
+    )
 
 
 def build_epub(
@@ -142,34 +82,32 @@ def build_epub(
     extraction: EpubExtraction,
     span_replacements: list[str],
 ) -> str:
-    """Write a rebuilt EPUB at ``output_path`` using translated spans.
+    """Rebuild an EPUB via text2epub using one replacement per extracted span."""
+    from text2epub import Replacement, ReplacementPlan, rebuild_epub
 
-    ``span_replacements`` is the global ordered list (one entry per span in
-    ``extraction.spans``); each entry must already be name/tag-restored.
-    Returns the output path.
-    """
-    book = read_epub(source_path)
-    docs = _spine_documents(book)
-    docs_by_id = {d.id: d for d in docs}
+    if len(span_replacements) != len(extraction.span_refs):
+        raise ValueError(
+            "EPUB rebuild replacements do not match the extracted span count."
+        )
 
-    offset = 0
-    for tmpl in extraction.templates:
-        doc = docs_by_id.get(tmpl.item_id)
-        if doc is None:
-            # Spine changed between extract and build; skip safely.
-            offset += tmpl.span_count
-            continue
-        chunk = span_replacements[offset : offset + tmpl.span_count]
-        offset += tmpl.span_count
-        new_content = build_xhtml(tmpl.template, chunk)
-        # ebooklib adds the XML prolog and DOCTYPE on write; its HTML-based
-        # body extractor chokes if they are already present, so strip them.
-        doc.set_content(_strip_xml_preamble(new_content))
-
-    # Rebuild the TOC from spine documents so round-tripped Link objects
-    # (which can carry uid=None) do not break NCX/NAV generation.
-    book.toc = [d for d in docs if d.file_name != "nav.xhtml"]
-
-    epub.write_epub(str(output_path), book, {})
-    return str(output_path)
+    assert_source_sha(source_path, extraction.source_sha256)
+    replacements = [
+        Replacement(
+            block_id=span_ref.block_id,
+            text=target_text,
+            expected_source=span_ref.source_text,
+            allow_inline_xhtml=False,
+        )
+        for span_ref, target_text in zip(
+            extraction.span_refs, span_replacements, strict=True
+        )
+    ]
+    rebuild_epub(
+        ReplacementPlan(
+            source_epub=source_path,
+            extraction_manifest=extraction.text2epub_manifest,
+            replacements=replacements,
+        ),
+        output_path,
+    )
     return str(output_path)

@@ -23,6 +23,9 @@ __all__ = [
     "TranslatedChunk",
     "NamesFile",
     "ProjectConfig",
+    "EpubSpanRef",
+    "EpubNavigationRef",
+    "EpubTemplateData",
     "ManifestSource",
     "Manifest",
 ]
@@ -127,6 +130,56 @@ class ProjectConfig(BaseModel):
         if v not in {"markdown", "epub"}:
             raise ValueError("format must be 'markdown' or 'epub'")
         return v
+
+
+class EpubSpanRef(BaseModel):
+    """Stored span-to-EPUB-block mapping for the migrated EPUB pipeline."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    span_index: int
+    block_id: str
+    document_href: str
+    spine_index: int | None = None
+    tag_name: str
+    source_text: str
+    source_text_sha256: str
+    source_char_start: int | None = None
+    source_char_end: int | None = None
+    placeholders: list[Placeholder] = Field(default_factory=list)
+    protected_terms: list[str] = Field(default_factory=list)
+
+
+class EpubNavigationRef(BaseModel):
+    """Stored navigation metadata for EPUB chapter detection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    title: str
+    href: str | None = None
+    document_href: str | None = None
+    fragment: str | None = None
+    spine_index: int | None = None
+    source_char_start: int | None = None
+    source_byte_start: int | None = None
+    level: int = 1
+    parent_id: str | None = None
+    order: int = 0
+    children: list[str] = Field(default_factory=list)
+    source: str = "nav"
+
+
+class EpubTemplateData(BaseModel):
+    """Typed payload stored in ``Manifest.template`` for EPUB v2 projects."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pipeline: str
+    epub2text_schema: str
+    text2epub_manifest: dict[str, Any] = Field(default_factory=dict)
+    spans: list[EpubSpanRef] = Field(default_factory=list)
+    navigation: list[EpubNavigationRef] = Field(default_factory=list)
 
 
 class ManifestSource(BaseModel):

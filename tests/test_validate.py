@@ -5,8 +5,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from booktx.config import init_project, load_project
-from booktx.models import Chunk, Placeholder, Record
+from booktx.config import init_project, load_project, write_manifest
+from booktx.models import (
+    Chunk,
+    EpubTemplateData,
+    Manifest,
+    ManifestSource,
+    Placeholder,
+    Record,
+)
 from booktx.validate import (
     Severity,
     validate_chunk_pair,
@@ -264,3 +271,56 @@ def test_validate_chunk_pair_directly():
         p.write_text(json.dumps(_valid_translation()), encoding="utf-8")
         findings = validate_chunk_pair(_src_chunk(), p)
         assert all(f.severity != Severity.ERROR for f in findings)
+
+
+def test_new_epub_source_chunk_with_tag_tokens_fails(tmp_path: Path):
+    source = tmp_path / "source.epub"
+    source.write_bytes(b"PK\x03\x04dummy")
+    proj = init_project(tmp_path / "book", target_language="de", source_file=source)
+    manifest = Manifest(
+        version=2,
+        source=ManifestSource(
+            filename="source.epub",
+            format="epub",
+            source_language="en",
+            target_language="de",
+            sha256="abc123",
+        ),
+        template=EpubTemplateData(
+            pipeline="epub2text+text2epub",
+            epub2text_schema="epub2text.structured.v1",
+            text2epub_manifest={
+                "schema_version": 1,
+                "source_sha256": "abc123",
+                "entries": [],
+            },
+            spans=[],
+            navigation=[],
+        ).model_dump(mode="json"),
+    )
+    write_manifest(proj, manifest)
+    proj.chunks_dir.mkdir(parents=True, exist_ok=True)
+    (proj.chunks_dir / "0001.json").write_text(
+        Chunk(
+            chunk_id="0001",
+            source_language="en",
+            target_language="de",
+            records=[
+                Record(
+                    id="0001-000001",
+                    source="Hallo __TAG_001__ Welt.",
+                    protected_terms=[],
+                    placeholders=[],
+                )
+            ],
+        ).model_dump_json(),
+        encoding="utf-8",
+    )
+
+    report = validate_project(proj)
+
+    assert any(
+        finding.rule == "epub_source_contains_legacy_placeholders"
+        for finding in report.findings
+    )
+    assert not report.passed

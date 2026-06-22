@@ -1,36 +1,23 @@
-"""Rebuild the final translated document from validated translated chunks.
-
-build reads the source document via the format-specific extractor (markdown or
-epub), reads the agent-translated chunks in order, maps each translated record
-back onto its parent prose span, restores protected names and inline tags, and
-writes the output file to ``output/<stem>.<target>.<ext>``.
-
-build never invents translation text. If a chunk lacks a validated translation
-file, the corresponding records are skipped and their spans keep their source
-text (with placeholders restored) so the output is still well-formed; the
-caller is expected to run :func:`booktx.validate.validate_project` first.
-"""
+"""Rebuild the final translated document from validated translated chunks."""
 
 from __future__ import annotations
 
 import re
-import zipfile
 from pathlib import Path
 
 from booktx.chunking import ProseSpan
-from booktx.config import Project, find_source_file
-from booktx.epub_io import EpubExtraction, build_epub, extract_epub
+from booktx.config import Project, find_source_file, load_manifest
+from booktx.epub_manifest import assert_source_sha, load_epub_template_from_manifest
 from booktx.markdown_io import build_markdown, extract_markdown
-from booktx.models import Chunk, TranslatedChunk
+from booktx.models import Chunk, EpubSpanRef, TranslatedChunk
 from booktx.placeholders import restore
 
 __all__ = [
     "BuildResult",
+    "BuildError",
     "build_project",
     "records_to_span_text",
 ]
-
-_UNRESOLVED_TOKEN_RE = re.compile(rb"__(?:TAG|NAME)_\d+__|__SPANTX_\d+__")
 
 
 class BuildError(Exception):
@@ -41,7 +28,7 @@ def _load_chunks(project: Project) -> list[Chunk]:
     chunks: list[Chunk] = []
     for path in project.chunks():
         chunks.append(Chunk.model_validate_json(path.read_text("utf-8")))
-    chunks.sort(key=lambda c: c.chunk_id)
+    chunks.sort(key=lambda chunk: chunk.chunk_id)
     return chunks
 
 
@@ -49,40 +36,47 @@ def _load_translated(project: Project) -> dict[str, TranslatedChunk]:
     out: dict[str, TranslatedChunk] = {}
     for path in project.translated():
         try:
-            tc = TranslatedChunk.model_validate_json(path.read_text("utf-8"))
+            translated_chunk = TranslatedChunk.model_validate_json(
+                path.read_text("utf-8")
+            )
         except Exception as exc:  # noqa: BLE001
             raise BuildError(
                 f"translated file {path.name} is not valid: {exc}"
             ) from exc
-        out[tc.chunk_id] = tc
+        out[translated_chunk.chunk_id] = translated_chunk
     return out
 
 
-def _assert_no_unresolved_tokens_in_epub(path: Path) -> None:
-    """Raise BuildError if generated EPUB XHTML/HTML still has internal tokens."""
-    with zipfile.ZipFile(path) as zf:
-        for name in zf.namelist():
-            if not name.lower().endswith((".xhtml", ".html")):
-                continue
-            data = zf.read(name)
-            match = _UNRESOLVED_TOKEN_RE.search(data)
-            if match is None:
-                continue
-            token = match.group(0).decode("ascii", "replace")
-            raise BuildError(
-                f"built EPUB contains unresolved placeholder {token} in {name}"
-            )
-
-
 def records_to_span_text(span: ProseSpan, targets: list[str]) -> str:
-    """Join translated record targets back into one span string.
-
-    ``targets`` is the per-record translated text for the records derived from
-    ``span``, in order. The original span was segmented into sentences; rebuild
-    joins them with a single space, then restores placeholders.
-    """
-    joined = " ".join(t.strip() for t in targets if t and t.strip())
+    """Join translated record targets back into one span string."""
+    joined = " ".join(target.strip() for target in targets if target and target.strip())
     return restore(joined, span.placeholders)
+
+
+def _build_target_stream(
+    chunks: list[Chunk], translated: dict[str, TranslatedChunk]
+) -> list[str]:
+    target_stream: list[str] = []
+    for chunk in chunks:
+        translated_chunk = translated.get(chunk.chunk_id)
+        if translated_chunk is None:
+            target_stream.extend(record.source for record in chunk.records)
+            continue
+        by_id = {record.id: record for record in translated_chunk.records}
+        for record in chunk.records:
+            translated_record = by_id.get(record.id)
+            target_stream.append(
+                translated_record.target if translated_record else record.source
+            )
+    return target_stream
+
+
+def _prose_span_from_ref(span_ref: EpubSpanRef) -> ProseSpan:
+    return ProseSpan(
+        text=span_ref.source_text,
+        placeholders=span_ref.placeholders,
+        protected_terms=span_ref.protected_terms,
+    )
 
 
 def _build_markdown(project: Project) -> BuildResult:
@@ -96,30 +90,14 @@ def _build_markdown(project: Project) -> BuildResult:
     chunks = _load_chunks(project)
     translated = _load_translated(project)
 
-    # Map chunk records back onto spans in order. Records were produced by
-    # segmenting spans in order, so re-segment each span to know how many
-    # records it produced, then consume that many targets per span.
     from booktx.chunking import segment_spans
 
     seg_counts = [
         len(segment_spans([span], language=project.config.source_language))
         for span in spans
     ]
+    target_stream = _build_target_stream(chunks, translated)
 
-    target_stream: list[str] = []
-    for chunk in chunks:
-        tc = translated.get(chunk.chunk_id)
-        if tc is None:
-            # No translation: fall back to source text for these records.
-            for rec in chunk.records:
-                target_stream.append(rec.source)
-            continue
-        by_id = {r.id: r for r in tc.records}
-        for rec in chunk.records:
-            trec = by_id.get(rec.id)
-            target_stream.append(trec.target if trec else rec.source)
-
-    # Walk spans, consuming seg_counts[i] targets each.
     pos = 0
     for idx, span in enumerate(spans):
         count = seg_counts[idx]
@@ -127,7 +105,7 @@ def _build_markdown(project: Project) -> BuildResult:
         pos += count
         span_texts[idx] = records_to_span_text(span, chunk_targets)
 
-    replacements = [t or "" for t in span_texts]
+    replacements = [text or "" for text in span_texts]
     output = build_markdown(extraction.template, replacements)
 
     out_path = _output_path(project, source, suffix=".md")
@@ -137,42 +115,101 @@ def _build_markdown(project: Project) -> BuildResult:
 
 
 def _build_epub(project: Project) -> BuildResult:
-    source = find_source_file(project)
-    names = _load_names(project)
-    extraction: EpubExtraction = extract_epub(str(source), protected_terms=names)
+    from text2epub import Replacement, ReplacementPlan, rebuild_epub
+    from text2epub.errors import ReplacementError, ValidationError
+    from text2epub.validation import scan_epub_for_unresolved_tokens
 
-    spans = extraction.spans
+    source = find_source_file(project)
+    manifest = load_manifest(project)
+    if manifest is None:
+        raise BuildError(
+            "EPUB extraction manifest is missing. Run `booktx extract` first."
+        )
+
+    try:
+        epub_template = load_epub_template_from_manifest(manifest)
+        assert_source_sha(source, manifest.source.sha256)
+        assert_source_sha(
+            source,
+            str(epub_template.text2epub_manifest.get("source_sha256", "")),
+        )
+    except ValueError as exc:
+        raise BuildError(str(exc)) from exc
+
     chunks = _load_chunks(project)
     translated = _load_translated(project)
+    target_stream = _build_target_stream(chunks, translated)
 
-    # Build the ordered target stream (same logic as markdown).
-    target_stream: list[str] = []
-    for chunk in chunks:
-        tc = translated.get(chunk.chunk_id)
-        if tc is None:
-            target_stream.extend(rec.source for rec in chunk.records)
-            continue
-        by_id = {r.id: r for r in tc.records}
-        for rec in chunk.records:
-            trec = by_id.get(rec.id)
-            target_stream.append(trec.target if trec else rec.source)
-
-    # Consume per-span target counts.
     from booktx.chunking import segment_spans
 
-    replacements: list[str] = []
+    replacements: list[Replacement] = []
     pos = 0
-    for span in spans:
-        count = len(segment_spans([span], language=project.config.source_language))
+    for span_ref in epub_template.spans:
+        span = _prose_span_from_ref(span_ref)
+        count = len(
+            segment_spans([span], language=manifest.source.source_language)
+        )
         chunk_targets = target_stream[pos : pos + count]
+        if len(chunk_targets) != count:
+            raise BuildError(
+                "Stored EPUB spans no longer align with the extracted chunk stream. "
+                "Re-run `booktx extract`."
+            )
         pos += count
-        replacements.append(records_to_span_text(span, chunk_targets))
+        replacements.append(
+            Replacement(
+                block_id=span_ref.block_id,
+                text=records_to_span_text(span, chunk_targets),
+                expected_source=span_ref.source_text,
+                allow_inline_xhtml=False,
+            )
+        )
+
+    if pos != len(target_stream):
+        raise BuildError(
+            "Chunk records do not align with the stored EPUB span order. "
+            "Re-run `booktx extract`."
+        )
 
     out_path = _output_path(project, source, suffix=".epub")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    build_epub(str(source), str(out_path), extraction, replacements)
-    _assert_no_unresolved_tokens_in_epub(out_path)
-    return BuildResult(output_path=out_path, format="epub", span_count=len(spans))
+    try:
+        report = rebuild_epub(
+            ReplacementPlan(
+                source_epub=source,
+                extraction_manifest=epub_template.text2epub_manifest,
+                replacements=replacements,
+            ),
+            out_path,
+        )
+    except ValidationError as exc:
+        match = re.search(r"token '([^']+)'.*entry '([^']+)'", str(exc))
+        if match is not None:
+            token, entry_name = match.groups()
+            raise BuildError(
+                f"built EPUB contains unresolved placeholder {token} in {entry_name}"
+            ) from exc
+        raise BuildError(str(exc)) from exc
+    except ReplacementError as exc:
+        raise BuildError(str(exc)) from exc
+
+    findings = scan_epub_for_unresolved_tokens(out_path)
+    if findings:
+        entry_name, token = findings[0]
+        raise BuildError(
+            f"built EPUB contains unresolved placeholder {token} in {entry_name}"
+        )
+
+    return BuildResult(
+        output_path=out_path,
+        format="epub",
+        span_count=len(epub_template.spans),
+        report={
+            "changed_entries": report.changed_entries,
+            "replacement_count": report.replacement_count,
+            "unresolved_token_count": report.unresolved_token_count,
+        },
+    )
 
 
 def _load_names(project: Project) -> list[str]:
@@ -190,16 +227,25 @@ def _output_path(project: Project, source: Path, *, suffix: str) -> Path:
 class BuildResult:
     """Outcome of a build run."""
 
-    def __init__(self, *, output_path: Path, format: str, span_count: int) -> None:
+    def __init__(
+        self,
+        *,
+        output_path: Path,
+        format: str,
+        span_count: int,
+        report: dict[str, object] | None = None,
+    ) -> None:
         self.output_path = output_path
         self.format = format
         self.span_count = span_count
+        self.report = report or {}
 
     def as_dict(self) -> dict[str, object]:
         return {
             "output_path": str(self.output_path),
             "format": self.format,
             "span_count": self.span_count,
+            "report": self.report,
         }
 
 

@@ -40,6 +40,7 @@ from booktx.context import (
     write_context_markdown,
 )
 from booktx.epub_io import extract_epub
+from booktx.epub_manifest import EPUB2TEXT_SCHEMA, EPUB_TEMPLATE_PIPELINE
 from booktx.html_io import build_xhtml  # noqa: F401  (kept for downstream use)
 from booktx.markdown_io import extract_markdown
 from booktx.models import NamesFile
@@ -329,7 +330,9 @@ def inspect(
 
     fmt = proj.config.format
     names = _load_names_list(proj)
-    record_count, extra = _count_records(source, fmt, names)
+    record_count, extra = _count_records(
+        source, fmt, names, proj.config.source_language
+    )
 
     table = Table(title=f"booktx inspect — {proj.root}", show_header=False)
     table.add_row("source_file", source.name)
@@ -348,7 +351,9 @@ def _load_names_list(proj) -> list[str]:
     return load_names(proj).protected_terms
 
 
-def _count_records(source: Path, fmt: str, names: list[str]) -> tuple[int, str]:
+def _count_records(
+    source: Path, fmt: str, names: list[str], source_language: str
+) -> tuple[int, str]:
     if fmt == "markdown":
         text = source.read_text("utf-8")
         ext = extract_markdown(text, protected_terms=names)
@@ -363,7 +368,7 @@ def _count_records(source: Path, fmt: str, names: list[str]) -> tuple[int, str]:
 
     from booktx.chunking import segment_spans
 
-    records = segment_spans(spans, language="en")
+    records = segment_spans(spans, language=source_language)
     return len(records), details
 
 
@@ -394,8 +399,6 @@ def extract(
     elif fmt == "epub":
         extraction = extract_epub(str(source), protected_terms=names)
         spans = extraction.spans
-        # Persist per-document templates in the manifest so build can map back.
-        _save_epub_manifest(proj, source, extraction)
     else:  # pragma: no cover
         _die(f"Unsupported format {fmt!r}")
         return
@@ -406,6 +409,8 @@ def extract(
         target_language=proj.config.target_language,
         chunk_size=proj.config.chunk_size,
     )
+    if fmt == "epub":
+        _assert_epub_records_are_clean(chunks)
 
     # Idempotent rebuild of chunks/ — wipe and rewrite, keep translated/.
     proj.chunks_dir.mkdir(parents=True, exist_ok=True)
@@ -417,40 +422,52 @@ def extract(
         )
 
     record_count = sum(len(c.records) for c in chunks)
+    if fmt == "epub":
+        _save_epub_manifest(proj, source, extraction, len(chunks), record_count)
     console.print(
         f"[green]Extracted[/green] {len(chunks)} chunk(s), "
         f"{record_count} record(s) into {proj.chunks_dir}"
     )
 
 
-def _save_epub_manifest(proj, source, extraction) -> None:
-    """Record epub templates and a source digest in manifest.json."""
-    import hashlib
+def _assert_epub_records_are_clean(chunks) -> None:
+    for chunk in chunks:
+        for record in chunk.records:
+            if "__TAG_" in record.source or "__SPANTX_" in record.source:
+                raise BooktxError(
+                    "new EPUB extraction produced TAG/SPANTX placeholders; "
+                    "this is forbidden"
+                )
+
+
+def _save_epub_manifest(
+    proj, source, extraction, chunk_count: int, record_count: int
+) -> None:
+    """Record EPUB v2 extraction metadata in manifest.json."""
     import json
 
     from booktx.config import write_manifest
-    from booktx.models import Manifest, ManifestSource
+    from booktx.models import EpubTemplateData, Manifest, ManifestSource
 
-    sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    template = EpubTemplateData(
+        pipeline=EPUB_TEMPLATE_PIPELINE,
+        epub2text_schema=EPUB2TEXT_SCHEMA,
+        text2epub_manifest=extraction.text2epub_manifest,
+        spans=extraction.span_refs,
+        navigation=extraction.navigation,
+    )
     manifest = Manifest(
+        version=2,
         source=ManifestSource(
             filename=source.name,
             format="epub",
             source_language=proj.config.source_language,
             target_language=proj.config.target_language,
-            sha256=sha,
+            sha256=extraction.source_sha256,
         ),
-        template={
-            "documents": [
-                {
-                    "item_id": t.item_id,
-                    "file_name": t.file_name,
-                    "template": t.template,
-                    "span_count": t.span_count,
-                }
-                for t in extraction.templates
-            ]
-        },
+        chunk_count=chunk_count,
+        record_count=record_count,
+        template=template.model_dump(mode="json"),
     )
     write_manifest(proj, manifest)
     # names file convenience: keep names.json in sync if user edited it.
@@ -644,6 +661,20 @@ def build(
         return
 
     console.print(f"[green]Built[/green] {result.format} -> {result.output_path}")
+    if result.report:
+        changed_entries = result.report.get("changed_entries", [])
+        console.print(
+            "  changed_entries="
+            f"{_changed_entry_count(changed_entries)} "
+            f"replacements={result.report.get('replacement_count', 0)} "
+            f"unresolved_tokens={result.report.get('unresolved_token_count', 0)}"
+        )
+
+
+def _changed_entry_count(changed_entries) -> object:
+    if isinstance(changed_entries, list):
+        return len(changed_entries)
+    return changed_entries
 
 
 # --- top-level callback (version) --------------------------------------------
