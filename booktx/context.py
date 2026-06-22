@@ -31,6 +31,7 @@ __all__ = [
     "ContextQuestion",
     "ChapterContext",
     "TranslationContext",
+    "apply_answer_to_context",
     "context_path",
     "context_markdown_path",
     "chapter_map_path",
@@ -235,15 +236,13 @@ def seed_questions() -> list[ContextQuestion]:
         (
             "Q008",
             "honorifics",
-            "Honorifics: keep Sieur, translate it, or use a German "
-            "equivalent?",
+            "Honorifics: keep Sieur, translate it, or use a German equivalent?",
             True,
         ),
         (
             "Q009",
             "place_geopolitical",
-            "Place/geopolitical terms: especially Lowlands, Lowlander, "
-            "Lowland cities.",
+            "Place/geopolitical terms: especially Lowlands, Lowlander, Lowland cities.",
             True,
         ),
         (
@@ -307,9 +306,7 @@ def seed_glossary() -> list[GlossaryEntry]:
     ]
 
 
-def default_context(
-    project: Project, source_sha256: str = ""
-) -> TranslationContext:
+def default_context(project: Project, source_sha256: str = "") -> TranslationContext:
     """Build a not-ready context pre-filled from the project config.
 
     Source/target languages and the source digest are taken from the project.
@@ -326,6 +323,26 @@ def default_context(
         glossary=seed_glossary(),
         questions=seed_questions(),
     )
+
+
+def apply_answer_to_context(
+    context: TranslationContext, question_id: str, text: str
+) -> None:
+    value = text.strip()
+    if not value:
+        return
+    if question_id == "Q001":
+        context.style.target_locale = value
+    elif question_id == "Q002":
+        context.style.prose_style = value
+    elif question_id == "Q003":
+        context.style.register_level = value
+    elif question_id == "Q004":
+        context.style.dialogue_style = value
+    elif question_id == "Q010":
+        context.style.punctuation_policy = value
+    elif question_id == "Q011":
+        context.style.units_policy = value
 
 
 # --- markdown rendering ------------------------------------------------------

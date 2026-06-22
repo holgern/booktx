@@ -1,0 +1,127 @@
+# Translation contract
+
+The contract is the boundary between booktx and the translator or coding agent.
+
+booktx writes source chunks. The translator writes translated chunks. Validation checks that translated chunks preserve the structure and all required tokens.
+
+## Source chunk shape
+
+```json
+{
+  "chunk_id": "0001",
+  "source_language": "en",
+  "target_language": "de",
+  "records": [
+    {
+      "id": "0001-000001",
+      "source": "__NAME_001__ looked at Mr. Smith.",
+      "protected_terms": ["Alice"],
+      "placeholders": [
+        { "token": "__NAME_001__", "original": "Alice", "kind": "name" }
+      ]
+    }
+  ]
+}
+```
+
+## Translated chunk shape
+
+```json
+{
+  "chunk_id": "0001",
+  "records": [
+    {
+      "id": "0001-000001",
+      "target": "__NAME_001__ sah Mr. Smith an."
+    }
+  ]
+}
+```
+
+## Hard rules
+
+A translated chunk is invalid if any of these are true:
+
+| Rule | Why it matters |
+|---|---|
+| JSON is invalid | Build and validation need machine-readable files |
+| Commentary appears outside the JSON object | Agents must not wrap translations in prose or code fences |
+| `chunk_id` changed | The file no longer maps to the source chunk |
+| Record count changed | Booktx cannot align source and target streams |
+| Any record `id` changed | The record mapping is broken |
+| A `target` is empty | The translation is incomplete |
+| A visible placeholder was removed | Rebuild cannot restore protected material |
+| A visible placeholder was changed | Rebuild cannot safely identify the protected material |
+| A new placeholder was invented | The new token has no stored original |
+| A protected name appears translated | Protected terms must survive exactly |
+
+## Placeholder rules
+
+Preserve visible placeholders exactly:
+
+```text
+__NAME_001__
+__TAG_001__
+```
+
+Do not:
+
+- translate a placeholder
+- remove a placeholder
+- replace a placeholder with the original visible text
+- change zero padding
+- create new placeholder ids
+- move a placeholder to another record unless it was visible in that record and the sentence requires it
+
+The build step restores placeholders after joining translated records back into spans.
+
+## One source sentence to one translated sentence
+
+The validator expects each source record to have exactly one target record.
+
+Do not merge records:
+
+```json
+[
+  { "id": "0001-000001", "target": "..." },
+  { "id": "0001-000002", "target": "..." }
+]
+```
+
+must not become:
+
+```json
+[
+  { "id": "0001-000001", "target": "... ..." }
+]
+```
+
+Do not split one source record into multiple translated records.
+
+## Missing translations
+
+If a source chunk has no translated file, validation reports it as missing but does not treat that as a contract error for the existing translated files. Build falls back to source text for missing translated chunks.
+
+For production translation, treat missing chunks as incomplete work even if the validator can still inspect the project.
+
+## Stale translations
+
+If a translated file exists for a chunk id that no longer exists in `chunks/`, validation reports a warning. This usually means the source was edited and extraction was rerun.
+
+Review stale files before deleting them; they may contain useful translation work.
+
+## Minimal valid translated file
+
+```json
+{
+  "chunk_id": "0001",
+  "records": [
+    {
+      "id": "0001-000001",
+      "target": "Translated sentence."
+    }
+  ]
+}
+```
+
+No Markdown fences. No comments. No trailing explanation.

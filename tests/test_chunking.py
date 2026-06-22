@@ -51,8 +51,7 @@ def test_segment_filters_placeholders_to_visible_record_tokens():
     spans = [
         ProseSpan(
             text=(
-                "__TAG_001__First__TAG_002__ sentence. "
-                "Second sentence without tags."
+                "__TAG_001__First__TAG_002__ sentence. Second sentence without tags."
             ),
             placeholders=[
                 Placeholder(token="__TAG_001__", original="<i>", kind="tag"),

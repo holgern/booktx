@@ -98,9 +98,7 @@ def test_next_chapter_skips_completed_chapter(tmp_path: Path):
     for cid in ("0001", "0002"):
         chunk_path = project_dir / ".booktx" / "chunks" / f"{cid}.json"
         chunk = json.loads(chunk_path.read_text("utf-8"))
-        records = [
-            {"id": r["id"], "target": r["source"]} for r in chunk["records"]
-        ]
+        records = [{"id": r["id"], "target": r["source"]} for r in chunk["records"]]
         payload = {"chunk_id": cid, "records": records}
         out_path = translated_dir / f"{cid}.json"
         out_path.write_text(json.dumps(payload), encoding="utf-8")

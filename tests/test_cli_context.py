@@ -78,9 +78,7 @@ def test_context_add_term_persists_glossary_entry(tmp_path: Path):
     low = next(g for g in data["glossary"] if g["source"] == "Lowlands")
     assert "Niederländer" in low["forbidden_targets"]
     assert low["enforce"] == "error"
-    assert "Niederländer" in (project_dir / ".booktx" / "context.md").read_text(
-        "utf-8"
-    )
+    assert "Niederländer" in (project_dir / ".booktx" / "context.md").read_text("utf-8")
 
 
 def test_context_mark_ready_fails_until_required_answers_exist(tmp_path: Path):
@@ -132,3 +130,37 @@ def test_context_render_regenerates_markdown(tmp_path: Path):
     res = runner.invoke(app, ["context", "render", str(project_dir)])
     assert res.exit_code == 0, res.output
     assert "booktx translation context" in md_path.read_text("utf-8")
+
+
+def test_context_answers_hydrate_style_profile_in_markdown(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    runner.invoke(app, ["context", "init", str(project_dir), "--non-interactive"])
+
+    answers = [
+        ("Q001", "de-DE"),
+        ("Q002", "balanced"),
+        ("Q003", "neutral"),
+        ("Q004", "natural dialogue; keep meaning"),
+        ("Q010", "German quotation marks; preserve dashes and italics"),
+        ("Q011", "feet -> Fuß, miles -> Meilen"),
+    ]
+    for qid, text in answers:
+        res = runner.invoke(
+            app,
+            ["context", "answer", str(project_dir), qid, "--text", text],
+        )
+        assert res.exit_code == 0, res.output
+
+    render = runner.invoke(app, ["context", "render", str(project_dir)])
+    assert render.exit_code == 0, render.output
+
+    markdown = (project_dir / ".booktx" / "context.md").read_text("utf-8")
+    assert "Target locale: de-DE" in markdown
+    assert "- Prose style: balanced" in markdown
+    assert "- Register: neutral" in markdown
+    assert "- Dialogue: natural dialogue; keep meaning" in markdown
+    assert (
+        "- Punctuation: German quotation marks; preserve dashes and italics"
+        in markdown
+    )
+    assert "- Units: feet -> Fuß, miles -> Meilen" in markdown

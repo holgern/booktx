@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import zipfile
+
 import pytest
 from ebooklib import epub
 from text2epub.validation import sha256_path
@@ -42,6 +44,70 @@ def _make_epub(path: str) -> None:
     book.add_item(epub.EpubNcx())
     book.toc = (ch1, ch2)
     epub.write_epub(str(path), book, {})
+
+
+def _make_raw_title_epub(path) -> None:
+    title_xhtml = """<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+  <head><title>Title</title></head>
+  <body>
+    <section epub:type="title">
+      <h1 class='book-title'>Blood&#160;of&#160;the&#160;Mantis</h1>
+      <p class='flush-centered'>ADRIAN TCHAIKOVSKY</p>
+    </section>
+  </body>
+</html>
+"""
+    container_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>
+"""
+    content_opf = """<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="bookid">raw-title-book</dc:identifier>
+    <dc:title>Raw Title Book</dc:title>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item
+      id="nav"
+      href="nav.xhtml"
+      media-type="application/xhtml+xml"
+      properties="nav"
+    />
+    <item id="title" href="title.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="nav"/>
+    <itemref idref="title"/>
+  </spine>
+</package>
+"""
+    nav_xhtml = """<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+  <head><title>Navigation</title></head>
+  <body>
+    <nav epub:type="toc" id="toc">
+      <ol>
+        <li><a href="title.xhtml">Title</a></li>
+      </ol>
+    </nav>
+  </body>
+</html>
+"""
+
+    with zipfile.ZipFile(path, "w") as archive:
+        mimetype = zipfile.ZipInfo("mimetype")
+        mimetype.compress_type = zipfile.ZIP_STORED
+        archive.writestr(mimetype, "application/epub+zip")
+        archive.writestr("META-INF/container.xml", container_xml)
+        archive.writestr("OEBPS/content.opf", content_opf)
+        archive.writestr("OEBPS/nav.xhtml", nav_xhtml)
+        archive.writestr("OEBPS/title.xhtml", title_xhtml)
 
 
 def test_extract_reads_spine_documents_without_tag_placeholders(tmp_path):
@@ -115,6 +181,39 @@ def test_extract_title_like_xhtml_uses_document_order(tmp_path):
     ]
 
 
+def test_extract_epub_uses_offsets_not_reparsed_xhtml(tmp_path):
+    epub_path = tmp_path / "raw-title.epub"
+    _make_raw_title_epub(epub_path)
+
+    extraction = extract_epub(str(epub_path))
+
+    texts = [span.text for span in extraction.spans]
+    assert any("Blood" in text and "Mantis" in text for text in texts)
+    assert any("ADRIAN TCHAIKOVSKY" in text for text in texts)
+
+    title_entry = next(
+        entry
+        for entry in extraction.text2epub_manifest["entries"]
+        if str(entry["href"]).endswith("title.xhtml")
+    )
+    with read_epub(str(epub_path)) as archive:
+        raw = archive.read(title_entry["href"]).decode("utf-8")
+    for block in title_entry["blocks"]:
+        assert block["source_fragment"] == raw[
+            block["body_source_start"] : block["body_source_end"]
+        ]
+
+
+def test_extract_title_page_does_not_raise_raw_block_mapping_error(tmp_path):
+    epub_path = tmp_path / "title-page.epub"
+    _make_raw_title_epub(epub_path)
+
+    extraction = extract_epub(str(epub_path))
+
+    texts = [span.text.replace("\xa0", " ") for span in extraction.spans]
+    assert texts == ["Blood of the Mantis", "ADRIAN TCHAIKOVSKY"]
+
+
 def test_extract_builds_text2epub_manifest_with_inner_source_fragment(tmp_path):
     epub_path = tmp_path / "book.epub"
     _make_epub(epub_path)
@@ -133,9 +232,10 @@ def test_extract_builds_text2epub_manifest_with_inner_source_fragment(tmp_path):
         raw = archive.read(chapter_entry["href"]).decode("utf-8")
 
     assert block["replacement_mode"] == "whole_block_body"
-    assert block["source_fragment"] == raw[
-        block["body_source_start"] : block["body_source_end"]
-    ]
+    assert (
+        block["source_fragment"]
+        == raw[block["body_source_start"] : block["body_source_end"]]
+    )
 
 
 def test_build_identity_is_byte_identical(tmp_path):

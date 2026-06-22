@@ -146,9 +146,7 @@ def _build_epub(project: Project) -> BuildResult:
     pos = 0
     for span_ref in epub_template.spans:
         span = _prose_span_from_ref(span_ref)
-        count = len(
-            segment_spans([span], language=manifest.source.source_language)
-        )
+        count = len(segment_spans([span], language=manifest.source.source_language))
         chunk_targets = target_stream[pos : pos + count]
         if len(chunk_targets) != count:
             raise BuildError(

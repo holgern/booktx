@@ -6,10 +6,10 @@ import re
 import zipfile
 from dataclasses import dataclass
 from hashlib import sha256
+from html.parser import HTMLParser
 from pathlib import Path
 
 from booktx.chunking import ProseSpan
-from booktx.html_io import _translatable_blocks, parse_xhtml
 from booktx.models import EpubNavigationRef, EpubSpanRef, EpubTemplateData, Manifest
 from booktx.placeholders import protect_names
 
@@ -48,6 +48,132 @@ class _RawBlock:
 
 
 _SPACE_BEFORE_PUNCT_RE = re.compile(r"\s+([.,;:!?])")
+_DEFAULT_SKIP_TAGS = frozenset({"head", "title", "script", "style", "noscript"})
+_VOID_TAGS = {
+    "area",
+    "base",
+    "br",
+    "col",
+    "embed",
+    "hr",
+    "img",
+    "input",
+    "link",
+    "meta",
+    "param",
+    "source",
+    "track",
+    "wbr",
+}
+
+
+@dataclass(slots=True)
+class _OpenRawBlock:
+    tag_name: str
+    path: str
+    outer_start: int
+    inner_start: int
+
+
+@dataclass(slots=True)
+class _ParsedRawBlock:
+    tag_name: str
+    path: str
+    outer_start: int
+    outer_end: int
+    inner_start: int
+    inner_end: int
+
+
+class _RawBlockParser(HTMLParser):
+    def __init__(self, raw_text: str, *, block_tags: frozenset[str]):
+        super().__init__(convert_charrefs=False)
+        self.raw_text = raw_text
+        self.block_tags = block_tags
+        self.line_starts = self._line_starts(raw_text)
+        self.stack: list[tuple[str, int]] = []
+        self.open_blocks: list[_OpenRawBlock] = []
+        self.blocks: list[_ParsedRawBlock] = []
+
+    @staticmethod
+    def _line_starts(text: str) -> list[int]:
+        starts = [0]
+        for match in re.finditer("\n", text):
+            starts.append(match.end())
+        return starts
+
+    def _offset(self) -> int:
+        line, col = self.getpos()
+        return self.line_starts[line - 1] + col
+
+    def _skipped(self) -> bool:
+        return any(tag in _DEFAULT_SKIP_TAGS for tag, _ in self.stack)
+
+    def _path(self, tag: str) -> str:
+        counts: dict[str, int] = {}
+        parts = []
+        for name, _ in self.stack + [(tag, 0)]:
+            counts[name] = counts.get(name, 0) + 1
+            parts.append(f"{name}[{counts[name]}]")
+        return "/" + "/".join(parts)
+
+    def handle_starttag(self, tag: str, attrs) -> None:  # type: ignore[override]
+        tag = tag.lower()
+        start = self._offset()
+        raw = self.get_starttag_text() or self.raw_text[start:start]
+        end = start + len(raw)
+        if not self._skipped() and tag in self.block_tags:
+            self.open_blocks.append(
+                _OpenRawBlock(
+                    tag_name=tag,
+                    path=self._path(tag),
+                    outer_start=start,
+                    inner_start=end,
+                )
+            )
+        if tag not in _VOID_TAGS:
+            self.stack.append((tag, start))
+
+    def handle_startendtag(self, tag: str, attrs) -> None:  # type: ignore[override]
+        tag = tag.lower()
+        if self._skipped() or tag not in self.block_tags:
+            return
+        start = self._offset()
+        raw = self.get_starttag_text() or self.raw_text[start:start]
+        end = start + len(raw)
+        self.blocks.append(
+            _ParsedRawBlock(
+                tag_name=tag,
+                path=self._path(tag),
+                outer_start=start,
+                outer_end=end,
+                inner_start=end,
+                inner_end=end,
+            )
+        )
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        end_start = self._offset()
+        raw_match = re.match(r"</\s*[^>]+>", self.raw_text[end_start:])
+        raw = raw_match.group(0) if raw_match else f"</{tag}>"
+        end = end_start + len(raw)
+        if self.open_blocks and self.open_blocks[-1].tag_name == tag:
+            block = self.open_blocks.pop()
+            self.blocks.append(
+                _ParsedRawBlock(
+                    tag_name=block.tag_name,
+                    path=block.path,
+                    outer_start=block.outer_start,
+                    outer_end=end,
+                    inner_start=block.inner_start,
+                    inner_end=end_start,
+                )
+            )
+        for i in range(len(self.stack) - 1, -1, -1):
+            if self.stack[i][0] == tag:
+                del self.stack[i:]
+                break
 
 
 def sha256_path(path: Path | str) -> str:
@@ -66,68 +192,57 @@ def assert_source_sha(path: Path | str, expected_sha: str) -> None:
 
 def build_raw_block_index(structured) -> dict[str, _RawBlock]:
     """Map epub2text block ids to raw archive offsets and fragments."""
-    document_blocks: dict[str, list] = {}
+    blocks_by_document_id: dict[str, list] = {}
     for block in structured.blocks:
-        document_blocks.setdefault(block.document_id, []).append(block)
+        blocks_by_document_id.setdefault(block.document_id, []).append(block)
 
     raw_index: dict[str, _RawBlock] = {}
     with zipfile.ZipFile(structured.source_path) as archive:
         archive_names = archive.namelist()
         for document in structured.documents:
+            structured_blocks = blocks_by_document_id.get(document.document_id, [])
+            if not structured_blocks:
+                continue
+
             href = _resolve_archive_href(document.href, archive_names)
             raw_bytes = archive.read(href)
-            raw_text = raw_bytes.decode("utf-8")
-            soup = parse_xhtml(raw_text)
-            candidate_blocks = _translatable_blocks(soup)
+            encoding = document.encoding or "utf-8"
+            raw_text = raw_bytes.decode(encoding)
+            block_tags = frozenset(block.tag_name for block in structured_blocks)
+            raw_parser = _RawBlockParser(raw_text, block_tags=block_tags)
+            raw_parser.feed(raw_text)
+            raw_parser.close()
 
-            raw_candidates: list[_RawBlock] = []
-            cursor = 0
-            for candidate in candidate_blocks:
-                serialized = str(candidate)
-                start = raw_text.find(serialized, cursor)
-                if start < 0:
-                    continue
-                end = start + len(serialized)
-                open_end = serialized.find(">") + 1
-                close_start = serialized.rfind(f"</{candidate.name}>")
-                inner_start = start + open_end
-                inner_end = start + close_start
-                raw_candidates.append(
-                    _RawBlock(
-                        href=href,
-                        raw_sha256=sha256(raw_bytes).hexdigest(),
-                        tag_name=str(candidate.name),
-                        text=_normalize_block_text(
-                            candidate.get_text(" ", strip=True)
-                        ),
-                        outer_start=start,
-                        outer_end=end,
-                        inner_start=inner_start,
-                        inner_end=inner_end,
-                        source_fragment=raw_text[inner_start:inner_end],
-                    )
+            raw_blocks = raw_parser.blocks
+            if len(raw_blocks) != len(structured_blocks):
+                raise ValueError(
+                    f"Could not map EPUB document {href!r}: parsed {len(raw_blocks)} "
+                    f"raw text blocks but epub2text reported {len(structured_blocks)}."
                 )
-                cursor = end
 
-            structured_blocks = document_blocks.get(document.document_id, [])
-            raw_cursor = 0
-            for block in structured_blocks:
-                normalized = _normalize_block_text(block.text)
-                matched = None
-                for idx in range(raw_cursor, len(raw_candidates)):
-                    candidate = raw_candidates[idx]
-                    if (
-                        candidate.tag_name == block.tag_name
-                        and candidate.text == normalized
-                    ):
-                        matched = candidate
-                        raw_cursor = idx + 1
-                        break
-                if matched is None:
+            raw_digest = sha256(raw_bytes).hexdigest()
+            for block, raw_block in zip(structured_blocks, raw_blocks, strict=True):
+                if (
+                    raw_block.tag_name != block.tag_name
+                    or raw_block.path != block.element_path
+                ):
                     raise ValueError(
                         f"Could not map EPUB block {block.id} back to raw source XHTML."
                     )
-                raw_index[block.id] = matched
+
+                raw_index[block.id] = _RawBlock(
+                    href=href,
+                    raw_sha256=raw_digest,
+                    tag_name=block.tag_name,
+                    text=_normalize_block_text(block.text),
+                    outer_start=raw_block.outer_start,
+                    outer_end=raw_block.outer_end,
+                    inner_start=raw_block.inner_start,
+                    inner_end=raw_block.inner_end,
+                    source_fragment=raw_text[
+                        raw_block.inner_start : raw_block.inner_end
+                    ],
+                )
     return raw_index
 
 

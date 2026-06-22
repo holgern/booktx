@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ebooklib import epub
 from typer.testing import CliRunner
 
 from booktx.cli import app
@@ -31,6 +32,34 @@ def _make_markdown_project(tmp_path: Path) -> Path:
     project_dir = tmp_path / "book"
     src = tmp_path / "novel.md"
     src.write_text(MARKDOWN_DOC, encoding="utf-8")
+    res = runner.invoke(
+        app,
+        ["init", str(project_dir), "--target", "de", "--source-file", str(src)],
+    )
+    assert res.exit_code == 0, res.output
+    return project_dir
+
+
+def _make_epub_project(tmp_path: Path) -> Path:
+    project_dir = tmp_path / "epub-book"
+    src = tmp_path / "novel.epub"
+    book = epub.EpubBook()
+    book.set_identifier("cli-epub-id")
+    book.set_title("CLI EPUB")
+    book.set_language("en")
+    chapter = epub.EpubHtml(title="Chapter One", file_name="ch1.xhtml", lang="en")
+    chapter.content = (
+        '<html xmlns="http://www.w3.org/1999/xhtml">'
+        "<head><title>Chapter One</title></head><body>"
+        "<h1>Chapter One</h1>"
+        "<p>Alice met Bob.</p>"
+        "</body></html>"
+    )
+    book.add_item(chapter)
+    book.add_item(epub.EpubNav())
+    book.add_item(epub.EpubNcx())
+    book.spine = ["nav", chapter]
+    epub.write_epub(str(src), book, {})
     res = runner.invoke(
         app,
         ["init", str(project_dir), "--target", "de", "--source-file", str(src)],
@@ -70,6 +99,14 @@ def test_inspect_prints_summary(tmp_path: Path):
     assert res.exit_code == 0, res.output
     assert "markdown" in res.output
     assert "estimated_records" in res.output
+
+
+def test_inspect_epub_prints_spine_document_details(tmp_path: Path):
+    project_dir = _make_epub_project(tmp_path)
+    res = runner.invoke(app, ["inspect", str(project_dir)])
+    assert res.exit_code == 0, res.output
+    assert "epub" in res.output
+    assert "spine document(s) with text blocks" in res.output
 
 
 def test_extract_writes_chunks(tmp_path: Path):
@@ -147,6 +184,23 @@ def test_next_allow_missing_context_legacy_override(tmp_path: Path):
     res = runner.invoke(app, ["next", str(project_dir), "--allow-missing-context"])
     assert res.exit_code == 0
     assert "0001" in res.output
+
+
+def test_next_without_chunks_tells_user_to_extract(tmp_path: Path):
+    project_dir = _make_markdown_project(tmp_path)
+    res = runner.invoke(app, ["next", str(project_dir), "--allow-missing-context"])
+    assert res.exit_code == 1
+    assert "booktx extract" in res.output
+
+
+def test_next_unit_chapter_without_chunks_tells_user_to_extract(tmp_path: Path):
+    project_dir = _make_markdown_project(tmp_path)
+    res = runner.invoke(
+        app,
+        ["next", str(project_dir), "--unit", "chapter", "--allow-missing-context"],
+    )
+    assert res.exit_code == 1
+    assert "booktx extract" in res.output
 
 
 def test_next_prints_context_path_when_context_ready(tmp_path: Path):

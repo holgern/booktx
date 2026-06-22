@@ -33,6 +33,7 @@ from booktx.config import (
 )
 from booktx.context import (
     GlossaryEntry,
+    apply_answer_to_context,
     context_markdown_path,
     default_context,
     load_context,
@@ -80,7 +81,6 @@ def version() -> None:
     console.print(__version__)
 
 
-
 # --- context -----------------------------------------------------------------
 
 
@@ -113,9 +113,7 @@ def context_init(
     non_interactive: bool = typer.Option(
         True, "--non-interactive/--interactive", help="Create open questions or prompt."
     ),
-    force: bool = typer.Option(
-        False, "--force", help="Overwrite an existing context."
-    ),
+    force: bool = typer.Option(False, "--force", help="Overwrite an existing context."),
 ) -> None:
     """Create .booktx/context.json and rendered context.md."""
     proj = _load_project_or_exit(project_dir)
@@ -192,6 +190,7 @@ def context_answer(
         if q.id == question_id:
             q.answer = text
             q.status = "answered" if text.strip() else "open"
+            apply_answer_to_context(ctx, question_id, text)
             write_context(proj, ctx)
             write_context_markdown(proj, ctx)
             console.print(f"answered {question_id}")
@@ -266,6 +265,7 @@ def context_mark_ready(
     write_context(proj, ctx)
     write_context_markdown(proj, ctx)
     console.print(f"context ready: {context_markdown_path(proj)}")
+
 
 # --- init --------------------------------------------------------------------
 
@@ -362,7 +362,9 @@ def _count_records(
     elif fmt == "epub":
         extraction = extract_epub(str(source), protected_terms=names)
         spans = extraction.spans
-        details = f"{len(extraction.templates)} spine document(s)"
+        entries = extraction.text2epub_manifest.get("entries", [])
+        block_entries = [entry for entry in entries if entry.get("blocks")]
+        details = f"{len(block_entries)} spine document(s) with text blocks"
     else:  # pragma: no cover - config validation already guards this
         raise BooktxError(f"Unsupported format {fmt!r}")
 
@@ -474,18 +476,21 @@ def _save_epub_manifest(
     _ = (json, NamesFile)  # touch imports for clarity
 
 
-
 def _require_ready_context(proj, *, allow_missing_context: bool = False) -> bool:
     """Return True when context was checked and should be printed."""
     if allow_missing_context:
         return False
     ctx = load_context(proj)
     if ctx is None or not ctx.ready:
-        _die(
-            "translation context is missing or not ready.\n"
-            "Run: booktx context init ."
-        )
+        _die("translation context is missing or not ready.\nRun: booktx context init .")
     return True
+
+
+def _require_chunks(proj) -> list[Path]:
+    chunk_paths = proj.chunks()
+    if not chunk_paths:
+        _die("No source chunks found. Run: booktx extract .")
+    return chunk_paths
 
 
 def _next_chapter(proj, *, print_context: bool) -> None:
@@ -507,6 +512,8 @@ def _next_chapter(proj, *, print_context: bool) -> None:
         raise typer.Exit(code=0)
     console.print("All chapter chunks have translations.")
     raise typer.Exit(code=1)
+
+
 # --- next --------------------------------------------------------------------
 
 
@@ -536,6 +543,7 @@ def next_cmd(
 
     if unit not in {"chunk", "chapter"}:
         _die("--unit must be chunk or chapter")
+    chunk_paths = _require_chunks(proj)
     print_context = _require_ready_context(
         proj, allow_missing_context=allow_missing_context
     )
@@ -544,7 +552,7 @@ def next_cmd(
         return
     if print_context:
         console.print(f"context: {context_markdown_path(proj)}")
-    chunk_ids = set(proj.chunk_ids())
+    chunk_ids = {path.stem for path in chunk_paths}
     translated_ids = set(proj.translated_ids())
     pending = sorted(cid for cid in chunk_ids if cid not in translated_ids)
     if not pending:
@@ -600,6 +608,7 @@ def next_chapter_cmd(
     except BooktxError as exc:
         _handle_booktx_error(exc)
         return
+    _require_chunks(proj)
     print_context = _require_ready_context(
         proj, allow_missing_context=allow_missing_context
     )

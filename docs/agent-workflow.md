@@ -1,0 +1,129 @@
+# Agent workflow
+
+This page is written for coding agents and human translators working inside a booktx project.
+
+## Required sequence
+
+From the project root:
+
+```bash
+booktx extract .
+booktx context status .
+booktx next . --unit chapter
+```
+
+If context is missing or not ready, stop translating and build the context first.
+
+## Before opening a chunk
+
+Read:
+
+```text
+.booktx/context.md
+```
+
+Then inspect the source chunk printed by:
+
+```bash
+booktx next .
+```
+
+or the chapter chunk list printed by:
+
+```bash
+booktx next . --unit chapter
+```
+
+## Translate only JSON records
+
+For each source record:
+
+- copy the `id` exactly
+- translate `source` into `target`
+- keep placeholders exactly
+- keep record order exactly
+- keep one target per source record
+
+Do not add commentary, Markdown fences, or alternate translations.
+
+## Preserve placeholders
+
+Example source:
+
+```json
+{
+  "id": "0001-000001",
+  "source": "__NAME_001__ said, \"Look at __NAME_002__.\"",
+  "protected_terms": ["Alice", "Baker Street"],
+  "placeholders": [
+    { "token": "__NAME_001__", "original": "Alice", "kind": "name" },
+    { "token": "__NAME_002__", "original": "Baker Street", "kind": "name" }
+  ]
+}
+```
+
+Valid target:
+
+```json
+{
+  "id": "0001-000001",
+  "target": "__NAME_001__ sagte: „Sieh dir __NAME_002__ an.“"
+}
+```
+
+Invalid targets:
+
+```json
+{ "id": "0001-000001", "target": "Alice sagte: „Sieh dir Baker Street an.“" }
+{ "id": "0001-000001", "target": "__NAME_1__ sagte: ..." }
+{ "id": "0001-000001", "target": "__NAME_001__ sagte: ..." }
+```
+
+The first replaces placeholders with originals. The second changes token padding. The third drops a required token.
+
+## Validate often
+
+Run:
+
+```bash
+booktx validate .
+```
+
+Fix errors immediately. Validation catches structural issues that may otherwise corrupt the rebuild.
+
+## Build only after validation
+
+```bash
+booktx build .
+```
+
+For EPUB, build can fail if:
+
+- the source EPUB changed after extraction
+- the manifest is from the legacy pipeline
+- a replacement no longer matches the expected source block
+- unresolved placeholder tokens leak into the rebuilt EPUB
+
+## Chapter workflow
+
+Use chapter mode when style continuity matters:
+
+```bash
+booktx chapters .
+booktx next . --unit chapter
+```
+
+Translate all chunks listed for the chapter. After completing the chapter, add or update chapter notes in the context if new terminology, voice decisions, or open issues appeared.
+
+## Repair workflow
+
+If validation reports structural errors:
+
+1. Open the source chunk in `.booktx/chunks/`.
+2. Open the translated chunk in `.booktx/translated/`.
+3. Compare `chunk_id`, record count, record order, and ids.
+4. Restore all visible placeholders from source to target.
+5. Remove commentary outside the JSON object.
+6. Re-run `booktx validate .`.
+
+If extraction produced EPUB chunks containing `__TAG_` or `__SPANTX_`, treat that as a package defect or legacy extraction artifact. Re-extract after upgrading the EPUB pipeline.

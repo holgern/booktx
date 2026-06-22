@@ -64,9 +64,7 @@ def load_chapter_map(project: Project) -> ChapterMap | None:
 def write_chapter_map(project: Project, chapter_map: ChapterMap) -> None:
     path = chapter_map_path(project)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        chapter_map.model_dump_json(indent=2) + "\n", encoding="utf-8"
-    )
+    path.write_text(chapter_map.model_dump_json(indent=2) + "\n", encoding="utf-8")
 
 
 def detect_chapters(project: Project) -> ChapterMap:
@@ -277,8 +275,7 @@ def _navigation_span_index(entry, span_refs) -> int | None:
     matches = [
         span_ref
         for span_ref in span_refs
-        if entry.document_href
-        and span_ref.document_href == entry.document_href
+        if entry.document_href and span_ref.document_href == entry.document_href
     ]
     if not matches and entry.spine_index is not None:
         matches = [

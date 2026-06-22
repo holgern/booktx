@@ -60,8 +60,7 @@ def _identity_translation(chunks) -> dict[str, object]:
         out[chunk.chunk_id] = {
             "chunk_id": chunk.chunk_id,
             "records": [
-                {"id": record.id, "target": record.source}
-                for record in chunk.records
+                {"id": record.id, "target": record.source} for record in chunk.records
             ],
         }
     return out

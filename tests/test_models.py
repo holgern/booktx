@@ -173,9 +173,7 @@ def test_epub_template_data_roundtrip():
                 source_text="Hello world.",
                 source_text_sha256="deadbeef",
                 placeholders=[
-                    Placeholder(
-                        token="__NAME_001__", original="Alice", kind="name"
-                    )
+                    Placeholder(token="__NAME_001__", original="Alice", kind="name")
                 ],
                 protected_terms=["Alice"],
             )

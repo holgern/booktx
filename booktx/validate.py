@@ -237,7 +237,7 @@ def _check_forbidden_terms(
     target_rec,
     chunk_id: str,
     context: TranslationContext | None,
- ) -> list[Finding]:
+) -> list[Finding]:
     """Check glossary forbidden target terms for one record pair."""
     if context is None:
         return []
@@ -261,7 +261,7 @@ def _forbidden_target_findings(
     target_rec,
     chunk_id: str,
     severity: str,
- ) -> list[Finding]:
+) -> list[Finding]:
     findings: list[Finding] = []
     for forbidden in entry.forbidden_targets:
         if not _contains_term(
@@ -284,7 +284,7 @@ def validate_chunk_pair(
     source: Chunk,
     translated_path: Path | None,
     context: TranslationContext | None = None,
- ) -> list[Finding]:
+) -> list[Finding]:
     """Validate one source chunk against its translated file (if any)."""
     chunk_id = source.chunk_id
     findings: list[Finding] = []

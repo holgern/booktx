@@ -46,9 +46,7 @@ def test_translation_context_roundtrips_through_json():
 
 def test_extra_fields_are_forbidden():
     with pytest.raises(ValidationError):
-        GlossaryEntry.model_validate(
-            {"source": "X", "unexpected": True}
-        )
+        GlossaryEntry.model_validate({"source": "X", "unexpected": True})
     with pytest.raises(ValidationError):
         StyleProfile.model_validate({"target_locale": "de-DE", "x": 1})
     with pytest.raises(ValidationError):

@@ -115,9 +115,7 @@ def segment_spans(spans: list[ProseSpan], *, language: str = "en") -> list[Recor
             record_placeholders = [
                 p for p in span.placeholders if p.token in visible_tokens
             ]
-            record_terms = [
-                p.original for p in record_placeholders if p.kind == "name"
-            ]
+            record_terms = [p.original for p in record_placeholders if p.kind == "name"]
             counter += 1
             records.append(
                 Record(
