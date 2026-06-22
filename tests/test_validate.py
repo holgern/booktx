@@ -5,7 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from booktx.config import init_project, load_project, write_manifest, write_translation_store
+from booktx.config import (
+    init_project,
+    load_project,
+    write_manifest,
+    write_translation_store,
+)
 from booktx.models import (
     Chunk,
     EpubTemplateData,
@@ -92,7 +97,10 @@ def test_store_backed_translation_passes(tmp_path: Path):
     proj = init_project(tmp_path / "book", target_language="de")
     proj.chunks_dir.mkdir(parents=True, exist_ok=True)
     source = _src_chunk()
-    (proj.chunks_dir / "0001.json").write_text(source.model_dump_json(), encoding="utf-8")
+    (proj.chunks_dir / "0001.json").write_text(
+        source.model_dump_json(),
+        encoding="utf-8",
+    )
     write_translation_store(
         proj,
         TranslationStore(

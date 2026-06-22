@@ -15,6 +15,7 @@ booktx never translates text; it extracts, validates, and rebuilds.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +38,7 @@ from booktx.config import (
     load_translation_store,
     load_translation_task,
     project_source_sha256,
+    translation_ingest_block_path,
     translation_ingest_path,
     translation_task_path,
     write_translation_store,
@@ -58,11 +60,10 @@ from booktx.markdown_io import extract_markdown
 from booktx.models import (
     NamesFile,
     StoredTranslationRecord,
-    TranslationStore,
-    TranslationTask,
-    TranslationTaskRecord,
     TranslatedChunk,
     TranslatedRecord,
+    TranslationTask,
+    TranslationTaskRecord,
 )
 from booktx.progress import (
     count_words,
@@ -587,11 +588,14 @@ def _project_status_snapshot(proj) -> dict[str, Any]:
     chunk_has_error = {
         finding.chunk_id
         for finding in findings
-        if finding.severity == Severity.ERROR and finding.chunk_id not in {"context", "store"}
+        if finding.severity == Severity.ERROR
+        and finding.chunk_id not in {"context", "store"}
     }
 
     ordered_record_ids = [record.record_id for record in source_records]
-    record_index_by_id = {record_id: idx for idx, record_id in enumerate(ordered_record_ids)}
+    record_index_by_id = {
+        record_id: idx for idx, record_id in enumerate(ordered_record_ids)
+    }
     record_ids_by_chapter: dict[str, list[str]] = {}
     record_to_chapter: dict[str, str] = {}
 
@@ -609,8 +613,12 @@ def _project_status_snapshot(proj) -> dict[str, Any]:
     chunk_summaries: list[dict[str, Any]] = []
     for chunk in source_chunks.values():
         chunk_record_ids = [record.id for record in chunk.records]
-        translated = [record_id for record_id in chunk_record_ids if record_id in translated_by_id]
-        source_words_total = sum(source_by_id[record_id].source_words for record_id in chunk_record_ids)
+        translated = [
+            record_id for record_id in chunk_record_ids if record_id in translated_by_id
+        ]
+        source_words_total = sum(
+            source_by_id[record_id].source_words for record_id in chunk_record_ids
+        )
         source_words_translated = sum(
             source_by_id[record_id].source_words for record_id in translated
         )
@@ -635,10 +643,14 @@ def _project_status_snapshot(proj) -> dict[str, Any]:
     for chapter in chapter_map.chapters:
         chapter_record_ids = record_ids_by_chapter.get(chapter.chapter_id, [])
         translated = [
-            record_id for record_id in chapter_record_ids if record_id in translated_by_id
+            record_id
+            for record_id in chapter_record_ids
+            if record_id in translated_by_id
         ]
         pending = [
-            record_id for record_id in chapter_record_ids if record_id not in translated_by_id
+            record_id
+            for record_id in chapter_record_ids
+            if record_id not in translated_by_id
         ]
         pending_chunk_ids: list[str] = []
         seen_pending_chunks: set[str] = set()
@@ -673,7 +685,9 @@ def _project_status_snapshot(proj) -> dict[str, Any]:
                 "status": _coverage_status(
                     total=len(chapter_record_ids),
                     translated=len(translated),
-                    has_error=any(chunk_id in chunk_has_error for chunk_id in chapter.chunk_ids),
+                    has_error=any(
+                        chunk_id in chunk_has_error for chunk_id in chapter.chunk_ids
+                    ),
                 ),
             }
         )
@@ -689,7 +703,9 @@ def _project_status_snapshot(proj) -> dict[str, Any]:
         source_by_id[record_id].source_words for record_id in translated_by_id
     )
     chunks_complete = sum(
-        1 for chunk in chunk_summaries if chunk["records_translated"] == chunk["records_total"]
+        1
+        for chunk in chunk_summaries
+        if chunk["records_translated"] == chunk["records_total"]
     )
     chunks_partial = sum(
         1
@@ -743,7 +759,11 @@ def _project_status_snapshot(proj) -> dict[str, Any]:
             "chapters_pending": chapters_pending,
             "invalid_translation_files": len(chunk_has_error),
             "stale_translation_files": len(
-                {finding.chunk_id for finding in findings if finding.rule == "stale_translation"}
+                {
+                    finding.chunk_id
+                    for finding in findings
+                    if finding.rule == "stale_translation"
+                }
             ),
         },
         "next": next_chapter,
@@ -759,7 +779,9 @@ def _project_status_snapshot(proj) -> dict[str, Any]:
     }
 
 
-def _selected_chapter(summary: dict[str, Any], chapter_id: str | None) -> dict[str, Any] | None:
+def _selected_chapter(
+    summary: dict[str, Any], chapter_id: str | None
+) -> dict[str, Any] | None:
     if chapter_id is None:
         return summary["next"]
     chapter = summary["_chapters_by_id"].get(chapter_id)
@@ -805,7 +827,11 @@ def _select_translation_record_ids(
         first_chunk_id = source_by_id[pending[0]].chunk_id
         return (
             unit,
-            [record_id for record_id in pending if source_by_id[record_id].chunk_id == first_chunk_id],
+            [
+                record_id
+                for record_id in pending
+                if source_by_id[record_id].chunk_id == first_chunk_id
+            ],
         )
     if unit == "paragraph":
         first_record = source_by_id[pending[0]]
@@ -847,6 +873,17 @@ def _write_ingest_template(proj, task: TranslationTask) -> Path:
     return path
 
 
+def _write_block_ingest_template(proj, task: TranslationTask) -> Path:
+    """Create the durable block submission file for a task without overwriting work."""
+    path = translation_ingest_block_path(proj, task.task_id)
+    if path.exists():
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    parts = [f">>> {record.id}\n" for record in task.records]
+    path.write_text("\n".join(parts).rstrip() + "\n", encoding="utf-8")
+    return path
+
+
 def _make_task_id(chapter_id: str, first_record_id: str, record_ids: list[str]) -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
     record_part = first_record_id.replace("-", "")
@@ -870,7 +907,9 @@ def _create_translation_task(
         chapter_title=chapter["title"],
         source_language=proj.config.source_language,
         target_language=proj.config.target_language,
-        source_words=sum(source_by_id[record_id].source_words for record_id in record_ids),
+        source_words=sum(
+            source_by_id[record_id].source_words for record_id in record_ids
+        ),
         record_count=len(record_ids),
         records=[
             TranslationTaskRecord(
@@ -885,10 +924,13 @@ def _create_translation_task(
     )
     write_translation_task(proj, task)
     _write_ingest_template(proj, task)
+    _write_block_ingest_template(proj, task)
     return task
 
 
-def _print_status_human(summary: dict[str, Any], chapter: dict[str, Any] | None) -> None:
+def _print_status_human(
+    summary: dict[str, Any], chapter: dict[str, Any] | None
+) -> None:
     console.print(f"booktx status — {summary['project']}")
     console.print()
     console.print(f"Source: {summary['source']['filename']}")
@@ -906,7 +948,8 @@ def _print_status_human(summary: dict[str, Any], chapter: dict[str, Any] | None)
         f"{totals['chunks_partial']} partial, {totals['chunks_pending']} pending"
     )
     console.print(
-        f"Chapters: {totals['chapters_complete']} / {totals['chapters_total']} complete, "
+        f"Chapters: {totals['chapters_complete']} / "
+        f"{totals['chapters_total']} complete, "
         f"{totals['chapters_partial']} partial, {totals['chapters_pending']} pending"
     )
     if totals["invalid_translation_files"] or totals["stale_translation_files"]:
@@ -914,17 +957,22 @@ def _print_status_human(summary: dict[str, Any], chapter: dict[str, Any] | None)
             f"Translation files: {totals['invalid_translation_files']} invalid, "
             f"{totals['stale_translation_files']} stale"
         )
-    ready_for_final = totals["records_remaining"] == 0 and totals["invalid_translation_files"] == 0
+    ready_for_final = (
+        totals["records_remaining"] == 0 and totals["invalid_translation_files"] == 0
+    )
     console.print()
     console.print(f"Ready for final build: {'yes' if ready_for_final else 'no'}")
     if not ready_for_final:
         if totals["remaining_words"] > 0:
             console.print(
-                f"Reason: {totals['remaining_words']:,} source words remain untranslated"
+                f"Reason: {totals['remaining_words']:,} source words remain "
+                "untranslated"
             )
         elif totals["invalid_translation_files"] > 0:
             console.print(
-                f"Reason: {totals['invalid_translation_files']} translation file(s) are invalid"
+                "Reason: "
+                f"{totals['invalid_translation_files']} translation file(s) "
+                "are invalid"
             )
     detail = chapter or summary["next"]
     if detail is None:
@@ -934,17 +982,22 @@ def _print_status_human(summary: dict[str, Any], chapter: dict[str, Any] | None)
     console.print(f"  {detail['chapter_id']}  {detail['title']}".rstrip())
     console.print(f"  status: {detail['status']}")
     console.print(
-        f"  records: {detail['records_translated']} / {detail['records_total']} translated, "
+        f"  records: {detail['records_translated']} / "
+        f"{detail['records_total']} translated, "
         f"{detail['records_remaining']} remaining"
     )
     console.print(
-        f"  words: {detail['source_words_translated']:,} / {detail['source_words_total']:,} translated, "
+        f"  words: {detail['source_words_translated']:,} / "
+        f"{detail['source_words_total']:,} translated, "
         f"{detail['source_words_remaining']:,} remaining"
     )
     console.print(f"  chunks: {_format_chunk_span(detail['chunk_ids'])}")
-    console.print(f"  pending chunks: {_format_chunk_span(detail['pending_chunk_ids'])}")
     console.print(
-        f"  record range: {detail['record_range']['start']}..{detail['record_range']['end']}"
+        f"  pending chunks: {_format_chunk_span(detail['pending_chunk_ids'])}"
+    )
+    console.print(
+        "  record range: "
+        f"{detail['record_range']['start']}..{detail['record_range']['end']}"
     )
 
 
@@ -957,6 +1010,20 @@ def _print_translate_task(
 ) -> None:
     ingest_path = translation_ingest_path(proj, task.task_id)
     ingest_display = _project_relative(ingest_path, proj.root)
+    block_ingest_path = translation_ingest_block_path(proj, task.task_id)
+    block_ingest_display = _project_relative(block_ingest_path, proj.root)
+    json_submit_hint = (
+        f"booktx translate insert . --task-id {task.task_id} "
+        f"--json-file {ingest_display}"
+    )
+    block_submit_hint = (
+        f"booktx translate insert . --task-id {task.task_id} "
+        f"--file {block_ingest_display} --format block"
+    )
+    block_stdin_submit_hint = (
+        f"booktx translate insert . --task-id {task.task_id} "
+        "--stdin --format block <<'BOOKTX'"
+    )
     payload = {
         "version": 1,
         "task_id": task.task_id,
@@ -969,9 +1036,9 @@ def _print_translate_task(
         "record_count": task.record_count,
         "records": [record.model_dump(mode="json") for record in task.records],
         "ingest_path": ingest_display,
-        "submit_hint": (
-            f"booktx translate insert . --task-id {task.task_id} --json-file {ingest_display}"
-        ),
+        "block_ingest_path": block_ingest_display,
+        "submit_hint": json_submit_hint,
+        "block_submit_hint": block_submit_hint,
     }
     if as_json:
         console.print_json(json.dumps(payload, ensure_ascii=False))
@@ -981,12 +1048,36 @@ def _print_translate_task(
         console.print(f"# chapter: {task.chapter_id}\t{task.chapter_title}".rstrip())
         for record in task.records:
             console.print(f"{record.id}\t{record.source}")
-        console.print(
-            f"# write translation JSON to: {ingest_display}"
-        )
-        console.print(
-            f"# submit: booktx translate insert . --task-id {task.task_id} --json-file {ingest_display}"
-        )
+        console.print(f"# write translation JSON to: {ingest_display}")
+        console.print(f"# submit: {json_submit_hint}")
+        return
+    if output_format == "block":
+        console.print(f"task: {task.task_id}")
+        console.print(f"chapter: {task.chapter_id}  {task.chapter_title}".rstrip())
+        console.print(f"unit: {task.unit}")
+        console.print(f"records: {task.record_count}")
+        console.print(f"source words: {task.source_words}")
+        console.print()
+        console.print("Submit translated targets with:")
+        console.print()
+        console.print(block_stdin_submit_hint)
+        for idx, record in enumerate(task.records):
+            console.print(f">>> {record.id}")
+            console.print("<target>")
+            if idx != len(task.records) - 1:
+                console.print()
+        console.print("BOOKTX")
+        console.print()
+        console.print(f"Durable block template: {block_ingest_display}")
+        console.print(f"Submit durable file with: {block_submit_hint}")
+        console.print()
+        console.print("Sources:")
+        console.print()
+        for idx, record in enumerate(task.records):
+            console.print(f">>> {record.id}")
+            console.print(record.source)
+            if idx != len(task.records) - 1:
+                console.print()
         return
     console.print(f"task: {task.task_id}")
     console.print(f"chapter: {task.chapter_id}  {task.chapter_title}".rstrip())
@@ -1003,10 +1094,7 @@ def _print_translate_task(
     console.print("Write translation JSON to:")
     console.print(ingest_display)
     console.print("Submit with:")
-    console.print(
-        f"booktx translate insert . --task-id {task.task_id} "
-        f"--json-file {ingest_display}"
-    )
+    console.print(json_submit_hint)
 
 
 def _load_translation_task_or_exit(proj, task_id: str) -> TranslationTask:
@@ -1054,6 +1142,62 @@ def _parse_tsv_submission(text: str) -> list[dict[str, str]]:
     return parsed
 
 
+_BLOCK_HEADER_RE = re.compile(r"^>>>\s+(?P<id>\S+)\s*$")
+
+
+def _trim_blank_edge_lines(lines: list[str]) -> str:
+    start = 0
+    end = len(lines)
+    while start < end and not lines[start].strip():
+        start += 1
+    while end > start and not lines[end - 1].strip():
+        end -= 1
+    return "\n".join(lines[start:end])
+
+
+def _parse_block_submission(text: str) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    current_id: str | None = None
+    current_lines: list[str] = []
+    seen: set[str] = set()
+
+    def flush() -> None:
+        nonlocal current_id, current_lines
+        if current_id is None:
+            return
+        target = _trim_blank_edge_lines(current_lines)
+        if not target:
+            _die(f"empty target for record {current_id}")
+        parsed.append({"id": current_id, "target": target})
+        current_id = None
+        current_lines = []
+
+    for line_no, raw_line in enumerate(text.splitlines(), start=1):
+        header = _BLOCK_HEADER_RE.match(raw_line)
+        if header:
+            flush()
+            record_id = header.group("id").strip()
+            if record_id in seen:
+                _die(f"duplicate record id in block submission: {record_id}")
+            seen.add(record_id)
+            current_id = record_id
+            current_lines = []
+            continue
+        if current_id is None:
+            if raw_line.strip():
+                _die(
+                    f"malformed block submission line {line_no}: "
+                    "expected '>>> <record-id>' before target text"
+                )
+            continue
+        current_lines.append(raw_line)
+
+    flush()
+    if not parsed:
+        _die("block submission did not contain any records")
+    return parsed
+
+
 def _render_submission_failures(findings) -> None:
     console.print("[red]error:[/red] submission rejected; no files changed")
     console.print()
@@ -1076,16 +1220,22 @@ def _next_chapter(proj, *, print_context: bool) -> None:
     console.print(f"chapter: {chapter['chapter_id']}  {chapter['title']}".rstrip())
     console.print(f"status: {chapter['status']}")
     console.print(
-        f"record range: {chapter['record_range']['start']}..{chapter['record_range']['end']}"
+        "record range: "
+        f"{chapter['record_range']['start']}..{chapter['record_range']['end']}"
     )
     console.print(
-        f"records: {chapter['records_translated']} / {chapter['records_total']} translated, "
+        f"records: {chapter['records_translated']} / "
+        f"{chapter['records_total']} translated, "
         f"{chapter['records_remaining']} remaining"
     )
     console.print(f"chunks: {_format_chunk_span(chapter['chunk_ids'])}")
     console.print(f"pending chunks: {_format_chunk_span(chapter['pending_chunk_ids'])}")
     console.print(f"source words remaining: {chapter['source_words_remaining']:,}")
-    console.print("[dim]next command:[/dim] booktx translate next . --unit chapter")
+    console.print(
+        "[dim]next command:[/dim] "
+        f"booktx translate next . --chapter {chapter['chapter_id']} --unit batch "
+        "--max-words 700 --format block"
+    )
     raise typer.Exit(code=0)
 
 
@@ -1156,7 +1306,6 @@ def next_cmd(
         _next_chapter(proj, print_context=print_context)
         return
     summary = _project_status_snapshot(proj)
-    source_chunks = summary["_source_chunks"]
     pending_chunks = [
         chunk["chunk_id"]
         for chunk in summary["_chunk_summaries"]
@@ -1169,10 +1318,13 @@ def next_cmd(
         console.print(f"context: {context_markdown_path(proj)}")
     cid = pending_chunks[0]
     chunk_path = proj.chunks_dir / f"{cid}.json"
-    console.print(f"{cid}\t{chunk_path}")
-    console.print(
-        f"records remaining: {next(chunk['records_remaining'] for chunk in summary['_chunk_summaries'] if chunk['chunk_id'] == cid)}"
+    records_remaining = next(
+        chunk["records_remaining"]
+        for chunk in summary["_chunk_summaries"]
+        if chunk["chunk_id"] == cid
     )
+    console.print(f"{cid}\t{chunk_path}")
+    console.print(f"records remaining: {records_remaining}")
     console.print("[dim]submit with:[/dim]")
     console.print(f"booktx translate next {project_dir} --unit chunk")
     console.print("booktx translate insert . --stdin")
@@ -1243,7 +1395,7 @@ def translate_next(
     output_format: str = typer.Option(
         "text",
         "--format",
-        help="Human output format: text or tsv.",
+        help="Human output format: text, tsv, or block.",
     ),
     allow_missing_context: bool = typer.Option(
         False,
@@ -1259,8 +1411,8 @@ def translate_next(
         return
     if unit not in {"paragraph", "batch", "chunk", "chapter"}:
         _die("--unit must be paragraph, batch, chunk, or chapter")
-    if output_format not in {"text", "tsv"}:
-        _die("--format must be text or tsv")
+    if output_format not in {"text", "tsv", "block"}:
+        _die("--format must be text, tsv, or block")
     if as_json and output_format != "text":
         _die("--json cannot be combined with --format")
     _require_chunks(proj)
@@ -1299,10 +1451,17 @@ def translate_insert(
     json_file: Path | None = typer.Option(
         None,
         "--json-file",
-        help="Read JSON payload from a durable file, normally .booktx/ingest/TASK.json.",
+        help="Compatibility sugar for --format json --file PATH.",
+    ),
+    input_file: Path | None = typer.Option(
+        None,
+        "--file",
+        help="Read submission payload from a file using --format.",
     ),
     input_format: str = typer.Option(
-        "json", "--format", help="Input format for stdin payloads: json or tsv."
+        "json",
+        "--format",
+        help="Input format for --stdin/--file payloads: json, tsv, or block.",
     ),
     allow_missing_context: bool = typer.Option(
         False,
@@ -1316,8 +1475,8 @@ def translate_insert(
     except BooktxError as exc:
         _handle_booktx_error(exc)
         return
-    if input_format not in {"json", "tsv"}:
-        _die("--format must be json or tsv")
+    if input_format not in {"json", "tsv", "block"}:
+        _die("--format must be json, tsv, or block")
     _require_chunks(proj)
     _require_ready_context(proj, allow_missing_context=allow_missing_context)
 
@@ -1331,17 +1490,31 @@ def translate_insert(
         payload_task_id, submitted = _parse_json_submission(
             json_file.read_text(encoding="utf-8")
         )
+    elif input_file is not None:
+        raw = input_file.read_text(encoding="utf-8")
+        if input_format == "json":
+            payload_task_id, submitted = _parse_json_submission(raw)
+        elif input_format == "tsv":
+            submitted = _parse_tsv_submission(raw)
+        else:
+            submitted = _parse_block_submission(raw)
     elif stdin:
         raw = sys.stdin.read()
         if input_format == "json":
             payload_task_id, submitted = _parse_json_submission(raw)
-        else:
+        elif input_format == "tsv":
             submitted = _parse_tsv_submission(raw)
+        else:
+            submitted = _parse_block_submission(raw)
     else:
-        _die("provide one of --record-id/--target, --json-file, or --stdin")
+        _die("provide one of --record-id/--target, --json-file, --file, or --stdin")
 
     effective_task_id = task_id or payload_task_id
-    task = _load_translation_task_or_exit(proj, effective_task_id) if effective_task_id else None
+    task = (
+        _load_translation_task_or_exit(proj, effective_task_id)
+        if effective_task_id
+        else None
+    )
     allowed_ids = {record.id for record in task.records} if task is not None else None
     summary = _project_status_snapshot(proj)
     source_by_id = summary["_source_by_id"]
@@ -1361,9 +1534,13 @@ def translate_insert(
         source_view = source_by_id[record_id]
         translated = TranslatedRecord(id=record_id, target=item["target"])
         source_chunk = source_chunks[source_view.chunk_id]
-        source_record = next(record for record in source_chunk.records if record.id == record_id)
+        source_record = next(
+            record for record in source_chunk.records if record.id == record_id
+        )
         failures.extend(
-            validate_record_pair(source_record, translated, source_chunk.chunk_id, load_context(proj))
+            validate_record_pair(
+                source_record, translated, source_chunk.chunk_id, load_context(proj)
+            )
         )
 
     if any(finding.severity == Severity.ERROR for finding in failures):
@@ -1374,8 +1551,11 @@ def translate_insert(
 
     store = load_translation_store(proj)
     store.source_sha256 = summary["source"]["source_sha256"]
-    updated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
-        "+00:00", "Z"
+    updated_at = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
     )
     for item in submitted:
         source_view = source_by_id[item["id"]]
@@ -1398,11 +1578,14 @@ def translate_insert(
     if chapter is not None:
         console.print(f"chapter: {chapter['chapter_id']} {chapter['title']}".rstrip())
         console.print(
-            f"progress: {chapter['records_translated']} / {chapter['records_total']} records translated, "
+            f"progress: {chapter['records_translated']} / "
+            f"{chapter['records_total']} records translated, "
             f"{chapter['records_remaining']} remaining"
         )
         console.print(
-            f"next: booktx translate next . --chapter {chapter['chapter_id']} --unit paragraph"
+            "next: "
+            f"booktx translate next . --chapter {chapter['chapter_id']} --unit batch "
+            "--max-words 700 --format block"
         )
 
 
@@ -1482,7 +1665,9 @@ def translate_export(
             chunk.records, translated_chunk.records, strict=True
         ):
             findings.extend(
-                validate_record_pair(source_record, translated_record, chunk.chunk_id, load_context(proj))
+                validate_record_pair(
+                    source_record, translated_record, chunk.chunk_id, load_context(proj)
+                )
             )
         if any(finding.severity == Severity.ERROR for finding in findings):
             continue

@@ -7,9 +7,9 @@ description: Use this skill when working with booktx projects
 
 ## Primary goal
 
-Work safely with `booktx`, a deterministic local CLI that prepares Markdown and EPUB documents for translation. `booktx` extracts source text into JSON chunks, a coding agent or human fills translated JSON, then `booktx validate` checks the contract and `booktx build` reconstructs the output document.
+Work safely with `booktx`, a deterministic local CLI that prepares Markdown and EPUB documents for translation. `booktx` extracts source text into JSON chunks, a coding agent or human requests manageable task batches, submits translated targets through the CLI, then `booktx validate` checks the contract and `booktx build` reconstructs the output document.
 
-Do not translate outside the JSON contract. Do not alter source files unless the user explicitly asks for package maintenance.
+Do not alter source files unless the user explicitly asks for package maintenance.
 
 ## When to use this skill
 
@@ -60,8 +60,8 @@ Compatibility translated chunk files still look like this when exported:
 
 ## Non-negotiable translation rules
 
-- Return or write only a JSON object for translated chunks. No Markdown fences. No comments. No explanatory prose.
-- Keep `chunk_id` exactly unchanged.
+- Use the payload shape the workflow asks for. For normal CLI submission, prefer the block format with `>>> RECORD_ID` headers. For compatibility translated chunk files, return or write only a JSON object.
+- Keep `chunk_id` exactly unchanged when you are working with compatibility translated chunk files.
 - Keep every record `id` exactly unchanged.
 - Keep the same number and order of records unless the user is explicitly asking to repair source chunks. For normal translation, never merge, split, add, or delete records.
 - Translate only the `source` text into `target` text.
@@ -96,11 +96,20 @@ From a project root:
 booktx extract .
 booktx context status .
 booktx status .
-booktx translate next . --json
-booktx translate next . --unit chapter --json
+booktx translate next . --unit batch --max-words 700 --format block
+booktx translate next . --chapter 0010 --unit batch --max-words 700 --format block
 ```
 
-Open `.booktx/context.md` first, then use `booktx translate next` to fetch the exact records to translate. The command also creates `.booktx/ingest/TASK.json`; write translated records there and submit with `booktx translate insert --json-file .booktx/ingest/TASK.json`. Do not write translation payloads to `/tmp`. Do not edit `.booktx/translated/*.json` directly; that directory is compatibility output managed by `booktx`.
+Open `.booktx/context.md` first, then use `booktx translate next` to fetch the exact records to translate. Submit normal agent work directly:
+
+```bash
+booktx translate insert . --task-id TASK --stdin --format block <<'BOOKTX'
+>>> RECORD_ID
+translated target
+BOOKTX
+```
+
+Use `.booktx/ingest/TASK.block.txt` only when you want a durable submission file. Keep `.booktx/ingest/TASK.json` and `--json-file` for compatibility tooling. Do not request `--unit chapter --json` for normal translation, do not write Python helper scripts to create translation submissions, and do not edit `.booktx/translated/*.json` directly.
 
 After writing translations:
 
@@ -111,7 +120,7 @@ booktx build .
 
 If validation fails, repair the translated JSON. Do not patch the source chunk to make validation pass unless the source extraction itself is defective and the user asked for maintenance.
 
-## Placeholder checklist before saving a translated chunk
+## Placeholder checklist before saving a translated submission
 
 For each record:
 
@@ -121,7 +130,7 @@ For each record:
 4. Confirm every token appears in the target.
 5. Confirm no additional tokens appear in the target.
 6. Confirm the target is a string and not empty.
-7. Confirm the final file is valid JSON, not JSON-with-comments.
+7. Confirm the final payload is valid block text or valid JSON, depending on the workflow you are using.
 
 A simple verification snippet for one chunk:
 

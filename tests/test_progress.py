@@ -28,7 +28,13 @@ def test_source_record_sha256_is_stable():
 
 def test_load_source_records_flattens_chunks(tmp_path: Path):
     proj = _make_project(tmp_path)
-    spans = [ProseSpan(text="Alice met Bob. Then they ran.", placeholders=[], protected_terms=[])]
+    spans = [
+        ProseSpan(
+            text="Alice met Bob. Then they ran.",
+            placeholders=[],
+            protected_terms=[],
+        )
+    ]
     chunks = spans_to_chunks(
         spans,
         source_language="en",

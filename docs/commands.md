@@ -141,7 +141,8 @@ Reports deterministic record-, chunk-, chapter-, and word-level progress.
 booktx translate next PROJECT_DIR
 booktx translate next PROJECT_DIR --json
 booktx translate next PROJECT_DIR --unit paragraph
-booktx translate next PROJECT_DIR --unit chapter --chapter 0006
+booktx translate next PROJECT_DIR --unit batch --max-words 700 --format block
+booktx translate next PROJECT_DIR --chapter 0006 --unit batch --max-words 700 --format block
 booktx translate next PROJECT_DIR --format tsv
 ```
 
@@ -150,13 +151,15 @@ Returns the next pending work unit, persists a task id, and prints a submit hint
 ### Insert translated records
 
 ```bash
+booktx translate insert PROJECT_DIR --task-id TASK --stdin --format block
+booktx translate insert PROJECT_DIR --task-id TASK --file .booktx/ingest/TASK.block.txt --format block
 booktx translate insert PROJECT_DIR --task-id TASK --stdin
 booktx translate insert PROJECT_DIR --record-id 0001-000001 --target "..."
 booktx translate insert PROJECT_DIR --stdin --format tsv
 booktx translate insert PROJECT_DIR --json-file .booktx/ingest/TASK.json
 ```
 
-`booktx translate next` creates `.booktx/ingest/TASK.json`; fill that file and pass it to `--json-file`. The file is intentionally left in place after insert so it can be version-controlled and audited. `translate insert` validates submitted records before writing `.booktx/translation-store.json`.
+Prefer `--stdin --format block` for normal agent submissions. `booktx translate next` also creates `.booktx/ingest/TASK.block.txt` for durable block-text submissions and keeps `.booktx/ingest/TASK.json` for compatibility tooling. `translate insert` validates submitted records before writing `.booktx/translation-store.json`.
 Invalid submissions are rejected atomically.
 
 ### Legacy import/export

@@ -106,5 +106,5 @@ chunk and record ranges. It supports chapter-level workflows such as:
 
 ```bash
 booktx status ./project --chapter 0006
-booktx translate next ./project --unit chapter --json
+booktx translate next ./project --chapter 0006 --unit batch --max-words 700 --format block
 ```

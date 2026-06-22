@@ -94,14 +94,14 @@ Ask for the next task:
 
 ```bash
 booktx status ./demo
-booktx translate next ./demo --json
+booktx translate next ./demo --unit batch --max-words 700 --format block
 ```
 
 The command returns a task id and the exact records to translate. Submit the
 translated records through the CLI:
 
 ```bash
-booktx translate insert ./demo --task-id TASK --stdin
+booktx translate insert ./demo --task-id TASK --stdin --format block
 ```
 
 The record contract is still:

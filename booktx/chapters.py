@@ -8,7 +8,12 @@ from markdown_it import MarkdownIt
 from pydantic import BaseModel, ConfigDict, Field
 
 from booktx.chunking import ProseSpan, segment_spans
-from booktx.config import find_source_file, load_manifest, load_names, project_source_sha256
+from booktx.config import (
+    find_source_file,
+    load_manifest,
+    load_names,
+    project_source_sha256,
+)
 from booktx.context import chapter_map_path
 from booktx.epub_io import extract_epub
 from booktx.epub_manifest import load_epub_template_from_manifest

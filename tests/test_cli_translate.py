@@ -59,7 +59,10 @@ def _identity_legacy_chunk(project_dir: Path, chunk_id: str) -> None:
     chunk = json.loads(chunk_path.read_text("utf-8"))
     payload = {
         "chunk_id": chunk_id,
-        "records": [{"id": record["id"], "target": record["source"]} for record in chunk["records"]],
+        "records": [
+            {"id": record["id"], "target": record["source"]}
+            for record in chunk["records"]
+        ],
     }
     (project_dir / ".booktx" / "translated" / f"{chunk_id}.json").write_text(
         json.dumps(payload),
@@ -99,7 +102,16 @@ def test_status_and_translate_next_respect_boundary_overlap(tmp_path: Path):
 
     next_res = runner.invoke(
         app,
-        ["translate", "next", str(project_dir), "--chapter", "0002", "--unit", "chapter", "--json"],
+        [
+            "translate",
+            "next",
+            str(project_dir),
+            "--chapter",
+            "0002",
+            "--unit",
+            "chapter",
+            "--json",
+        ],
     )
 
     assert next_res.exit_code == 0, next_res.output
@@ -132,7 +144,10 @@ def test_translate_next_creates_ingest_file_and_insert_updates_store(tmp_path: P
 
     payload = {
         "task_id": task["task_id"],
-        "records": [{"id": record["id"], "target": record["source"]} for record in task["records"]],
+        "records": [
+            {"id": record["id"], "target": record["source"]}
+            for record in task["records"]
+        ],
     }
     ingest_file.write_text(json.dumps(payload), encoding="utf-8")
     insert_res = runner.invoke(
@@ -163,10 +178,22 @@ def test_translate_insert_tsv_accepts_batch(tmp_path: Path):
 
     next_res = runner.invoke(
         app,
-        ["translate", "next", str(project_dir), "--unit", "batch", "--max-words", "20", "--json"],
+        [
+            "translate",
+            "next",
+            str(project_dir),
+            "--unit",
+            "batch",
+            "--max-words",
+            "20",
+            "--json",
+        ],
     )
     task = json.loads(next_res.output)
-    tsv = "\n".join(f"{record['id']}\t{record['source']}" for record in task["records"]) + "\n"
+    tsv = (
+        "\n".join(f"{record['id']}\t{record['source']}" for record in task["records"])
+        + "\n"
+    )
 
     insert_res = runner.invoke(
         app,
@@ -187,6 +214,229 @@ def test_translate_insert_tsv_accepts_batch(tmp_path: Path):
     assert "accepted:" in insert_res.output
 
 
+def test_translate_insert_block_accepts_batch(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+
+    next_res = runner.invoke(
+        app,
+        [
+            "translate",
+            "next",
+            str(project_dir),
+            "--unit",
+            "batch",
+            "--max-words",
+            "20",
+            "--json",
+        ],
+    )
+    task = json.loads(next_res.output)
+    block = (
+        "\n\n".join(
+            f">>> {record['id']}\n{record['source']}" for record in task["records"]
+        )
+        + "\n"
+    )
+
+    insert_res = runner.invoke(
+        app,
+        [
+            "translate",
+            "insert",
+            str(project_dir),
+            "--task-id",
+            task["task_id"],
+            "--stdin",
+            "--format",
+            "block",
+        ],
+        input=block,
+    )
+
+    assert insert_res.exit_code == 0, insert_res.output
+    assert "accepted:" in insert_res.output
+    store = json.loads(
+        (project_dir / ".booktx" / "translation-store.json").read_text("utf-8")
+    )
+    for record in task["records"]:
+        assert record["id"] in store["records"]
+
+
+def test_translate_insert_block_file_accepts_batch(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+
+    next_res = runner.invoke(
+        app,
+        [
+            "translate",
+            "next",
+            str(project_dir),
+            "--unit",
+            "batch",
+            "--max-words",
+            "20",
+            "--json",
+        ],
+    )
+    task = json.loads(next_res.output)
+    block_file = project_dir / task["block_ingest_path"]
+    block_file.write_text(
+        "\n\n".join(
+            f">>> {record['id']}\n{record['source']}" for record in task["records"]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    insert_res = runner.invoke(
+        app,
+        [
+            "translate",
+            "insert",
+            str(project_dir),
+            "--task-id",
+            task["task_id"],
+            "--file",
+            str(block_file),
+            "--format",
+            "block",
+        ],
+    )
+
+    assert insert_res.exit_code == 0, insert_res.output
+    assert "accepted:" in insert_res.output
+
+
+def test_translate_insert_block_rejects_missing_header(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+
+    insert_res = runner.invoke(
+        app,
+        ["translate", "insert", str(project_dir), "--stdin", "--format", "block"],
+        input="German target without an id\n",
+    )
+
+    assert insert_res.exit_code != 0
+    assert "expected '>>> <record-id>'" in insert_res.output
+
+
+def test_translate_insert_block_rejects_duplicate_id(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+
+    insert_res = runner.invoke(
+        app,
+        ["translate", "insert", str(project_dir), "--stdin", "--format", "block"],
+        input=">>> 0001-000001\none\n\n>>> 0001-000001\ntwo\n",
+    )
+
+    assert insert_res.exit_code != 0
+    assert "duplicate record id" in insert_res.output
+
+
+def test_translate_insert_block_preserves_multiline_target(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+
+    next_res = runner.invoke(
+        app,
+        ["translate", "next", str(project_dir), "--unit", "paragraph", "--json"],
+    )
+    task = json.loads(next_res.output)
+    record_id = task["records"][0]["id"]
+
+    insert_res = runner.invoke(
+        app,
+        [
+            "translate",
+            "insert",
+            str(project_dir),
+            "--task-id",
+            task["task_id"],
+            "--stdin",
+            "--format",
+            "block",
+        ],
+        input=f">>> {record_id}\nEr sagte:\n„Geh jetzt.“\n",
+    )
+
+    assert insert_res.exit_code == 0, insert_res.output
+    store = json.loads(
+        (project_dir / ".booktx" / "translation-store.json").read_text("utf-8")
+    )
+    assert store["records"][record_id]["target"] == "Er sagte:\n„Geh jetzt.“"
+
+
+def test_translate_next_format_block_prints_submit_hint(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+
+    json_res = runner.invoke(
+        app,
+        [
+            "translate",
+            "next",
+            str(project_dir),
+            "--unit",
+            "batch",
+            "--max-words",
+            "20",
+            "--json",
+        ],
+    )
+    task = json.loads(json_res.output)
+    first_record = task["records"][0]
+
+    block_res = runner.invoke(
+        app,
+        [
+            "translate",
+            "next",
+            str(project_dir),
+            "--unit",
+            "batch",
+            "--max-words",
+            "20",
+            "--format",
+            "block",
+        ],
+    )
+
+    assert block_res.exit_code == 0, block_res.output
+    assert "--format block" in block_res.output
+    assert "--stdin" in block_res.output
+    assert f">>> {first_record['id']}" in block_res.output
+    assert "Sources:" in block_res.output
+    assert first_record["source"] in block_res.output
+
+
+def test_translate_next_creates_block_ingest_template(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+
+    next_res = runner.invoke(
+        app,
+        [
+            "translate",
+            "next",
+            str(project_dir),
+            "--unit",
+            "batch",
+            "--max-words",
+            "20",
+            "--json",
+        ],
+    )
+    task = json.loads(next_res.output)
+    json_ingest_file = project_dir / task["ingest_path"]
+    block_ingest_file = project_dir / task["block_ingest_path"]
+
+    assert json_ingest_file.is_file()
+    assert block_ingest_file.is_file()
+    headers = [
+        line
+        for line in block_ingest_file.read_text("utf-8").splitlines()
+        if line.startswith(">>> ")
+    ]
+    assert headers == [f">>> {record['id']}" for record in task["records"]]
+
+
 def test_invalid_insert_is_atomic(tmp_path: Path):
     project_dir = _make_project(tmp_path, protected_terms=["First", "Second"])
 
@@ -195,7 +445,7 @@ def test_invalid_insert_is_atomic(tmp_path: Path):
         ["translate", "next", str(project_dir), "--unit", "paragraph", "--json"],
     )
     task = json.loads(next_res.output)
-    before = (project_dir / ".booktx" / "translation-store.json")
+    before = project_dir / ".booktx" / "translation-store.json"
     before_text = before.read_text("utf-8") if before.is_file() else None
 
     payload = {
@@ -221,7 +471,9 @@ def test_translate_import_legacy_and_export_roundtrip(tmp_path: Path):
 
     import_res = runner.invoke(app, ["translate", "import-legacy", str(project_dir)])
     assert import_res.exit_code == 0, import_res.output
-    store = json.loads((project_dir / ".booktx" / "translation-store.json").read_text("utf-8"))
+    store = json.loads(
+        (project_dir / ".booktx" / "translation-store.json").read_text("utf-8")
+    )
     assert any(record_id.startswith("0001-") for record_id in store["records"])
 
     legacy_file = project_dir / ".booktx" / "translated" / "0001.json"

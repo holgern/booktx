@@ -20,11 +20,11 @@ from booktx.models import (
     ProjectConfig,
     Record,
     StoredTranslationRecord,
+    TranslatedChunk,
+    TranslatedRecord,
     TranslationStore,
     TranslationTask,
     TranslationTaskRecord,
-    TranslatedChunk,
-    TranslatedRecord,
 )
 
 

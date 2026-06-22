@@ -62,6 +62,7 @@ __all__ = [
     "translation_task_path",
     "translation_ingest_dir",
     "translation_ingest_path",
+    "translation_ingest_block_path",
     "load_translation_task",
     "write_translation_task",
 ]
@@ -329,6 +330,14 @@ def translation_ingest_path(project: Project, task_id: str) -> Path:
     if safe_task_id != task_id or not safe_task_id:
         raise _err("invalid_task_id", f"Invalid task id for ingest path: {task_id!r}")
     return translation_ingest_dir(project) / f"{safe_task_id}.json"
+
+
+def translation_ingest_block_path(project: Project, task_id: str) -> Path:
+    """Path for the durable block-text submission file for one translation task."""
+    safe_task_id = Path(task_id).name
+    if safe_task_id != task_id or not safe_task_id:
+        raise _err("invalid_task_id", f"Invalid task id for ingest path: {task_id!r}")
+    return translation_ingest_dir(project) / f"{safe_task_id}.block.txt"
 
 
 def load_translation_task(project: Project, task_id: str) -> TranslationTask | None:

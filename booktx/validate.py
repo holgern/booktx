@@ -31,8 +31,8 @@ from booktx.config import Project, load_manifest, load_translation_store
 from booktx.context import GlossaryEntry, TranslationContext, load_context
 from booktx.epub_manifest import load_epub_template_from_manifest
 from booktx.models import Chunk, Placeholder, TranslatedChunk, TranslatedRecord
-from booktx.progress import source_record_sha256
 from booktx.placeholders import TOKEN_RE, collect_tokens
+from booktx.progress import source_record_sha256
 
 __all__ = [
     "Severity",
@@ -497,7 +497,8 @@ def load_effective_translated_chunks(
                         severity=Severity.ERROR,
                         rule="stale_store_record",
                         message=(
-                            f"store record {record_id} has no matching source chunk {chunk_id}"
+                            f"store record {record_id} has no matching source "
+                            f"chunk {chunk_id}"
                         ),
                         record_id=record_id,
                     )
@@ -526,7 +527,10 @@ def load_effective_translated_chunks(
                         chunk_id=chunk_id,
                         severity=Severity.ERROR,
                         rule="stale_store_record",
-                        message=f"store record {record_id} has no matching source record",
+                        message=(
+                            f"store record {record_id} has no matching source "
+                            "record"
+                        ),
                         record_id=record_id,
                     )
                 )
@@ -540,7 +544,8 @@ def load_effective_translated_chunks(
                         severity=Severity.ERROR,
                         rule="stale_store_record",
                         message=(
-                            f"store record {record_id} no longer matches the current source text"
+                            f"store record {record_id} no longer matches the "
+                            "current source text"
                         ),
                         record_id=record_id,
                     )
@@ -567,7 +572,9 @@ def load_effective_translated_chunks(
             continue
         merged[chunk_id] = TranslatedChunk(
             chunk_id=chunk_id,
-            records=[by_id[record.id] for record in source.records if record.id in by_id],
+            records=[
+                by_id[record.id] for record in source.records if record.id in by_id
+            ],
         )
 
     return EffectiveTranslations(chunks=merged, findings=findings)

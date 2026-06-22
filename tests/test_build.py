@@ -14,7 +14,12 @@ import tests.test_epub_io as epub_fixtures
 from booktx.build import BuildError, build_project, records_to_span_text
 from booktx.chunking import ProseSpan, spans_to_chunks
 from booktx.cli import app
-from booktx.config import find_source_file, init_project, load_project, write_translation_store
+from booktx.config import (
+    find_source_file,
+    init_project,
+    load_project,
+    write_translation_store,
+)
 from booktx.markdown_io import extract_markdown
 from booktx.models import StoredTranslationRecord, TranslationStore
 from booktx.progress import source_record_sha256
@@ -183,7 +188,9 @@ def test_build_markdown_uses_translation_store(tmp_path: Path):
 
 def test_build_require_complete_fails_when_records_missing(tmp_path: Path):
     proj = init_project(tmp_path / "book", target_language="de")
-    (proj.source_dir / "book.md").write_text("# Hello\n\nAlice ran fast.\n", encoding="utf-8")
+    (proj.source_dir / "book.md").write_text(
+        "# Hello\n\nAlice ran fast.\n", encoding="utf-8"
+    )
     find_source_file(proj)
     proj = load_project(proj.root)
     _write_source_chunks_markdown(proj, "# Hello\n\nAlice ran fast.\n")

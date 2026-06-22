@@ -11,13 +11,14 @@ from booktx.config import (
     detect_format,
     find_source_file,
     init_project,
-    load_translation_store,
-    load_translation_task,
     load_names,
     load_project,
+    load_translation_store,
+    load_translation_task,
     project_source_sha256,
-    translation_store_path,
+    translation_ingest_block_path,
     translation_ingest_path,
+    translation_store_path,
     translation_task_path,
     write_translation_store,
     write_translation_task,
@@ -154,6 +155,9 @@ def test_translation_task_helpers_roundtrip(tmp_path: Path):
 
     assert translation_task_path(proj, "bt-task-1").name == "bt-task-1.json"
     assert translation_ingest_path(proj, "bt-task-1").name == "bt-task-1.json"
+    assert (
+        translation_ingest_block_path(proj, "bt-task-1").name == "bt-task-1.block.txt"
+    )
     assert load_translation_task(proj, "bt-task-1") is None
 
     write_translation_task(proj, task)

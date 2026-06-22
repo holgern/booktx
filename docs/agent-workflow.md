@@ -10,7 +10,7 @@ From the project root:
 booktx extract .
 booktx context status .
 booktx status .
-booktx translate next . --unit chapter --json
+booktx translate next . --unit batch --max-words 700 --format block
 ```
 
 If context is missing or not ready, stop translating and build the context first.
@@ -26,18 +26,19 @@ Read:
 Then request the next task from:
 
 ```bash
-booktx translate next . --json
+booktx translate next . --unit batch --max-words 700 --format block
 ```
 
 or a chapter-focused task from:
 
 ```bash
-booktx translate next . --unit chapter --json
+booktx status . --chapter 0010
+booktx translate next . --chapter 0010 --unit batch --max-words 700 --format block
 ```
 
-`booktx translate next` returns a task id, the exact record ids to translate, an `ingest_path`, and a submit hint. It also creates `.booktx/ingest/TASK.json` as a durable submission template. Do not infer chunk ranges manually.
+`booktx translate next` returns a task id, the exact record ids to translate, ingest paths, and submit hints. It also creates `.booktx/ingest/TASK.json` for JSON compatibility and `.booktx/ingest/TASK.block.txt` as a durable block template. Do not infer chunk ranges manually.
 
-## Translate only JSON records
+## Translate only task records
 
 For each source record:
 
@@ -86,19 +87,31 @@ The first replaces placeholders with originals. The second changes token padding
 
 ## Submit through the CLI
 
-Write the translated payload to the template path returned by `translate next`:
+Prefer a direct heredoc for normal agent work:
 
-```text
-.booktx/ingest/TASK.json
+```bash
+booktx translate insert . --task-id TASK --stdin --format block <<'BOOKTX'
+>>> RECORD_ID
+Translated target.
+
+>>> NEXT_RECORD_ID
+Translated target.
+BOOKTX
 ```
 
-Then submit that durable file:
+Use `.booktx/ingest/TASK.block.txt` only when you want a durable submission file under version control:
+
+```bash
+booktx translate insert . --task-id TASK --file .booktx/ingest/TASK.block.txt --format block
+```
+
+JSON remains available for compatibility:
 
 ```bash
 booktx translate insert . --task-id TASK --json-file .booktx/ingest/TASK.json
 ```
 
-Do not use `/tmp` for translation payloads. On Termux it may not exist, and on any platform it is too easy to lose work. Do not edit `.booktx/translated/*.json` directly during normal work. That directory is compatibility output managed by `booktx translate export`.
+Do not request `--unit chapter --json` for normal translation, do not write Python helper scripts to build submission payloads, and do not edit `.booktx/translated/*.json` directly during normal work. That directory is compatibility output managed by `booktx translate export`.
 
 ## Validate often
 
@@ -125,16 +138,15 @@ For EPUB, build can fail if:
 
 ## Chapter workflow
 
-Use chapter mode when style continuity matters:
+Use chapter-aware progress to keep style continuity while still translating in manageable batches:
 
 ```bash
 booktx chapters .
-booktx translate next . --unit chapter --json
+booktx status . --chapter 0010
+booktx translate next . --chapter 0010 --unit batch --max-words 700 --format block
 ```
 
-Translate the returned chapter task records. After completing the chapter, add or
-update chapter notes in the context if new terminology, voice decisions, or
-open issues appeared.
+Repeat batch requests until `booktx status . --chapter 0010` reports zero remaining records. After completing the chapter, add or update chapter notes in the context if new terminology, voice decisions, or open issues appeared.
 
 ## Repair workflow
 
@@ -144,7 +156,9 @@ If validation reports structural errors:
 2. Inspect the affected store/task payload or compatibility translated chunk.
 3. Compare `chunk_id`, record count, record order, and ids.
 4. Restore all visible placeholders from source to target.
-5. Remove commentary outside the JSON object.
+5. Remove commentary outside the expected payload format.
 6. Re-run `booktx validate .`.
+
+Validate often, but do not run `booktx build .` after every small batch unless you explicitly need a rebuilt book at that milestone.
 
 If extraction produced EPUB chunks containing `__TAG_` or `__SPANTX_`, treat that as a package defect or legacy extraction artifact. Re-extract after upgrading the EPUB pipeline.

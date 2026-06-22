@@ -121,7 +121,9 @@ def test_pack_preserves_span_metadata():
         ),
     ]
 
-    chunks = pack_chunks(records, source_language="en", target_language="de", chunk_size=2)
+    chunks = pack_chunks(
+        records, source_language="en", target_language="de", chunk_size=2
+    )
 
     assert chunks[0].records[0].span_index == 3
     assert chunks[0].records[0].span_record_index == 0

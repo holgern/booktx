@@ -68,8 +68,8 @@ booktx context answer ./book Q001 --text de-DE # answer one context question
 booktx context mark-ready ./book               # mark ready after required answers
 booktx status ./book                           # report translation progress
 booktx chapters ./book                         # list detected chapter ranges
-booktx translate next ./book --json            # get the next task payload
-booktx translate insert ./book --stdin         # submit translated records
+booktx translate next ./book --unit batch --max-words 700 --format block
+booktx translate insert ./book --stdin --format block
 booktx translate import-legacy ./book          # import valid translated/*.json
 booktx translate export ./book                 # export full translated chunks
 booktx next ./book                             # legacy next-chunk summary
@@ -125,7 +125,7 @@ and reported as warnings.
 }
 ```
 
-`booktx translate next` creates a durable `.booktx/ingest/TASK.json` template for the translated payload. `booktx translate insert --json-file .booktx/ingest/TASK.json` accepts translated records and stores them in `.booktx/translation-store.json`. This keeps agent-authored JSON under version control and avoids ephemeral `/tmp` files. When you need compatibility chunk files,
+`booktx translate next` creates a durable `.booktx/ingest/TASK.block.txt` template for block-text submissions and keeps `.booktx/ingest/TASK.json` for compatibility tooling. Prefer `booktx translate insert --stdin --format block` for normal agent work, or submit the durable `.block.txt` file when you want the payload version-controlled. `booktx translate insert --json-file .booktx/ingest/TASK.json` remains available for JSON-based tooling. When you need compatibility chunk files,
 `booktx translate export` materializes `.booktx/translated/NNNN.json` from the
 accepted store entries:
 
@@ -229,7 +229,7 @@ cp book.md ./demo/source/
 booktx extract ./demo
 booktx context init ./demo --non-interactive
 booktx context mark-ready ./demo --force
-booktx translate next ./demo --json
+booktx translate next ./demo --unit batch --max-words 700 --format block
 
 # Submit the returned records through the CLI, then:
 
@@ -244,7 +244,7 @@ booktx init ./demo --target de --source-file book.epub
 booktx extract ./demo
 booktx context init ./demo --non-interactive
 booktx context mark-ready ./demo --force
-booktx translate next ./demo --unit chapter --json
+booktx translate next ./demo --chapter 0001 --unit batch --max-words 700 --format block
 
 # Submit translated records with booktx translate insert, then:
 

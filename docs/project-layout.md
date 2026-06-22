@@ -80,7 +80,7 @@ submissions can be checked against an explicit task id.
 
 ## `.booktx/ingest/`
 
-Durable user/agent-authored translation submissions. `booktx translate next` creates `.booktx/ingest/TASK.json` as a fill-in template. Agents should edit this file and submit it with `booktx translate insert --json-file .booktx/ingest/TASK.json` instead of writing to `/tmp` or piping ephemeral stdin. The directory is intended to be kept in version control so unfinished or failed translation attempts are not lost.
+Durable user/agent-authored translation submissions. `booktx translate next` creates `.booktx/ingest/TASK.block.txt` for durable block-text submissions and keeps `.booktx/ingest/TASK.json` for compatibility tooling. Prefer direct `booktx translate insert --stdin --format block` submissions for normal agent work; use the durable `.block.txt` file when you want the submission payload version-controlled. The directory is intended to be kept in version control so unfinished or failed translation attempts are not lost.
 
 ## `.booktx/translated/`
 

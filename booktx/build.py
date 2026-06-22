@@ -36,7 +36,9 @@ def _load_chunks(project: Project) -> list[Chunk]:
 
 def _load_translated(project: Project) -> dict[str, TranslatedChunk]:
     effective = load_effective_translated_chunks(project)
-    errors = [finding for finding in effective.findings if finding.severity == Severity.ERROR]
+    errors = [
+        finding for finding in effective.findings if finding.severity == Severity.ERROR
+    ]
     if errors:
         first = errors[0]
         location = f" [{first.record_id}]" if first.record_id else ""
@@ -67,7 +69,9 @@ def _build_target_stream(
         if translated_chunk is None:
             if require_complete:
                 missing_records += len(chunk.records)
-                missing_words += sum(count_words(record.source) for record in chunk.records)
+                missing_words += sum(
+                    count_words(record.source) for record in chunk.records
+                )
             target_stream.extend(record.source for record in chunk.records)
             continue
         by_id = {record.id: record for record in translated_chunk.records}
