@@ -7,7 +7,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from spinetx.cli import app
+from booktx.cli import app
 
 runner = CliRunner()
 
@@ -59,7 +59,7 @@ def test_chapters_lists_detected_ranges(tmp_path: Path):
     assert "One" in res.output
     assert "Two" in res.output
     assert "chunks:" in res.output
-    assert (project_dir / ".spinetx" / "chapter-map.json").is_file()
+    assert (project_dir / ".booktx" / "chapter-map.json").is_file()
 
 
 def test_next_chapter_respects_context_gate(tmp_path: Path):
@@ -93,10 +93,10 @@ def test_next_unit_chapter_matches_next_chapter(tmp_path: Path):
 def test_next_chapter_skips_completed_chapter(tmp_path: Path):
     project_dir = _make_project(tmp_path)
     _ready_context(project_dir)
-    translated_dir = project_dir / ".spinetx" / "translated"
+    translated_dir = project_dir / ".booktx" / "translated"
     # Chapter one covers chunks 0001 and 0002 in this fixture. Mark them done.
     for cid in ("0001", "0002"):
-        chunk_path = project_dir / ".spinetx" / "chunks" / f"{cid}.json"
+        chunk_path = project_dir / ".booktx" / "chunks" / f"{cid}.json"
         chunk = json.loads(chunk_path.read_text("utf-8"))
         records = [
             {"id": r["id"], "target": r["source"]} for r in chunk["records"]

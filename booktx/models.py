@@ -1,9 +1,9 @@
-"""Pydantic data models for the spinetx translation contract.
+"""Pydantic data models for the booktx translation contract.
 
-This module defines the JSON shapes that cross the boundary between spinetx and
+This module defines the JSON shapes that cross the boundary between booktx and
 the translating coding agent:
 
-- Source chunk  -> ``chunks/NNNN.json``  (written by ``spinetx extract``)
+- Source chunk  -> ``chunks/NNNN.json``  (written by ``booktx extract``)
 - Translated chunk -> ``translated/NNNN.json`` (written by the agent)
 
 Both must round-trip through JSON with stable field names and ordering.
@@ -99,7 +99,7 @@ class TranslatedChunk(BaseModel):
 
 
 class NamesFile(BaseModel):
-    """The ``.spinetx/names.json`` file holding manually protected terms."""
+    """The ``.booktx/names.json`` file holding manually protected terms."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -107,7 +107,7 @@ class NamesFile(BaseModel):
 
 
 class ProjectConfig(BaseModel):
-    """The ``.spinetx/config.toml`` content, exposed as a model.
+    """The ``.booktx/config.toml`` content, exposed as a model.
 
     The TOML file mirrors these field names exactly so it stays human-editable.
     """
@@ -142,7 +142,7 @@ class ManifestSource(BaseModel):
 
 
 class Manifest(BaseModel):
-    """The ``.spinetx/manifest.json`` content."""
+    """The ``.booktx/manifest.json`` content."""
 
     model_config = ConfigDict(extra="forbid")
 

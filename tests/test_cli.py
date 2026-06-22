@@ -1,4 +1,4 @@
-"""Smoke tests for the spinetx Typer CLI."""
+"""Smoke tests for the booktx Typer CLI."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from spinetx.cli import app
+from booktx.cli import app
 
 runner = CliRunner()
 
@@ -47,18 +47,18 @@ def test_version_flag():
 
 def test_init_creates_layout(tmp_path: Path):
     project_dir = _make_markdown_project(tmp_path)
-    from spinetx.config import tomllib
+    from booktx.config import tomllib
 
-    with (project_dir / ".spinetx" / "config.toml").open("rb") as fh:
+    with (project_dir / ".booktx" / "config.toml").open("rb") as fh:
         cfg = tomllib.load(fh)
     assert cfg["target_language"] == "de"
     assert cfg["source_language"] == "en"
     assert cfg["format"] == "markdown"
     for sub in (
         "source",
-        ".spinetx",
-        ".spinetx/chunks",
-        ".spinetx/translated",
+        ".booktx",
+        ".booktx/chunks",
+        ".booktx/translated",
         "output",
     ):
         assert (project_dir / sub).is_dir()
@@ -76,7 +76,7 @@ def test_extract_writes_chunks(tmp_path: Path):
     project_dir = _make_markdown_project(tmp_path)
     res = runner.invoke(app, ["extract", str(project_dir)])
     assert res.exit_code == 0, res.output
-    chunks = list((project_dir / ".spinetx" / "chunks").glob("*.json"))
+    chunks = list((project_dir / ".booktx" / "chunks").glob("*.json"))
     assert chunks, "no chunks written"
     first = json.loads(chunks[0].read_text("utf-8"))
     assert set(first.keys()) == {
@@ -92,16 +92,16 @@ def test_extract_is_idempotent_and_preserves_translated(tmp_path: Path):
     project_dir = _make_markdown_project(tmp_path)
     runner.invoke(app, ["extract", str(project_dir)])
     # Pretend a translation exists
-    translated_dir = project_dir / ".spinetx" / "translated"
+    translated_dir = project_dir / ".booktx" / "translated"
     translated_dir.mkdir(parents=True, exist_ok=True)
     (translated_dir / "0001.json").write_text(
         '{"chunk_id": "0001", "records": []}', encoding="utf-8"
     )
-    before = (project_dir / ".spinetx" / "chunks" / "0001.json").read_text("utf-8")
+    before = (project_dir / ".booktx" / "chunks" / "0001.json").read_text("utf-8")
     # Re-extract
     res = runner.invoke(app, ["extract", str(project_dir)])
     assert res.exit_code == 0, res.output
-    after = (project_dir / ".spinetx" / "chunks" / "0001.json").read_text("utf-8")
+    after = (project_dir / ".booktx" / "chunks" / "0001.json").read_text("utf-8")
     assert before == after  # deterministic
     # translated file survives
     assert (translated_dir / "0001.json").is_file()
@@ -115,8 +115,8 @@ def test_next_prints_first_untranslated_then_exits_nonzero_when_done(tmp_path: P
     assert res.exit_code == 0, res.output
     assert "0001" in res.output
     # Provide a translation for every chunk
-    translated_dir = project_dir / ".spinetx" / "translated"
-    for chunk_file in (project_dir / ".spinetx" / "chunks").glob("*.json"):
+    translated_dir = project_dir / ".booktx" / "translated"
+    for chunk_file in (project_dir / ".booktx" / "chunks").glob("*.json"):
         chunk = json.loads(chunk_file.read_text("utf-8"))
         payload = {
             "chunk_id": chunk["chunk_id"],
@@ -138,7 +138,7 @@ def test_next_requires_ready_context(tmp_path: Path):
     res = runner.invoke(app, ["next", str(project_dir)])
     assert res.exit_code == 1
     assert "context" in res.output.lower()
-    assert "spinetx context init" in res.output
+    assert "booktx context init" in res.output
 
 
 def test_next_allow_missing_context_legacy_override(tmp_path: Path):
@@ -164,8 +164,8 @@ def test_next_prints_context_path_when_context_ready(tmp_path: Path):
 def test_validate_passes_with_identity_translation(tmp_path: Path):
     project_dir = _make_markdown_project(tmp_path)
     runner.invoke(app, ["extract", str(project_dir)])
-    translated_dir = project_dir / ".spinetx" / "translated"
-    for chunk_file in (project_dir / ".spinetx" / "chunks").glob("*.json"):
+    translated_dir = project_dir / ".booktx" / "translated"
+    for chunk_file in (project_dir / ".booktx" / "chunks").glob("*.json"):
         chunk = json.loads(chunk_file.read_text("utf-8"))
         payload = {
             "chunk_id": chunk["chunk_id"],
@@ -184,8 +184,8 @@ def test_validate_passes_with_identity_translation(tmp_path: Path):
 def test_validate_fails_on_empty_target(tmp_path: Path):
     project_dir = _make_markdown_project(tmp_path)
     runner.invoke(app, ["extract", str(project_dir)])
-    translated_dir = project_dir / ".spinetx" / "translated"
-    chunk_file = next((project_dir / ".spinetx" / "chunks").glob("*.json"))
+    translated_dir = project_dir / ".booktx" / "translated"
+    chunk_file = next((project_dir / ".booktx" / "chunks").glob("*.json"))
     chunk = json.loads(chunk_file.read_text("utf-8"))
     payload = {
         "chunk_id": chunk["chunk_id"],
@@ -200,8 +200,8 @@ def test_validate_fails_on_empty_target(tmp_path: Path):
 def test_build_produces_output(tmp_path: Path):
     project_dir = _make_markdown_project(tmp_path)
     runner.invoke(app, ["extract", str(project_dir)])
-    translated_dir = project_dir / ".spinetx" / "translated"
-    for chunk_file in (project_dir / ".spinetx" / "chunks").glob("*.json"):
+    translated_dir = project_dir / ".booktx" / "translated"
+    for chunk_file in (project_dir / ".booktx" / "chunks").glob("*.json"):
         chunk = json.loads(chunk_file.read_text("utf-8"))
         payload = {
             "chunk_id": chunk["chunk_id"],
@@ -230,8 +230,8 @@ def test_full_pipeline_end_to_end(tmp_path: Path):
     res_next = runner.invoke(app, ["next", str(project_dir), "--allow-missing-context"])
     assert res_next.exit_code == 0
     # translate identity
-    translated_dir = project_dir / ".spinetx" / "translated"
-    for chunk_file in (project_dir / ".spinetx" / "chunks").glob("*.json"):
+    translated_dir = project_dir / ".booktx" / "translated"
+    for chunk_file in (project_dir / ".booktx" / "chunks").glob("*.json"):
         chunk = json.loads(chunk_file.read_text("utf-8"))
         payload = {
             "chunk_id": chunk["chunk_id"],

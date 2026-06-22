@@ -1,4 +1,4 @@
-"""Tests for spinetx.context models."""
+"""Tests for booktx.context models."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from spinetx.context import (
+from booktx.context import (
     ContextQuestion,
     GlossaryEntry,
     StyleProfile,

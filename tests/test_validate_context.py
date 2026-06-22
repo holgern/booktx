@@ -7,11 +7,11 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from spinetx.cli import app
-from spinetx.config import init_project, load_project
-from spinetx.context import default_context, write_context, write_context_markdown
-from spinetx.models import Chunk, Record
-from spinetx.validate import validate_project
+from booktx.cli import app
+from booktx.config import init_project, load_project
+from booktx.context import default_context, write_context, write_context_markdown
+from booktx.models import Chunk, Record
+from booktx.validate import validate_project
 
 runner = CliRunner()
 

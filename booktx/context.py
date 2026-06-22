@@ -1,12 +1,12 @@
-"""Persistent translation context for a spinetx project.
+"""Persistent translation context for a booktx project.
 
-The translation contract in :mod:`spinetx.models` preserves JSON structure,
+The translation contract in :mod:`booktx.models` preserves JSON structure,
 record ids, placeholders, tags, and protected names. It does **not** preserve
 translation *intent*: style, world terminology, and user-specific decisions.
 
 This module owns the machine-readable translation context
-(``.spinetx/context.json``) and the rendered human/agent view
-(``.spinetx/context.md``). ``context.json`` is authoritative; ``context.md`` is
+(``.booktx/context.json``) and the rendered human/agent view
+(``.booktx/context.md``). ``context.json`` is authoritative; ``context.md`` is
 always regenerated from it.
 
 The context is built deterministically and locally. It never calls an LLM, never
@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
-    from spinetx.config import Project
+    from booktx.config import Project
 
 __all__ = [
     "StyleProfile",
@@ -137,18 +137,18 @@ class TranslationContext(BaseModel):
 
 
 def context_path(project: Project) -> Path:
-    """Path to the authoritative ``.spinetx/context.json``."""
-    return project.spinetx_dir / "context.json"
+    """Path to the authoritative ``.booktx/context.json``."""
+    return project.booktx_dir / "context.json"
 
 
 def context_markdown_path(project: Project) -> Path:
-    """Path to the rendered ``.spinetx/context.md``."""
-    return project.spinetx_dir / "context.md"
+    """Path to the rendered ``.booktx/context.md``."""
+    return project.booktx_dir / "context.md"
 
 
 def chapter_map_path(project: Project) -> Path:
-    """Path to ``.spinetx/chapter-map.json`` (owned by :mod:`spinetx.chapters`)."""
-    return project.spinetx_dir / "chapter-map.json"
+    """Path to ``.booktx/chapter-map.json`` (owned by :mod:`booktx.chapters`)."""
+    return project.booktx_dir / "chapter-map.json"
 
 
 # --- IO ---------------------------------------------------------------------
@@ -167,7 +167,7 @@ def load_context(project: Project) -> TranslationContext | None:
 
 
 def write_context(project: Project, context: TranslationContext) -> None:
-    """Persist ``context`` to ``.spinetx/context.json``."""
+    """Persist ``context`` to ``.booktx/context.json``."""
     path = context_path(project)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -342,7 +342,7 @@ def _status_label(ready: bool) -> str:
 def _render_header(context: TranslationContext) -> list[str]:
     style = context.style
     lines: list[str] = [
-        "# spinetx translation context",
+        "# booktx translation context",
         "",
         f"Status: {_status_label(context.ready)}",
         f"Source language: {context.source_language}",
@@ -471,7 +471,7 @@ def render_context_markdown(context: TranslationContext) -> str:
 
 
 def write_context_markdown(project: Project, context: TranslationContext) -> None:
-    """Render ``context`` to ``.spinetx/context.md``."""
+    """Render ``context`` to ``.booktx/context.md``."""
     path = context_markdown_path(project)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_context_markdown(context), encoding="utf-8")

@@ -8,7 +8,7 @@ HTML behind ``__TAG_NNN__`` tokens, hides protected names behind
 
 - a **template** — the original markdown with each translatable inline replaced
   by a ``__SPANTX_NNNN__`` placeholder; and
-- a list of :class:`~spinetx.chunking.ProseSpan` in placeholder order.
+- a list of :class:`~booktx.chunking.ProseSpan` in placeholder order.
 
 Non-translatable blocks (YAML front matter, fenced code, indented code, HTML
 blocks) are left untouched in the template.
@@ -25,9 +25,9 @@ from dataclasses import dataclass
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
-from spinetx.chunking import ProseSpan
-from spinetx.models import Placeholder
-from spinetx.placeholders import protect_names
+from booktx.chunking import ProseSpan
+from booktx.models import Placeholder
+from booktx.placeholders import protect_names
 
 __all__ = [
     "MarkdownExtraction",

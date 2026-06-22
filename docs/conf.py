@@ -4,15 +4,15 @@ from importlib import metadata
 
 sys.path.insert(0, os.path.abspath(".."))
 
-project = "spinetx"
-copyright = "2026, Spinetx Contributors"
-author = "Spinetx Contributors"
+project = "booktx"
+copyright = "2026, Booktx Contributors"
+author = "Booktx Contributors"
 
 try:
-    release = metadata.version("spinetx")
+    release = metadata.version("booktx")
 except metadata.PackageNotFoundError:
     try:
-        from spinetx._version import __version__ as release
+        from booktx._version import __version__ as release
     except ImportError:
         release = "0.1.0"
 

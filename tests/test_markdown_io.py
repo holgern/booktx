@@ -1,8 +1,8 @@
-"""Tests for spinetx.markdown_io: extraction and rebuild."""
+"""Tests for booktx.markdown_io: extraction and rebuild."""
 
 from __future__ import annotations
 
-from spinetx.markdown_io import (
+from booktx.markdown_io import (
     build_markdown,
     extract_markdown,
     split_front_matter,
@@ -101,7 +101,7 @@ def test_roundtrip_identity_rebuild():
     )
     ext = extract_markdown(md, protected_terms=[])
     # Identity translation = restore placeholders into each span text before rebuild.
-    from spinetx.placeholders import restore
+    from booktx.placeholders import restore
 
     restored = [restore(s.text, s.placeholders) for s in ext.spans]
     rebuilt = build_markdown(ext.template, restored)
@@ -114,7 +114,7 @@ def test_roundtrip_with_names_and_tags_restored():
     ext = extract_markdown(md, protected_terms=["Alice"])
     span = ext.spans[0]
     # Restore placeholders into the tagged text (identity translation)
-    from spinetx.placeholders import restore
+    from booktx.placeholders import restore
 
     restored = restore(span.text, span.placeholders)
     rebuilt = build_markdown(ext.template, [restored])

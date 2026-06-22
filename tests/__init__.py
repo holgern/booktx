@@ -1,1 +1,1 @@
-"""Test suite for spinetx."""
+"""Test suite for booktx."""

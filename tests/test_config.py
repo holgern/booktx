@@ -1,4 +1,4 @@
-"""Tests for spinetx.config: project layout, config read/write, source resolution."""
+"""Tests for booktx.config: project layout, config read/write, source resolution."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from spinetx.config import (
-    SpinetxError,
+from booktx.config import (
+    BooktxError,
     detect_format,
     find_source_file,
     init_project,
@@ -19,7 +19,7 @@ from spinetx.config import (
 def test_detect_format():
     assert detect_format("book.md") == "markdown"
     assert detect_format("book.epub") == "epub"
-    with pytest.raises(SpinetxError):
+    with pytest.raises(BooktxError):
         detect_format("book.pdf")
 
 
@@ -27,7 +27,7 @@ def test_init_creates_full_layout(tmp_path: Path):
     proj = init_project(tmp_path / "book", target_language="de")
     for d in (
         proj.source_dir,
-        proj.spinetx_dir,
+        proj.booktx_dir,
         proj.chunks_dir,
         proj.translated_dir,
         proj.reports_dir,
@@ -58,10 +58,10 @@ def test_init_copies_supplied_source(tmp_path: Path, monkeypatch):
 def test_init_rejects_unsupported_source(tmp_path: Path):
     src = tmp_path / "doc.pdf"
     src.write_bytes(b"%PDF-1.4")
-    with pytest.raises(SpinetxError):
+    with pytest.raises(BooktxError):
         init_project(tmp_path / "book", target_language="de", source_file=src)
 
-    from spinetx.config import tomllib
+    from booktx.config import tomllib
 
     proj = init_project(tmp_path / "book", target_language="fr", source_language="en")
     cfg_path = proj.config_path
@@ -78,19 +78,19 @@ def test_init_rejects_unsupported_source(tmp_path: Path):
 
 
 def test_load_project_rejects_non_project(tmp_path: Path):
-    with pytest.raises(SpinetxError):
+    with pytest.raises(BooktxError):
         load_project(tmp_path / "nope")
 
 
 def test_find_source_file_requires_exactly_one(tmp_path: Path):
     proj = init_project(tmp_path / "book", target_language="de")
     # No source file -> error
-    with pytest.raises(SpinetxError):
+    with pytest.raises(BooktxError):
         find_source_file(proj)
     # Two sources -> ambiguous
     (proj.source_dir / "a.md").write_text("a", encoding="utf-8")
     (proj.source_dir / "b.md").write_text("b", encoding="utf-8")
-    with pytest.raises(SpinetxError):
+    with pytest.raises(BooktxError):
         find_source_file(proj)
 
 

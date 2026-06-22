@@ -1,9 +1,9 @@
-"""Tests for spinetx.html_io: XHTML extraction and rebuild."""
+"""Tests for booktx.html_io: XHTML extraction and rebuild."""
 
 from __future__ import annotations
 
-from spinetx.html_io import build_xhtml, extract_xhtml
-from spinetx.placeholders import restore
+from booktx.html_io import build_xhtml, extract_xhtml
+from booktx.placeholders import restore
 
 XHTML = """<?xml version="1.0" encoding="utf-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml"><head><title>Title</title></head>

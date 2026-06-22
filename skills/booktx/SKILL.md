@@ -1,13 +1,13 @@
 ---
-name: spinetx
-description: Use this skill when working with spinetx projects
+name: booktx
+description: Use this skill when working with booktx projects
 ---
 
-# spinetx Skill
+# booktx Skill
 
 ## Primary goal
 
-Work safely with `spinetx`, a deterministic local CLI that prepares Markdown and EPUB documents for translation. `spinetx` extracts source text into JSON chunks, a coding agent or human fills translated JSON, then `spinetx validate` checks the contract and `spinetx build` reconstructs the output document.
+Work safely with `booktx`, a deterministic local CLI that prepares Markdown and EPUB documents for translation. `booktx` extracts source text into JSON chunks, a coding agent or human fills translated JSON, then `booktx validate` checks the contract and `booktx build` reconstructs the output document.
 
 Do not translate outside the JSON contract. Do not alter source files unless the user explicitly asks for package maintenance.
 
@@ -15,10 +15,10 @@ Do not translate outside the JSON contract. Do not alter source files unless the
 
 Use this skill for any of these tasks:
 
-- Translate `.spinetx/chunks/NNNN.json` into `.spinetx/translated/NNNN.json`.
+- Translate `.booktx/chunks/NNNN.json` into `.booktx/translated/NNNN.json`.
 - Inspect, validate, or repair translated chunk files.
-- Run `spinetx extract`, `spinetx next`, `spinetx validate`, or `spinetx build`.
-- Maintain the `spinetx` Python package, especially extraction, placeholders, validation, rebuild, or CLI behavior.
+- Run `booktx extract`, `booktx next`, `booktx validate`, or `booktx build`.
+- Maintain the `booktx` Python package, especially extraction, placeholders, validation, rebuild, or CLI behavior.
 - Review EPUB/Markdown translation safety and placeholder preservation.
 
 ## Core contract
@@ -44,7 +44,7 @@ A source chunk looks like this:
 }
 ```
 
-The translated file must be written to `.spinetx/translated/0001.json` and must look like this:
+The translated file must be written to `.booktx/translated/0001.json` and must look like this:
 
 ```json
 {
@@ -73,40 +73,40 @@ The translated file must be written to `.spinetx/translated/0001.json` and must 
 
 ## Required context gate
 
-Before translating any chunk or chapter, read `.spinetx/context.md`. If it does not exist, or `.spinetx/context.json` has `ready: false`, do not translate. Ask the user the context questionnaire first and write the answers to `.spinetx/context.json`, then render `.spinetx/context.md`.
+Before translating any chunk or chapter, read `.booktx/context.md`. If it does not exist, or `.booktx/context.json` has `ready: false`, do not translate. Ask the user the context questionnaire first and write the answers to `.booktx/context.json`, then render `.booktx/context.md`.
 
 Glossary entries in the context override ordinary dictionary translations. Do not use a target listed under `forbidden_targets`. For this book, do not translate `Lowlands` / `Lowlander` as `Niederlande` / `Niederländer` unless the user explicitly approves it in context.
 
 Required sequence:
 
 1. Run or ask for context building before translation.
-2. Read `.spinetx/context.md` before opening any chunk.
-3. If `.spinetx/context.md` or `.spinetx/context.json` is missing or `ready=false`, stop translating and ask the user the initial questionnaire.
+2. Read `.booktx/context.md` before opening any chunk.
+3. If `.booktx/context.md` or `.booktx/context.json` is missing or `ready=false`, stop translating and ask the user the initial questionnaire.
 4. Before translating a new chapter, read context again.
 5. Use the glossary as stronger than general dictionary intuition.
 6. Never use any `forbidden_targets` listed in the context.
 7. After each completed chapter, update the chapter summary/open issues in context.
-8. Run `spinetx validate` and fix both contract errors and context terminology errors.
+8. Run `booktx validate` and fix both contract errors and context terminology errors.
 
 ## Translation workflow
 
 From a project root:
 
 ```bash
-spinetx extract .
-spinetx context status .
-spinetx next . --unit chunk      # next untranslated chunk
-spinetx next . --unit chapter    # next incomplete chapter
-spinetx next-chapter .           # same chapter workflow, explicit command
+booktx extract .
+booktx context status .
+booktx next . --unit chunk      # next untranslated chunk
+booktx next . --unit chapter    # next incomplete chapter
+booktx next-chapter .           # same chapter workflow, explicit command
 ```
 
-Open `.spinetx/context.md` first, then open each reported `.spinetx/chunks/NNNN.json`, translate each record, and write `.spinetx/translated/NNNN.json`.
+Open `.booktx/context.md` first, then open each reported `.booktx/chunks/NNNN.json`, translate each record, and write `.booktx/translated/NNNN.json`.
 
 After writing translations:
 
 ```bash
-spinetx validate .
-spinetx build .
+booktx validate .
+booktx build .
 ```
 
 If validation fails, repair the translated JSON. Do not patch the source chunk to make validation pass unless the source extraction itself is defective and the user asked for maintenance.
@@ -140,46 +140,46 @@ for s, t in zip(src["records"], tgt["records"], strict=True):
     assert sorted(rx.findall(s["source"])) == sorted(rx.findall(t["target"]))
 ```
 
-Prefer `spinetx validate` as the authoritative check.
+Prefer `booktx validate` as the authoritative check.
 
 ## Package maintenance map
 
-- `spinetx/models.py`: Pydantic models for source and translated JSON contracts.
-- `spinetx/placeholders.py`: placeholder token creation and restoration.
-- `spinetx/chunking.py`: sentence segmentation and chunk packing.
-- `spinetx/markdown_io.py`: Markdown extraction and rebuild.
-- `spinetx/html_io.py`: XHTML extraction and rebuild.
-- `spinetx/epub_io.py`: EPUB read/extract/build wrapper around EbookLib.
-- `spinetx/config.py`: project layout, config TOML, manifest, names, source discovery.
-- `spinetx/validate.py`: contract validation and validation report writing.
-- `spinetx/build.py`: maps translated records back to spans and rebuilds outputs.
-- `spinetx/cli.py`: Typer command surface.
+- `booktx/models.py`: Pydantic models for source and translated JSON contracts.
+- `booktx/placeholders.py`: placeholder token creation and restoration.
+- `booktx/chunking.py`: sentence segmentation and chunk packing.
+- `booktx/markdown_io.py`: Markdown extraction and rebuild.
+- `booktx/html_io.py`: XHTML extraction and rebuild.
+- `booktx/epub_io.py`: EPUB read/extract/build wrapper around EbookLib.
+- `booktx/config.py`: project layout, config TOML, manifest, names, source discovery.
+- `booktx/validate.py`: contract validation and validation report writing.
+- `booktx/build.py`: maps translated records back to spans and rebuilds outputs.
+- `booktx/cli.py`: Typer command surface.
 
 ## Maintenance guardrails
 
-- Keep spinetx deterministic, local, and network-free.
+- Keep booktx deterministic, local, and network-free.
 - Do not add automatic translation API calls to core.
 - Do not change chunk IDs, record IDs, or JSON field names without migration and tests.
-- Keep `spinetx extract` idempotent: it may rebuild `.spinetx/chunks`, but must not delete `.spinetx/translated`.
+- Keep `booktx extract` idempotent: it may rebuild `.booktx/chunks`, but must not delete `.booktx/translated`.
 - Keep build/rebuild structure-preserving for Markdown and EPUB.
 - Add tests before refactoring extractor internals.
-- Treat `spinetx validate` as the gate before build.
+- Treat `booktx validate` as the gate before build.
 
 ## Known current maintenance priorities
 
 - Add Python 3.10 `tomli` fallback because `tomllib` is not available in Python 3.10.
 - Align CLI docs and options: `--source`/`--source-file`/`--source-lang` are currently easy to confuse.
-- Prefer console script target `spinetx.cli:main`.
-- Remove duplicate unreachable `return` in `spinetx/epub_io.py`.
-- Consider making `spinetx build` fail on invalid present translations instead of silently using partial fallback behavior.
+- Prefer console script target `booktx.cli:main`.
+- Remove duplicate unreachable `return` in `booktx/epub_io.py`.
+- Consider making `booktx build` fail on invalid present translations instead of silently using partial fallback behavior.
 
 ## Maintainer note: sentence segmentation
 
-`spinetx` uses `phrasplit` for deterministic sentence segmentation in chunk extraction.
-When editing `spinetx/chunking.py`, keep the simple backend forced with
+`booktx` uses `phrasplit` for deterministic sentence segmentation in chunk extraction.
+When editing `booktx/chunking.py`, keep the simple backend forced with
 `use_spacy=False` unless the user explicitly requests an opt-in spaCy mode.
 Do not allow environment-dependent auto-detection in normal extraction.
 
 ## EPUB dependency guidance
 
-Do not add a plain text EPUB extractor as a core dependency unless it preserves spinetx’s span-to-template mapping. A library such as `epub2text` can be useful as a reference for NAV/NCX parsing, chapter listings, page listings, metadata, or optional inspection, but spinetx core must preserve XHTML structure and placeholders for rebuild.
+Do not add a plain text EPUB extractor as a core dependency unless it preserves booktx’s span-to-template mapping. A library such as `epub2text` can be useful as a reference for NAV/NCX parsing, chapter listings, page listings, metadata, or optional inspection, but booktx core must preserve XHTML structure and placeholders for rebuild.

@@ -1,4 +1,4 @@
-"""Tests for spinetx chapter detection."""
+"""Tests for booktx chapter detection."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from pathlib import Path
 from ebooklib import epub
 from typer.testing import CliRunner
 
-from spinetx.chapters import detect_chapters, load_chapter_map, write_chapter_map
-from spinetx.cli import app
-from spinetx.config import init_project, load_project
+from booktx.chapters import detect_chapters, load_chapter_map, write_chapter_map
+from booktx.cli import app
+from booktx.config import init_project, load_project
 
 runner = CliRunner()
 

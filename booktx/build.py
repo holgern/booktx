@@ -8,7 +8,7 @@ writes the output file to ``output/<stem>.<target>.<ext>``.
 build never invents translation text. If a chunk lacks a validated translation
 file, the corresponding records are skipped and their spans keep their source
 text (with placeholders restored) so the output is still well-formed; the
-caller is expected to run :func:`spinetx.validate.validate_project` first.
+caller is expected to run :func:`booktx.validate.validate_project` first.
 """
 
 from __future__ import annotations
@@ -17,12 +17,12 @@ import re
 import zipfile
 from pathlib import Path
 
-from spinetx.chunking import ProseSpan
-from spinetx.config import Project, find_source_file
-from spinetx.epub_io import EpubExtraction, build_epub, extract_epub
-from spinetx.markdown_io import build_markdown, extract_markdown
-from spinetx.models import Chunk, TranslatedChunk
-from spinetx.placeholders import restore
+from booktx.chunking import ProseSpan
+from booktx.config import Project, find_source_file
+from booktx.epub_io import EpubExtraction, build_epub, extract_epub
+from booktx.markdown_io import build_markdown, extract_markdown
+from booktx.models import Chunk, TranslatedChunk
+from booktx.placeholders import restore
 
 __all__ = [
     "BuildResult",
@@ -99,7 +99,7 @@ def _build_markdown(project: Project) -> BuildResult:
     # Map chunk records back onto spans in order. Records were produced by
     # segmenting spans in order, so re-segment each span to know how many
     # records it produced, then consume that many targets per span.
-    from spinetx.chunking import segment_spans
+    from booktx.chunking import segment_spans
 
     seg_counts = [
         len(segment_spans([span], language=project.config.source_language))
@@ -158,7 +158,7 @@ def _build_epub(project: Project) -> BuildResult:
             target_stream.append(trec.target if trec else rec.source)
 
     # Consume per-span target counts.
-    from spinetx.chunking import segment_spans
+    from booktx.chunking import segment_spans
 
     replacements: list[str] = []
     pos = 0
@@ -176,7 +176,7 @@ def _build_epub(project: Project) -> BuildResult:
 
 
 def _load_names(project: Project) -> list[str]:
-    from spinetx.config import load_names
+    from booktx.config import load_names
 
     return load_names(project).protected_terms
 
@@ -215,5 +215,5 @@ def build_project(project: Project) -> BuildResult:
         return _build_epub(project)
     raise BuildError(
         f"Cannot build format {project.config.format!r}; "
-        "spinetx v1 supports only markdown and epub."
+        "booktx v1 supports only markdown and epub."
     )

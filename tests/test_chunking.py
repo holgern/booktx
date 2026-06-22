@@ -1,9 +1,9 @@
-"""Tests for spinetx.chunking: segmentation and chunk packing."""
+"""Tests for booktx.chunking: segmentation and chunk packing."""
 
 from __future__ import annotations
 
-from spinetx.chunking import ProseSpan, pack_chunks, segment_spans, spans_to_chunks
-from spinetx.models import Placeholder, Record
+from booktx.chunking import ProseSpan, pack_chunks, segment_spans, spans_to_chunks
+from booktx.models import Placeholder, Record
 
 
 def _rec(id_: str, source: str) -> Record:

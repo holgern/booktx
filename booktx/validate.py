@@ -1,8 +1,8 @@
-"""Validation of agent-translated chunks against the spinetx contract.
+"""Validation of agent-translated chunks against the booktx contract.
 
-The validator loads every source chunk in ``.spinetx/chunks/`` and the matching
-translated chunk in ``.spinetx/translated/`` (if present), and enforces the
-hard rules from ``spinetx_coding_agent_start.md``:
+The validator loads every source chunk in ``.booktx/chunks/`` and the matching
+translated chunk in ``.booktx/translated/`` (if present), and enforces the
+hard rules from ``booktx_coding_agent_start.md``:
 
 - The translated JSON must be valid JSON.
 - The record count must be unchanged.
@@ -16,7 +16,7 @@ The goal is **one source sentence to one translated sentence**. The validator
 never merges or splits records.
 
 A :class:`ValidationReport` collects per-chunk findings and a summary, and is
-written to ``.spinetx/reports/``. ``validate_project`` returns the report and
+written to ``.booktx/reports/``. ``validate_project`` returns the report and
 exits non-zero on any mandatory failure.
 """
 
@@ -27,10 +27,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from spinetx.config import Project
-from spinetx.context import GlossaryEntry, TranslationContext, load_context
-from spinetx.models import Chunk, Placeholder, TranslatedChunk
-from spinetx.placeholders import TOKEN_RE, collect_tokens
+from booktx.config import Project
+from booktx.context import GlossaryEntry, TranslationContext, load_context
+from booktx.models import Chunk, Placeholder, TranslatedChunk
+from booktx.placeholders import TOKEN_RE, collect_tokens
 
 __all__ = [
     "Severity",
@@ -446,7 +446,7 @@ def validate_project(project: Project) -> ValidationReport:
 
 
 def write_report(project: Project, report: ValidationReport) -> Path:
-    """Persist the validation report to ``.spinetx/reports/`` and return it."""
+    """Persist the validation report to ``.booktx/reports/`` and return it."""
     project.reports_dir.mkdir(parents=True, exist_ok=True)
     out = project.reports_dir / "validation-report.json"
     out.write_text(

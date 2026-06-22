@@ -1,4 +1,4 @@
-"""CLI tests for `spinetx context ...`."""
+"""CLI tests for `booktx context ...`."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from spinetx.cli import app
+from booktx.cli import app
 
 runner = CliRunner()
 
@@ -35,8 +35,8 @@ def test_context_init_non_interactive_creates_files(tmp_path: Path):
     project_dir = _make_project(tmp_path)
     res = runner.invoke(app, ["context", "init", str(project_dir), "--non-interactive"])
     assert res.exit_code == 0, res.output
-    ctx_path = project_dir / ".spinetx" / "context.json"
-    md_path = project_dir / ".spinetx" / "context.md"
+    ctx_path = project_dir / ".booktx" / "context.json"
+    md_path = project_dir / ".booktx" / "context.md"
     assert ctx_path.is_file()
     assert md_path.is_file()
     data = json.loads(ctx_path.read_text("utf-8"))
@@ -74,11 +74,11 @@ def test_context_add_term_persists_glossary_entry(tmp_path: Path):
         ],
     )
     assert res.exit_code == 0, res.output
-    data = json.loads((project_dir / ".spinetx" / "context.json").read_text("utf-8"))
+    data = json.loads((project_dir / ".booktx" / "context.json").read_text("utf-8"))
     low = next(g for g in data["glossary"] if g["source"] == "Lowlands")
     assert "Niederländer" in low["forbidden_targets"]
     assert low["enforce"] == "error"
-    assert "Niederländer" in (project_dir / ".spinetx" / "context.md").read_text(
+    assert "Niederländer" in (project_dir / ".booktx" / "context.md").read_text(
         "utf-8"
     )
 
@@ -110,9 +110,9 @@ def test_context_mark_ready_fails_until_required_answers_exist(tmp_path: Path):
         assert ans.exit_code == 0, ans.output
     res2 = runner.invoke(app, ["context", "mark-ready", str(project_dir)])
     assert res2.exit_code == 0, res2.output
-    data = json.loads((project_dir / ".spinetx" / "context.json").read_text("utf-8"))
+    data = json.loads((project_dir / ".booktx" / "context.json").read_text("utf-8"))
     assert data["ready"] is True
-    assert "READY" in (project_dir / ".spinetx" / "context.md").read_text("utf-8")
+    assert "READY" in (project_dir / ".booktx" / "context.md").read_text("utf-8")
 
 
 def test_context_mark_ready_force_allows_open_questions(tmp_path: Path):
@@ -120,15 +120,15 @@ def test_context_mark_ready_force_allows_open_questions(tmp_path: Path):
     runner.invoke(app, ["context", "init", str(project_dir), "--non-interactive"])
     res = runner.invoke(app, ["context", "mark-ready", str(project_dir), "--force"])
     assert res.exit_code == 0, res.output
-    data = json.loads((project_dir / ".spinetx" / "context.json").read_text("utf-8"))
+    data = json.loads((project_dir / ".booktx" / "context.json").read_text("utf-8"))
     assert data["ready"] is True
 
 
 def test_context_render_regenerates_markdown(tmp_path: Path):
     project_dir = _make_project(tmp_path)
     runner.invoke(app, ["context", "init", str(project_dir), "--non-interactive"])
-    md_path = project_dir / ".spinetx" / "context.md"
+    md_path = project_dir / ".booktx" / "context.md"
     md_path.write_text("stale", encoding="utf-8")
     res = runner.invoke(app, ["context", "render", str(project_dir)])
     assert res.exit_code == 0, res.output
-    assert "spinetx translation context" in md_path.read_text("utf-8")
+    assert "booktx translation context" in md_path.read_text("utf-8")

@@ -1,4 +1,4 @@
-"""Chapter detection and chapter-map persistence for spinetx.
+"""Chapter detection and chapter-map persistence for booktx.
 
 Chapter maps are additive metadata. They do not change chunk JSON or translated
 chunk JSON. Detection is deterministic and local: markdown uses heading inline
@@ -14,15 +14,15 @@ from typing import TYPE_CHECKING
 from markdown_it import MarkdownIt
 from pydantic import BaseModel, ConfigDict, Field
 
-from spinetx.chunking import ProseSpan, segment_spans
-from spinetx.config import find_source_file, load_names
-from spinetx.context import chapter_map_path
-from spinetx.epub_io import _item_content_str, _spine_documents, extract_epub, read_epub
-from spinetx.html_io import _translatable_blocks, parse_xhtml
-from spinetx.markdown_io import extract_markdown, split_front_matter
+from booktx.chunking import ProseSpan, segment_spans
+from booktx.config import find_source_file, load_names
+from booktx.context import chapter_map_path
+from booktx.epub_io import _item_content_str, _spine_documents, extract_epub, read_epub
+from booktx.html_io import _translatable_blocks, parse_xhtml
+from booktx.markdown_io import extract_markdown, split_front_matter
 
 if TYPE_CHECKING:
-    from spinetx.config import Project
+    from booktx.config import Project
 
 __all__ = [
     "Chapter",
@@ -86,7 +86,7 @@ def write_chapter_map(project: Project, chapter_map: ChapterMap) -> None:
 def detect_chapters(project: Project) -> ChapterMap:
     """Detect chapters and write no files.
 
-    The project should already have chunks (normally after ``spinetx extract``)
+    The project should already have chunks (normally after ``booktx extract``)
     so record ids can be mapped exactly to existing chunk files.
     """
     source = find_source_file(project)
@@ -111,7 +111,7 @@ def detect_chapters(project: Project) -> ChapterMap:
 def _project_record_ids(project: Project) -> list[str]:
     record_ids: list[str] = []
     for chunk_path in project.chunks():
-        from spinetx.models import Chunk
+        from booktx.models import Chunk
 
         chunk = Chunk.model_validate_json(chunk_path.read_text("utf-8"))
         record_ids.extend(record.id for record in chunk.records)

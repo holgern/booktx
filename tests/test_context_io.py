@@ -1,11 +1,11 @@
-"""Tests for spinetx.context IO and rendering."""
+"""Tests for booktx.context IO and rendering."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from spinetx.config import init_project, load_project
-from spinetx.context import (
+from booktx.config import init_project, load_project
+from booktx.context import (
     context_markdown_path,
     context_path,
     default_context,
@@ -53,7 +53,7 @@ def test_write_context_markdown_renders(tmp_path: Path):
     ctx = default_context(proj)
     write_context_markdown(proj, ctx)
     md = context_markdown_path(proj).read_text("utf-8")
-    assert "spinetx translation context" in md
+    assert "booktx translation context" in md
     assert "NOT READY" in md
     # Style section
     assert "Formality: neutral" in md
@@ -96,7 +96,7 @@ def test_context_files_round_trip(tmp_path: Path):
     proj = _project(tmp_path)
     ctx = default_context(proj)
     # Add a custom glossary entry to prove persistence beyond seeds.
-    from spinetx.context import GlossaryEntry
+    from booktx.context import GlossaryEntry
 
     ctx.glossary.append(
         GlossaryEntry(

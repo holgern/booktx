@@ -5,7 +5,7 @@ had names and inline tags replaced by placeholder tokens). chunking:
 
 1. Segments each span into sentences with :mod:`phrasplit`.
 2. Assigns each resulting sentence a stable record id.
-3. Packs records into :class:`~spinetx.models.Chunk` objects of at most
+3. Packs records into :class:`~booktx.models.Chunk` objects of at most
    ``chunk_size`` records, numbering chunks from 1.
 
 Record ids are ``NNNN-NNNNNN``: the 4-digit chunk id, a dash, and a 1-based
@@ -21,8 +21,8 @@ from dataclasses import dataclass
 
 from phrasplit import split_with_offsets
 
-from spinetx.models import Chunk, Placeholder, Record
-from spinetx.placeholders import collect_tokens
+from booktx.models import Chunk, Placeholder, Record
+from booktx.placeholders import collect_tokens
 
 __all__ = [
     "ProseSpan",
@@ -32,7 +32,7 @@ __all__ = [
 ]
 
 # phrasplit's simple backend expects spaCy-style model names for abbreviation
-# lookup, even when spaCy is not used. Keep spinetx deterministic by forcing the
+# lookup, even when spaCy is not used. Keep booktx deterministic by forcing the
 # regex backend and mapping BCP-47-ish project language codes to phrasplit's
 # abbreviation tables.
 _LANGUAGE_MODEL_BY_CODE: dict[str, str] = {
@@ -77,7 +77,7 @@ class ProseSpan:
 
 
 def _language_model(language: str) -> str:
-    # spinetx config language codes are BCP-47-ish. phrasplit's abbreviation
+    # booktx config language codes are BCP-47-ish. phrasplit's abbreviation
     # tables are keyed by spaCy model names. Fall back to English for unknown
     # language codes so segmentation stays deterministic.
     code = language.split("-", 1)[0].lower() or "en"

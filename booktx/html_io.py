@@ -1,6 +1,6 @@
-"""XHTML text extraction and rebuild, shared by :mod:`spinetx.epub_io`.
+"""XHTML text extraction and rebuild, shared by :mod:`booktx.epub_io`.
 
-Design (mirrors :mod:`spinetx.markdown_io` for HTML):
+Design (mirrors :mod:`booktx.markdown_io` for HTML):
 
 - *Translatable blocks* are leaf prose containers (``p``, ``h1``..``h6``,
   ``li``, ``td``, ``th``, ``caption``, ``dt``, ``dd``, ``figcaption``).
@@ -25,9 +25,9 @@ from dataclasses import dataclass
 from bs4 import BeautifulSoup, NavigableString, Tag
 from bs4.formatter import XMLFormatter
 
-from spinetx.chunking import ProseSpan
-from spinetx.models import Placeholder
-from spinetx.placeholders import protect_names
+from booktx.chunking import ProseSpan
+from booktx.models import Placeholder
+from booktx.placeholders import protect_names
 
 __all__ = [
     "HtmlExtraction",
@@ -283,7 +283,7 @@ def restore_block_content(block: Tag, translated_text: str) -> None:
     """Replace ``block``'s children with translated text + restored inline tags.
 
     ``translated_text`` must already have NAME/TAG tokens restored (use
-    :func:`spinetx.placeholders.restore`). Inline-tag fragments are re-parsed
+    :func:`booktx.placeholders.restore`). Inline-tag fragments are re-parsed
     and re-attached, preserving nested structure and attributes.
     """
     block.clear()

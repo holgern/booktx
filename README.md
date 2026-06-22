@@ -1,22 +1,22 @@
-# spinetx
+# booktx
 
-`spinetx` is a deterministic command-line tool that prepares **Markdown** and
+`booktx` is a deterministic command-line tool that prepares **Markdown** and
 **EPUB** documents for translation by a coding agent (or a human translator).
 It does the mechanical bookkeeping — extract translatable sentences, validate
 the translation, rebuild the document — and leaves the actual translation to
 you or your agent.
 
-**spinetx never translates text itself** and makes no LLM or network calls. All
+**booktx never translates text itself** and makes no LLM or network calls. All
 translation text comes from JSON chunk files that you (or an agent) fill in.
 
 ## Legal notice
 
-spinetx is intended for DRM-free documents that you lawfully own or are allowed
-to process. The license of spinetx applies only to the software, not to input
+booktx is intended for DRM-free documents that you lawfully own or are allowed
+to process. The license of booktx applies only to the software, not to input
 books or generated translations. Do not redistribute translated books unless
 you have the rights to do so.
 
-spinetx is licensed under **AGPL-3.0-or-later** (it uses
+booktx is licensed under **AGPL-3.0-or-later** (it uses
 [`EbookLib`](https://github.com/aerkalov/ebooklib), which is AGPL).
 
 ---
@@ -26,27 +26,27 @@ spinetx is licensed under **AGPL-3.0-or-later** (it uses
 ```bash
 pip install -e .          # editable install from a checkout
 # or, once published:
-pip install spinetx
+pip install booktx
 ```
 
-Requires Python 3.10+. The `spinetx` console script is installed automatically.
+Requires Python 3.10+. The `booktx` console script is installed automatically.
 
 ## Project layout
 
-`spinetx init ./book --target de` creates this layout:
+`booktx init ./book --target de` creates this layout:
 
 ```text
 book/
   source/
     book.md        # or book.epub — exactly one source document
-  .spinetx/
+  .booktx/
     config.toml    # source/target language, format, chunk size
     manifest.json  # source digest + per-document templates (epub)
     names.json     # manually protected verbatim terms (names, brands, places)
     context.json   # authoritative style/glossary/questions context
     context.md     # rendered context that agents must read before translating
     chapter-map.json # detected chapter -> chunk ranges (additive metadata)
-    chunks/        # 0001.json, 0002.json ... (spinetx writes these)
+    chunks/        # 0001.json, 0002.json ... (booktx writes these)
     translated/    # 0001.json, 0002.json ... (the agent writes these)
     reports/       # validation-report.json
   output/
@@ -56,44 +56,44 @@ book/
 ## Commands
 
 ```bash
-spinetx init ./book --target de                 # create the project
-spinetx init ./book --target de --source book.md --source-lang en
-spinetx inspect ./book                          # summarise the source
-spinetx extract ./book                          # write .spinetx/chunks/*.json
-spinetx context init ./book --non-interactive   # create open questions/context
-spinetx context questions ./book                # show required context questions
-spinetx context answer ./book Q001 --text de-DE # answer one context question
-spinetx context mark-ready ./book               # mark ready after required answers
-spinetx chapters ./book                         # list detected chapter ranges
-spinetx next ./book                             # print next chunk (requires context)
-spinetx next ./book --unit chapter              # print next incomplete chapter
-spinetx next-chapter ./book                     # chapter workflow shortcut
-spinetx validate ./book                         # enforce contract + context lint
-spinetx build ./book                            # rebuild output/book.<target>.<ext>
+booktx init ./book --target de                 # create the project
+booktx init ./book --target de --source book.md --source-lang en
+booktx inspect ./book                          # summarise the source
+booktx extract ./book                          # write .booktx/chunks/*.json
+booktx context init ./book --non-interactive   # create open questions/context
+booktx context questions ./book                # show required context questions
+booktx context answer ./book Q001 --text de-DE # answer one context question
+booktx context mark-ready ./book               # mark ready after required answers
+booktx chapters ./book                         # list detected chapter ranges
+booktx next ./book                             # print next chunk (requires context)
+booktx next ./book --unit chapter              # print next incomplete chapter
+booktx next-chapter ./book                     # chapter workflow shortcut
+booktx validate ./book                         # enforce contract + context lint
+booktx build ./book                            # rebuild output/book.<target>.<ext>
 ```
 
-`spinetx next` refuses to return translation work until `.spinetx/context.json`
+`booktx next` refuses to return translation work until `.booktx/context.json`
 exists and has `ready: true`. When ready, it prints the rendered context path
 before the chunk path. Use `--allow-missing-context` only for legacy workflows
 and tests that deliberately bypass the context gate.
 
-`spinetx next --unit chapter` and `spinetx next-chapter` print the next
-incomplete chapter and all chunk files it covers. `spinetx chapters` writes
-`.spinetx/chapter-map.json` and lists detected chapter ranges.
+`booktx next --unit chapter` and `booktx next-chapter` print the next
+incomplete chapter and all chunk files it covers. `booktx chapters` writes
+`.booktx/chapter-map.json` and lists detected chapter ranges.
 
-`spinetx context init --non-interactive` creates a not-ready context with open
+`booktx context init --non-interactive` creates a not-ready context with open
 questions and a seed glossary. Required questions must be answered before
-`spinetx context mark-ready` succeeds. `context.md` is generated from
+`booktx context mark-ready` succeeds. `context.md` is generated from
 `context.json`; the JSON file is authoritative.
 
-`spinetx extract` is **idempotent**: it rebuilds `chunks/` on every run but
+`booktx extract` is **idempotent**: it rebuilds `chunks/` on every run but
 leaves `translated/` untouched, so re-extracting after editing the source never
 destroys work in progress. Stale `translated/*.json` files whose chunk no longer
 exists are kept and reported as warnings.
 
 ## The translation contract
 
-`spinetx extract` writes a chunk file like this:
+`booktx extract` writes a chunk file like this:
 
 ```json
 {
@@ -111,7 +111,7 @@ exists are kept and reported as warnings.
 }
 ```
 
-The agent writes the matching file to `.spinetx/translated/0001.json`:
+The agent writes the matching file to `.booktx/translated/0001.json`:
 
 ```json
 {
@@ -125,7 +125,7 @@ The agent writes the matching file to `.spinetx/translated/0001.json`:
 }
 ```
 
-### Hard rules (enforced by `spinetx validate`)
+### Hard rules (enforced by `booktx validate`)
 
 A translated chunk is rejected if any of the following is true:
 
@@ -141,7 +141,7 @@ never merges or splits records.
 
 ## Placeholders and protected names
 
-Before segmentation, spinetx hides non-translatable spans behind stable tokens
+Before segmentation, booktx hides non-translatable spans behind stable tokens
 so the translator never sees them, and restores them verbatim during build:
 
 ```text
@@ -151,7 +151,7 @@ inline code     -> __TAG_001__         (markdown: `code`; epub: <code>...</code>
 link URL        -> __TAG_002__         (markdown: (url); epub: <a href="url">...</a>)
 ```
 
-Edit `.spinetx/names.json` to add names, brands, or places that must survive
+Edit `.booktx/names.json` to add names, brands, or places that must survive
 translation untouched:
 
 ```json
@@ -161,7 +161,7 @@ translation untouched:
 ```
 
 The agent **must** preserve every `__NAME_NNN__` and `__TAG_NNN__` token
-exactly. `spinetx build` restores the originals after validation.
+exactly. `booktx build` restores the originals after validation.
 
 ## Markdown handling
 
@@ -170,7 +170,7 @@ exactly. `spinetx build` restores the originals after validation.
   **keys** (front-matter values are prose).
 - Preserve headings, lists, blockquotes, links, emphasis, and tables.
 
-spinetx replaces each extracted prose span with an internal placeholder and
+booktx replaces each extracted prose span with an internal placeholder and
 reinserts the translated text during build.
 
 ## EPUB handling
@@ -190,28 +190,28 @@ and attributes (e.g. `href`) survive unchanged. Inline `<code>`, `<kbd>`,
 ## End-to-end example (Markdown)
 
 ```bash
-spinetx init ./demo --target de
+booktx init ./demo --target de
 cp book.md ./demo/source/
-spinetx extract ./demo
-spinetx next ./demo              # -> 0001   .spinetx/chunks/0001.json
+booktx extract ./demo
+booktx next ./demo              # -> 0001   .booktx/chunks/0001.json
 
-# Fill in .spinetx/translated/0001.json (see the contract above), then:
+# Fill in .booktx/translated/0001.json (see the contract above), then:
 
-spinetx validate ./demo
-spinetx build ./demo            # -> demo/output/book.de.md
+booktx validate ./demo
+booktx build ./demo            # -> demo/output/book.de.md
 ```
 
 ## End-to-end example (EPUB)
 
 ```bash
-spinetx init ./demo --target de --source-file book.epub
-spinetx extract ./demo
-spinetx next ./demo
+booktx init ./demo --target de --source-file book.epub
+booktx extract ./demo
+booktx next ./demo
 
-# Fill in every .spinetx/translated/*.json, then:
+# Fill in every .booktx/translated/*.json, then:
 
-spinetx validate ./demo
-spinetx build ./demo            # -> demo/output/book.de.epub
+booktx validate ./demo
+booktx build ./demo            # -> demo/output/book.de.epub
 ```
 
 ## What v1 does NOT do

@@ -1,11 +1,11 @@
 """Placeholder protection and restoration for names and inline non-translatable spans.
 
-spinetx never sends raw protected names or inline markup to the translating
+booktx never sends raw protected names or inline markup to the translating
 agent. Instead it replaces them with stable, collision-free tokens before
 segmentation, and restores the originals verbatim after the agent returns the
 translated text.
 
-Two placeholder kinds are used (see ``spinetx_coding_agent_start.md``):
+Two placeholder kinds are used (see ``booktx_coding_agent_start.md``):
 
 - ``__NAME_NNN__`` — a manually protected term from ``names.json``
   (e.g. ``Alice`` -> ``__NAME_001__``).
@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from spinetx.models import Placeholder
+from booktx.models import Placeholder
 
 __all__ = [
     "NAME_TOKEN_RE",

@@ -1,15 +1,15 @@
-"""Typer CLI for spinetx.
+"""Typer CLI for booktx.
 
-Commands (see ``spinetx_coding_agent_start.md``)::
+Commands (see ``booktx_coding_agent_start.md``)::
 
-    spinetx init ./book --target de
-    spinetx inspect ./book
-    spinetx extract ./book
-    spinetx next ./book
-    spinetx validate ./book
-    spinetx build ./book
+    booktx init ./book --target de
+    booktx inspect ./book
+    booktx extract ./book
+    booktx next ./book
+    booktx validate ./book
+    booktx build ./book
 
-spinetx never translates text; it extracts, validates, and rebuilds.
+booktx never translates text; it extracts, validates, and rebuilds.
 """
 
 from __future__ import annotations
@@ -21,17 +21,17 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from spinetx import __version__
-from spinetx.build import BuildError, build_project
-from spinetx.chapters import detect_chapters, write_chapter_map
-from spinetx.chunking import spans_to_chunks
-from spinetx.config import (
-    SpinetxError,
+from booktx import __version__
+from booktx.build import BuildError, build_project
+from booktx.chapters import detect_chapters, write_chapter_map
+from booktx.chunking import spans_to_chunks
+from booktx.config import (
+    BooktxError,
     find_source_file,
     init_project,
     load_project,
 )
-from spinetx.context import (
+from booktx.context import (
     GlossaryEntry,
     context_markdown_path,
     default_context,
@@ -39,17 +39,17 @@ from spinetx.context import (
     write_context,
     write_context_markdown,
 )
-from spinetx.epub_io import extract_epub
-from spinetx.html_io import build_xhtml  # noqa: F401  (kept for downstream use)
-from spinetx.markdown_io import extract_markdown
-from spinetx.models import NamesFile
-from spinetx.validate import validate_project, write_report
+from booktx.epub_io import extract_epub
+from booktx.html_io import build_xhtml  # noqa: F401  (kept for downstream use)
+from booktx.markdown_io import extract_markdown
+from booktx.models import NamesFile
+from booktx.validate import validate_project, write_report
 
 app = typer.Typer(
-    name="spinetx",
+    name="booktx",
     help=(
         "Prepare Markdown and EPUB documents for translation by a coding agent. "
-        "spinetx does NOT translate text; it extracts, validates, and rebuilds."
+        "booktx does NOT translate text; it extracts, validates, and rebuilds."
     ),
     invoke_without_command=True,
     add_completion=False,
@@ -66,7 +66,7 @@ def _die(message: str, code: int = 1) -> None:
     raise typer.Exit(code=code)
 
 
-def _handle_spinetx_error(exc: SpinetxError) -> None:
+def _handle_booktx_error(exc: BooktxError) -> None:
     _die(str(exc))
 
 
@@ -75,7 +75,7 @@ def _handle_spinetx_error(exc: SpinetxError) -> None:
 
 @app.command()
 def version() -> None:
-    """Print the spinetx version."""
+    """Print the booktx version."""
     console.print(__version__)
 
 
@@ -86,8 +86,8 @@ def version() -> None:
 def _load_project_or_exit(project_dir: Path):
     try:
         return load_project(project_dir)
-    except SpinetxError as exc:
-        _handle_spinetx_error(exc)
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
         raise typer.Exit(code=1) from exc
 
 
@@ -98,7 +98,7 @@ def _load_context_or_exit(proj):
         _die(f"translation context is invalid: {exc}")
         raise typer.Exit(code=1) from exc
     if ctx is None:
-        _die("translation context is missing. Run: spinetx context init .")
+        _die("translation context is missing. Run: booktx context init .")
     return ctx
 
 
@@ -116,7 +116,7 @@ def context_init(
         False, "--force", help="Overwrite an existing context."
     ),
 ) -> None:
-    """Create .spinetx/context.json and rendered context.md."""
+    """Create .booktx/context.json and rendered context.md."""
     proj = _load_project_or_exit(project_dir)
     existing = None if force else load_context(proj)
     if existing is not None:
@@ -134,7 +134,7 @@ def context_init(
         ctx.ready = not _open_required_questions(ctx)
     write_context(proj, ctx)
     write_context_markdown(proj, ctx)
-    console.print(f"wrote {proj.spinetx_dir / 'context.json'}")
+    console.print(f"wrote {proj.booktx_dir / 'context.json'}")
     console.print(f"wrote {context_markdown_path(proj)}")
 
 
@@ -287,7 +287,7 @@ def init(
         50, "--chunk-size", help="Max records per chunk (default: 50)."
     ),
 ) -> None:
-    """Create a new spinetx project layout."""
+    """Create a new booktx project layout."""
     try:
         proj = init_project(
             project_dir,
@@ -296,8 +296,8 @@ def init(
             source_file=source,
             chunk_size=chunk_size,
         )
-    except SpinetxError as exc:
-        _handle_spinetx_error(exc)
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
         return
 
     console.print(f"[green]Created project:[/green] {proj.root}")
@@ -323,15 +323,15 @@ def inspect(
     try:
         proj = load_project(project_dir)
         source = find_source_file(proj)
-    except SpinetxError as exc:
-        _handle_spinetx_error(exc)
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
         return
 
     fmt = proj.config.format
     names = _load_names_list(proj)
     record_count, extra = _count_records(source, fmt, names)
 
-    table = Table(title=f"spinetx inspect — {proj.root}", show_header=False)
+    table = Table(title=f"booktx inspect — {proj.root}", show_header=False)
     table.add_row("source_file", source.name)
     table.add_row("format", fmt)
     table.add_row("source_language", proj.config.source_language)
@@ -343,7 +343,7 @@ def inspect(
 
 
 def _load_names_list(proj) -> list[str]:
-    from spinetx.config import load_names
+    from booktx.config import load_names
 
     return load_names(proj).protected_terms
 
@@ -359,9 +359,9 @@ def _count_records(source: Path, fmt: str, names: list[str]) -> tuple[int, str]:
         spans = extraction.spans
         details = f"{len(extraction.templates)} spine document(s)"
     else:  # pragma: no cover - config validation already guards this
-        raise SpinetxError(f"Unsupported format {fmt!r}")
+        raise BooktxError(f"Unsupported format {fmt!r}")
 
-    from spinetx.chunking import segment_spans
+    from booktx.chunking import segment_spans
 
     records = segment_spans(spans, language="en")
     return len(records), details
@@ -374,15 +374,15 @@ def _count_records(source: Path, fmt: str, names: list[str]) -> tuple[int, str]:
 def extract(
     project_dir: Path = typer.Argument(..., help="Project directory."),
 ) -> None:
-    """Extract translatable chunks into ``.spinetx/chunks/``.
+    """Extract translatable chunks into ``.booktx/chunks/``.
 
     Idempotent: ``chunks/`` is rebuilt each run; ``translated/`` is left intact.
     """
     try:
         proj = load_project(project_dir)
         source = find_source_file(proj)
-    except SpinetxError as exc:
-        _handle_spinetx_error(exc)
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
         return
 
     names = _load_names_list(proj)
@@ -428,8 +428,8 @@ def _save_epub_manifest(proj, source, extraction) -> None:
     import hashlib
     import json
 
-    from spinetx.config import write_manifest
-    from spinetx.models import Manifest, ManifestSource
+    from booktx.config import write_manifest
+    from booktx.models import Manifest, ManifestSource
 
     sha = hashlib.sha256(source.read_bytes()).hexdigest()
     manifest = Manifest(
@@ -466,7 +466,7 @@ def _require_ready_context(proj, *, allow_missing_context: bool = False) -> bool
     if ctx is None or not ctx.ready:
         _die(
             "translation context is missing or not ready.\n"
-            "Run: spinetx context init ."
+            "Run: booktx context init ."
         )
     return True
 
@@ -513,8 +513,8 @@ def next_cmd(
     """
     try:
         proj = load_project(project_dir)
-    except SpinetxError as exc:
-        _handle_spinetx_error(exc)
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
         return
 
     if unit not in {"chunk", "chapter"}:
@@ -554,8 +554,8 @@ def chapters_cmd(
     """Detect and list chapter ranges."""
     try:
         proj = load_project(project_dir)
-    except SpinetxError as exc:
-        _handle_spinetx_error(exc)
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
         return
     chapter_map = detect_chapters(proj)
     write_chapter_map(proj, chapter_map)
@@ -580,8 +580,8 @@ def next_chapter_cmd(
     """Print the next incomplete chapter and all chunks it covers."""
     try:
         proj = load_project(project_dir)
-    except SpinetxError as exc:
-        _handle_spinetx_error(exc)
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
         return
     print_context = _require_ready_context(
         proj, allow_missing_context=allow_missing_context
@@ -599,8 +599,8 @@ def validate(
     """Validate translated chunks against the translation contract."""
     try:
         proj = load_project(project_dir)
-    except SpinetxError as exc:
-        _handle_spinetx_error(exc)
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
         return
 
     report = validate_project(proj)
@@ -636,8 +636,8 @@ def build(
     try:
         proj = load_project(project_dir)
         result = build_project(proj)
-    except SpinetxError as exc:
-        _handle_spinetx_error(exc)
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
         return
     except BuildError as exc:
         _die(str(exc))
@@ -655,11 +655,11 @@ def _main(
         False,
         "--version",
         "-V",
-        help="Print spinetx version and exit.",
+        help="Print booktx version and exit.",
         is_eager=True,
     ),
 ) -> None:
-    """spinetx root options."""
+    """booktx root options."""
     if version:
         console.print(__version__)
         raise typer.Exit

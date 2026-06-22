@@ -3,14 +3,14 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "spinetx"
+name = "booktx"
 dynamic = ["version"]
 description = "Deterministic CLI that prepares Markdown and EPUB documents for translation by a coding agent."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "AGPL-3.0-or-later"
 license-files = { paths = ["LICENSE"] }
-authors = [{ name = "spinetx contributors" }]
+authors = [{ name = "booktx contributors" }]
 keywords = ["translation", "epub", "markdown", "cli", "localization"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -47,26 +47,26 @@ dev = [
 ]
 
 [project.scripts]
-spinetx = "spinetx.cli:app"
+booktx = "booktx.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/spinetx/spinetx"
-Repository = "https://github.com/holgern/spinetx"
-Issues = "https://github.com/holgern/spinetx/issues"
-Changelog = "https://github.com/holgern/spinetx/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/booktx/booktx"
+Repository = "https://github.com/holgern/booktx"
+Issues = "https://github.com/holgern/booktx/issues"
+Changelog = "https://github.com/holgern/booktx/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
-# Non-src layout: the package lives at ./spinetx
-packages = ["spinetx"]
+# Non-src layout: the package lives at ./booktx
+packages = ["booktx"]
 
 [tool.hatch.build.targets.sdist]
-include = ["spinetx", "tests", "README.md", "LICENSE", "pyproject.toml"]
+include = ["booktx", "tests", "README.md", "LICENSE", "pyproject.toml"]
 
 [tool.hatch.version]
 source = "vcs"
 
 [tool.hatch.build.hooks.vcs]
-version-file = "spinetx/_version.py"
+version-file = "booktx/_version.py"
 
 [tool.ruff]
 target-version = "py310"

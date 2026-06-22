@@ -208,7 +208,7 @@ __marimo__/
 
 .codex
 
-spinetx/_version.py
+booktx/_version.py
 
 context_spinetx.md
 context_spinetx.index.json

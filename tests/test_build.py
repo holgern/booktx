@@ -1,4 +1,4 @@
-"""Tests for spinetx.build: rebuild markdown and epub from translated chunks.
+"""Tests for booktx.build: rebuild markdown and epub from translated chunks.
 
 These are integration tests: they drive extract -> write fake translation ->
 build end to end via the public chunk writers used by the CLI.
@@ -11,12 +11,12 @@ from pathlib import Path
 
 import pytest
 
-from spinetx.build import BuildError, build_project, records_to_span_text
-from spinetx.chunking import ProseSpan, spans_to_chunks
-from spinetx.config import find_source_file, init_project, load_project
-from spinetx.html_io import build_xhtml  # noqa: F401  (sanity import)
-from spinetx.markdown_io import extract_markdown
-from spinetx.models import Chunk
+from booktx.build import BuildError, build_project, records_to_span_text
+from booktx.chunking import ProseSpan, spans_to_chunks
+from booktx.config import find_source_file, init_project, load_project
+from booktx.html_io import build_xhtml  # noqa: F401  (sanity import)
+from booktx.markdown_io import extract_markdown
+from booktx.models import Chunk
 
 MARKDOWN_DOC = """\
 ---
@@ -143,7 +143,7 @@ def test_build_epub_identity_roundtrip(tmp_path: Path):
     from ebooklib import epub as epubmod
 
     import tests.test_epub_io as epub_fixtures
-    from spinetx.epub_io import extract_epub
+    from booktx.epub_io import extract_epub
 
     warnings.filterwarnings("ignore")
     proj = init_project(tmp_path / "book", target_language="de")
@@ -189,7 +189,7 @@ def test_build_epub_fails_on_unresolved_placeholder_token(tmp_path: Path):
     import warnings
 
     import tests.test_epub_io as epub_fixtures
-    from spinetx.epub_io import extract_epub
+    from booktx.epub_io import extract_epub
 
     warnings.filterwarnings("ignore")
     proj = init_project(tmp_path / "book", target_language="de")

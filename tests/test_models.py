@@ -1,4 +1,4 @@
-"""Tests for spinetx.models: the translation-contract JSON shapes.
+"""Tests for booktx.models: the translation-contract JSON shapes.
 
 These tests pin the exact field names and ordering that cross the boundary to
 the translating coding agent. If any of these break, the contract breaks.
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 
-from spinetx.models import (
+from booktx.models import (
     Chunk,
     Manifest,
     ManifestSource,
@@ -48,7 +48,7 @@ def test_placeholder_has_contract_fields():
 
 
 def test_chunk_matches_contract_example():
-    """Mirrors the exact JSON in spinetx_coding_agent_start.md."""
+    """Mirrors the exact JSON in booktx_coding_agent_start.md."""
     chunk = Chunk(
         chunk_id="0001",
         source_language="en",

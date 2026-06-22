@@ -18,7 +18,7 @@ exclude = ["setup/*", "notebooks/*"]
 [lint.per-file-ignores]
 "__init__.py" = ["F401", "I001"]  # ignore unused and unsorted imports in __init__.py
 "__manifest__.py" = ["B018"]  # useless expression
-"spinetx/cli.py" = ["B008"]  # typer.Argument/Option in defaults is idiomatic Typer
+"booktx/cli.py" = ["B008"]  # typer.Argument/Option in defaults is idiomatic Typer
 
 [lint.isort]
 section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]

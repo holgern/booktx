@@ -1,9 +1,9 @@
-"""Tests for spinetx.placeholders: protect/restore names and inline tags."""
+"""Tests for booktx.placeholders: protect/restore names and inline tags."""
 
 from __future__ import annotations
 
-from spinetx.models import Placeholder
-from spinetx.placeholders import (
+from booktx.models import Placeholder
+from booktx.placeholders import (
     collect_tokens,
     protect_names,
     protect_tags,

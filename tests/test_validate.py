@@ -1,13 +1,13 @@
-"""Tests for spinetx.validate: every hard rule from the translation contract."""
+"""Tests for booktx.validate: every hard rule from the translation contract."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from spinetx.config import init_project, load_project
-from spinetx.models import Chunk, Placeholder, Record
-from spinetx.validate import (
+from booktx.config import init_project, load_project
+from booktx.models import Chunk, Placeholder, Record
+from booktx.validate import (
     Severity,
     validate_chunk_pair,
     validate_project,

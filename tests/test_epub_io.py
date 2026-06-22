@@ -1,4 +1,4 @@
-"""Tests for spinetx.epub_io: EPUB extraction and rebuild."""
+"""Tests for booktx.epub_io: EPUB extraction and rebuild."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ import ebooklib
 import pytest
 from ebooklib import epub
 
-from spinetx.epub_io import build_epub, extract_epub, read_epub
-from spinetx.placeholders import restore
+from booktx.epub_io import build_epub, extract_epub, read_epub
+from booktx.placeholders import restore
 
 
 def _make_epub(path: str) -> None:

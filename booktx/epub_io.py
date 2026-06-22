@@ -1,7 +1,7 @@
 """EPUB extraction and rebuild via :mod:`ebooklib`.
 
 Extraction reads an EPUB, walks the spine (XHTML reading-order documents),
-and runs :mod:`spinetx.html_io` on each document. The per-document templates
+and runs :mod:`booktx.html_io` on each document. The per-document templates
 and a flat ordered list of prose spans are returned; span order follows spine
 order so chunk ids are deterministic.
 
@@ -20,8 +20,8 @@ from dataclasses import dataclass, field
 import ebooklib
 from ebooklib import epub
 
-from spinetx.chunking import ProseSpan
-from spinetx.html_io import build_xhtml, extract_xhtml
+from booktx.chunking import ProseSpan
+from booktx.html_io import build_xhtml, extract_xhtml
 
 __all__ = [
     "EpubExtraction",

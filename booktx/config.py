@@ -1,12 +1,12 @@
-"""Project configuration and ``.spinetx/`` directory management.
+"""Project configuration and ``.booktx/`` directory management.
 
 A *project* is a directory laid out like this (see
-``spinetx_coding_agent_start.md``)::
+``booktx_coding_agent_start.md``)::
 
     book/
       source/
         book.md        # or book.epub; exactly one source file
-      .spinetx/
+      .booktx/
         config.toml
         manifest.json
         names.json
@@ -16,7 +16,7 @@ A *project* is a directory laid out like this (see
       output/
 
 This module owns reading/writing those files and resolving the project root,
-the single source file, and the active :class:`~spinetx.models.ProjectConfig`.
+the single source file, and the active :class:`~booktx.models.ProjectConfig`.
 """
 
 from __future__ import annotations
@@ -33,11 +33,11 @@ try:
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib  # type: ignore[no-redef]
 
-from spinetx.models import Manifest, NamesFile, ProjectConfig
+from booktx.models import Manifest, NamesFile, ProjectConfig
 
 __all__ = [
     "SUPPORTED_SOURCE_SUFFIXES",
-    "SpinetxError",
+    "BooktxError",
     "Project",
     "init_project",
     "load_project",
@@ -47,34 +47,34 @@ __all__ = [
     "load_names",
 ]
 
-#: Filename suffixes spinetx understands in v1, mapped to format names.
+#: Filename suffixes booktx understands in v1, mapped to format names.
 SUPPORTED_SOURCE_SUFFIXES: dict[str, str] = {
     ".md": "markdown",
     ".markdown": "markdown",
     ".epub": "epub",
 }
 
-#: Default protected-terms file written by ``spinetx init``.
+#: Default protected-terms file written by ``booktx init``.
 DEFAULT_NAMES_JSON: dict[str, Any] = {"protected_terms": []}
 
 
-class SpinetxError(Exception):
-    """User-facing error from spinetx. Carries a stable ``code`` attribute."""
+class BooktxError(Exception):
+    """User-facing error from booktx. Carries a stable ``code`` attribute."""
 
 
-def _err(code: str, message: str) -> SpinetxError:
-    e = SpinetxError(message)
+def _err(code: str, message: str) -> BooktxError:
+    e = BooktxError(message)
     e.code = code  # type: ignore[attr-defined]
     return e
 
 
 @dataclass(slots=True)
 class Project:
-    """Resolved paths for a spinetx project."""
+    """Resolved paths for a booktx project."""
 
     root: Path
     source_dir: Path
-    spinetx_dir: Path
+    booktx_dir: Path
     config_path: Path
     manifest_path: Path
     names_path: Path
@@ -103,13 +103,13 @@ class Project:
 
 
 def detect_format(filename: str | Path) -> str:
-    """Return the spinetx format name for a filename, or raise."""
+    """Return the booktx format name for a filename, or raise."""
     suffix = Path(filename).suffix.lower()
     if suffix not in SUPPORTED_SOURCE_SUFFIXES:
         raise _err(
             "unsupported_format",
             f"Unsupported source format '{suffix or '<none>'}'. "
-            "spinetx v1 supports only .md and .epub.",
+            "booktx v1 supports only .md and .epub.",
         )
     return SUPPORTED_SOURCE_SUFFIXES[suffix]
 
@@ -135,14 +135,14 @@ def init_project(
         root.mkdir(parents=True, exist_ok=True)
 
     source_dir = root / "source"
-    spinetx_dir = root / ".spinetx"
-    chunks_dir = spinetx_dir / "chunks"
-    translated_dir = spinetx_dir / "translated"
-    reports_dir = spinetx_dir / "reports"
+    booktx_dir = root / ".booktx"
+    chunks_dir = booktx_dir / "chunks"
+    translated_dir = booktx_dir / "translated"
+    reports_dir = booktx_dir / "reports"
     output_dir = root / "output"
     for d in (
         source_dir,
-        spinetx_dir,
+        booktx_dir,
         chunks_dir,
         translated_dir,
         reports_dir,
@@ -176,9 +176,9 @@ def init_project(
         format=fmt,
         chunk_size=chunk_size,
     )
-    _write_config(root / ".spinetx" / "config.toml", cfg)
+    _write_config(root / ".booktx" / "config.toml", cfg)
     # names.json: empty but present so the agent knows where to add terms.
-    (spinetx_dir / "names.json").write_text(
+    (booktx_dir / "names.json").write_text(
         json.dumps(DEFAULT_NAMES_JSON, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
@@ -188,25 +188,25 @@ def init_project(
 def load_project(root: Path | str) -> Project:
     """Load an existing project, validating its layout."""
     r = Path(root).expanduser().resolve()
-    spinetx_dir = r / ".spinetx"
-    config_path = spinetx_dir / "config.toml"
+    booktx_dir = r / ".booktx"
+    config_path = booktx_dir / "config.toml"
     if not config_path.is_file():
         raise _err(
             "not_a_project",
-            f"{r} is not a spinetx project: missing {config_path}.",
+            f"{r} is not a booktx project: missing {config_path}.",
         )
     cfg = _read_config(config_path)
 
     return Project(
         root=r,
         source_dir=r / "source",
-        spinetx_dir=spinetx_dir,
+        booktx_dir=booktx_dir,
         config_path=config_path,
-        manifest_path=spinetx_dir / "manifest.json",
-        names_path=spinetx_dir / "names.json",
-        chunks_dir=spinetx_dir / "chunks",
-        translated_dir=spinetx_dir / "translated",
-        reports_dir=spinetx_dir / "reports",
+        manifest_path=booktx_dir / "manifest.json",
+        names_path=booktx_dir / "names.json",
+        chunks_dir=booktx_dir / "chunks",
+        translated_dir=booktx_dir / "translated",
+        reports_dir=booktx_dir / "reports",
         output_dir=r / "output",
         config=cfg,
     )
@@ -248,7 +248,7 @@ def load_names(project: Project) -> NamesFile:
         return NamesFile()
     try:
         return NamesFile.model_validate_json(project.names_path.read_text("utf-8"))
-    except Exception as exc:  # noqa: BLE001 - surface as SpinetxError
+    except Exception as exc:  # noqa: BLE001 - surface as BooktxError
         raise _err("bad_names_json", f"names.json is invalid: {exc}") from exc
 
 
