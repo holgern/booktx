@@ -1,10 +1,10 @@
 # Project-local taskledger configuration.
 # This file lives in the source project root.
 config_version = 2
-taskledger_dir = '../ledger/task/spinetx'
+taskledger_dir = '../ledger/task/booktx'
 # Stable project identity. Commit this with your source tree.
 project_uuid = "816e173a-3ffa-4a95-80bd-6da6f6e3a54e"
-project_name = "spinetx"
+project_name = "booktx"
 
 # Taskledger branch-scoped state. This block is intentionally safe to commit.
 ledger_ref = "main"

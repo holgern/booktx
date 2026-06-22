@@ -1,5 +1,5 @@
 [codecrate]
-output = "context_spinetx.md"
+output = "context_booktx.md"
 keep_docstrings = true
 dedupe = true
 respect_gitignore = true

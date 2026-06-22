@@ -210,8 +210,8 @@ __marimo__/
 
 booktx/_version.py
 
-context_spinetx.md
-context_spinetx.index.json
+context_booktx.md
+context_booktx.index.json
 *.unpack.py
 workspace/
 .taskledger/
