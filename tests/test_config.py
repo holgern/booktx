@@ -9,37 +9,40 @@ import pytest
 
 from booktx.config import (
     BooktxError,
+    create_profile,
     detect_format,
     find_source_file,
+    identity_path,
     init_project,
+    init_source_project,
     load_identity,
     load_names,
     load_project,
+    load_source_project,
     load_translation_store,
     load_translation_task,
     load_translation_version_ledger,
     project_source_sha256,
-    translation_version_ledger_path,
-    identity_path,
     translation_ingest_block_path,
     translation_ingest_path,
     translation_store_path,
     translation_task_path,
     translation_task_source_block_path,
+    translation_version_ledger_path,
     write_identity,
     write_translation_store,
-    write_translation_version_ledger,
     write_translation_task,
+    write_translation_version_ledger,
 )
-from booktx.context import default_context, write_context
+from booktx.context import context_path, default_context, write_context
 from booktx.models import (
     StoredTranslationRecordV2,
     TranslationCandidate,
     TranslationIdentity,
     TranslationStoreV2,
+    TranslationSubversionLedgerEntry,
     TranslationTask,
     TranslationTrackLedgerEntry,
-    TranslationSubversionLedgerEntry,
     TranslationVersionLedger,
 )
 from booktx.versioning import canonical_json_sha256, resolve_current_version
@@ -177,7 +180,9 @@ def test_translation_store_helpers_roundtrip(tmp_path: Path):
 def test_translation_version_ledger_helpers_roundtrip(tmp_path: Path):
     proj = init_project(tmp_path / "book", target_language="de")
 
-    assert translation_version_ledger_path(proj).name == "translation-version-ledger.json"
+    assert (
+        translation_version_ledger_path(proj).name == "translation-version-ledger.json"
+    )
     empty = load_translation_version_ledger(proj)
     assert empty.tracks == {}
 
@@ -214,7 +219,11 @@ def test_identity_helpers_roundtrip(tmp_path: Path):
     proj = init_project(tmp_path / "book", target_language="de")
 
     assert identity_path(proj).name == "identity.json"
-    assert load_identity(proj) is None
+    assert load_identity(proj) == TranslationIdentity(
+        actor="user:unknown",
+        harness="booktx",
+        model="human",
+    )
 
     identity = TranslationIdentity(
         actor="user:nahrstaedt",
@@ -231,7 +240,7 @@ def test_canonical_context_sha_uses_canonical_json(tmp_path: Path):
     ctx = default_context(proj)
     ctx.ready = True
     write_context(proj, ctx)
-    payload = json.loads((proj.booktx_dir / "context.json").read_text("utf-8"))
+    payload = json.loads(context_path(proj).read_text("utf-8"))
 
     expected = canonical_json_sha256(payload)
     assert expected == canonical_json_sha256(ctx.model_dump(mode="json", by_alias=True))
@@ -347,3 +356,43 @@ def test_translation_task_helpers_roundtrip(tmp_path: Path):
 
     loaded = load_translation_task(proj, "bt-task-1")
     assert loaded == task
+
+
+def test_init_project_with_target_creates_default_profile(tmp_path: Path):
+    proj = init_project(tmp_path / "book", target_language="de")
+
+    assert proj.layout_version == "profiles"
+    assert proj.profile == "de_default"
+    assert (
+        translation_store_path(proj)
+        == proj.root / "translations" / "de_default" / "translation-store.json"
+    )
+    assert proj.output_dir == proj.root / "translations" / "de_default" / "output"
+
+
+def test_source_only_project_loads_without_profile(tmp_path: Path):
+    proj = init_source_project(tmp_path / "book")
+    loaded = load_source_project(proj.root)
+
+    assert loaded.layout_version == "profiles"
+    assert loaded.profile is None
+    assert loaded.output_dir is None
+
+
+def test_load_project_auto_resolves_single_profile(tmp_path: Path):
+    proj = init_source_project(tmp_path / "book")
+    create_profile(proj.root, "de_gpt5_5", target_language="de")
+
+    loaded = load_project(proj.root)
+
+    assert loaded.profile == "de_gpt5_5"
+    assert loaded.config.target_language == "de"
+
+
+def test_load_project_rejects_ambiguous_profiles_when_required(tmp_path: Path):
+    proj = init_source_project(tmp_path / "book")
+    create_profile(proj.root, "de_gpt5_5", target_language="de")
+    create_profile(proj.root, "fr_gpt5_5", target_language="fr")
+
+    with pytest.raises(BooktxError, match="multiple translation profiles exist"):
+        load_project(proj.root, require_profile=True)

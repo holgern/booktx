@@ -60,9 +60,10 @@ def test_task_paths_bundles_four_durable_files(tmp_path: Path):
     assert paths.ingest_json.name == "bt-task-x.json"
     assert paths.ingest_block.name == "bt-task-x.block.txt"
     display = paths.display(proj.root)
-    assert display.source_block.startswith(".booktx")
+    assert display.source_block.startswith("translations/de_default/tasks")
     hint = paths.block_submit_hint("bt-task-x", proj.root)
     assert hint.startswith("booktx translate insert")
+    assert "--profile de_default" in hint
     assert "--json-file" in paths.json_submit_hint("bt-task-x", proj.root)
 
 

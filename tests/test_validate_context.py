@@ -71,6 +71,7 @@ def _write_context(proj_path: Path, enforce: str = "error") -> None:
     write_context(proj, ctx)
     write_context_markdown(proj, ctx)
 
+
 def test_forbidden_term_used_error_fails_report(tmp_path: Path):
     proj_path = _write_project(tmp_path)
     _write_context(proj_path, enforce="error")
@@ -144,11 +145,7 @@ def test_validate_cli_passes_with_warning_for_warn_enforcement(tmp_path: Path):
 
 # --- context render drift diagnostics --------------------------------------
 
-_MD_WITH_0006 = (
-    "## Chapter notes\n\n"
-    "### 0006 — TWO\n"
-    "- Decision: keep Apt\n"
-)
+_MD_WITH_0006 = "## Chapter notes\n\n### 0006 — TWO\n- Decision: keep Apt\n"
 
 
 def _drift_project(
@@ -170,9 +167,7 @@ def _drift_project(
 
 
 def _drift_finding(report):
-    return next(
-        (f for f in report.findings if f.rule == "context_render_drift"), None
-    )
+    return next((f for f in report.findings if f.rule == "context_render_drift"), None)
 
 
 def test_validate_reports_missing_markdown_only_chapter(tmp_path: Path):

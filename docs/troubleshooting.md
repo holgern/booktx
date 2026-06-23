@@ -1,174 +1,45 @@
 # Troubleshooting
 
-## `not a booktx project`
+## `multiple translation profiles exist`
 
-The directory is missing `.booktx/config.toml`.
-
-Fix:
+Pass `--profile` or select one first:
 
 ```bash
-booktx init ./project --target de
+booktx profile select ./book de_gpt5_5
 ```
 
-or run the command from the correct project directory.
+## `no translation profile exists`
 
-## `No source document found`
-
-`source/` contains no supported file.
-
-Fix: place exactly one `.md`, `.markdown`, or `.epub` file into `source/`.
-
-## `Found multiple source documents`
-
-`source/` contains more than one supported source file.
-
-Fix: keep exactly one supported source file or update `.booktx/config.toml` to point at the intended `source_file`.
-
-## `translation context is missing or not ready`
-
-The context gate is working.
-
-Fix:
+Create one:
 
 ```bash
-booktx context init .
-booktx context questions .
-booktx context answer . Q001 --text de-DE
-booktx context mark-ready .
+booktx profile create ./book de_gpt5_5 --target de
 ```
 
-Answer all required questions before marking ready.
+## `task profile mismatch`
 
-## `stale translation task`
+The task was created for another profile. Request a fresh task in the selected
+profile.
 
-The task was created under an older translation version than the current
-resolved context/version state.
+## `submission profile mismatch`
 
-Fix:
+The durable submission file or JSON payload declares a different profile than
+the selected one. Use the matching `translations/<profile>/ingest/` file.
 
-```bash
-booktx translate next . --unit batch --max-words 500 --format block
-```
+## `output filename ... does not match target language ...`
 
-Then fill the fresh `.booktx/ingest/` file and resubmit it. If you truly need
-to commit a tiny manual fix to one record, use `booktx translate set-record ...`.
+Choose an output filename that matches the profile target, for example
+`book.de.epub`.
 
-## Validation: invalid JSON
+## `legacy path used after migration`
 
-The translated file is not a single JSON object.
+After migrating, do not use:
 
-Common causes:
+- `.booktx/context.json`
+- `.booktx/context.md`
+- `.booktx/tasks/`
+- `.booktx/ingest/`
+- `.booktx/translated/`
+- `.booktx/translation-store.json`
 
-- Markdown code fence around JSON
-- explanatory prose before or after JSON
-- trailing comments
-- invalid escaping
-
-Fix: write only the JSON object.
-
-## Validation: record count changed
-
-The translated chunk has more or fewer records than the source chunk.
-
-Fix: restore the exact source record count and order.
-
-## Validation: record id changed
-
-A translated record id does not match the source record id at the same position.
-
-Fix: copy record ids exactly from the source chunk.
-
-## Validation: empty target
-
-A target string is empty or whitespace.
-
-Fix: provide a non-empty translation.
-
-## Validation: placeholder removed or added
-
-A target dropped a visible placeholder or introduced a token that does not exist in the source record.
-
-Fix: compare the source record and target record, then preserve all visible `__NAME_NNN__` and `__TAG_NNN__` tokens exactly.
-
-## `chunk_size changed ... renumber record ids`
-
-You changed `.booktx/config.toml` while the project still had accepted
-translations under `record_id_scheme=chunk-local:v1`.
-
-Fix one of these:
-
-- restore the previous `chunk_size`
-- back up or migrate translations, then run `booktx extract . --force-rechunk`
-
-## Validation: protected name translated
-
-A protected term appears translated or removed.
-
-Fix: keep the corresponding `__NAME_NNN__` placeholder in target text. Do not write the original name manually unless it was not hidden in that record.
-
-## Validation: forbidden target
-
-The translation used a term listed under `forbidden_targets` in context.
-
-Fix: replace the forbidden target with the approved glossary target or ask the user for a decision.
-
-## Validation: context render drift
-
-`context.md` differs from the current `context.json` render, or it has chapter notes not safely represented in `context.json`.
-
-If the warning lists `missing_in_json` or `conflicting` chapter ids, recover the Markdown-only notes first:
-
-```bash
-booktx context import-md . --write
-```
-
-Use `--replace-existing` or `--append-existing-lists` if the import reports conflicting chapters. Once `context.json` holds every chapter note, refresh the rendered file:
-
-```bash
-booktx context render . --write
-```
-
-If you intentionally want to discard Markdown-only notes, pass `--write --force-discard-md-only`. To avoid this drift, persist chapter notes with `booktx context chapter-note . CHAPTER_ID ...` instead of editing `context.md` by hand.
-
-## EPUB: legacy manifest
-
-The project was extracted with an old EPUB pipeline.
-
-Fix:
-
-```bash
-booktx extract .
-```
-
-Then validate translated files against the new chunks.
-
-## EPUB: source checksum mismatch
-
-The source EPUB changed after extraction.
-
-Fix one of these:
-
-- restore the original source EPUB
-- intentionally re-run `booktx extract .`
-
-## EPUB: unresolved placeholder in built EPUB
-
-A placeholder leaked into the rebuilt EPUB.
-
-Fix:
-
-```bash
-booktx validate .
-```
-
-Repair the translated chunk that omitted or altered the placeholder, then rebuild.
-
-## Test collection fails on missing dependencies
-
-Install the package and dependencies:
-
-```bash
-python -m pip install -e ".[dev]"
-```
-
-If docs build fails, install Sphinx docs dependencies as described in [Development](development.md).
+Use the selected profile paths under `translations/<profile>/` instead.

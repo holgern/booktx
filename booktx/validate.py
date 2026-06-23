@@ -101,6 +101,9 @@ class ValidationReport:
     """Aggregated validation result for a project."""
 
     project: str
+    profile: str = ""
+    target_language: str = ""
+    target_locale: str = ""
     findings: list[Finding] = field(default_factory=list)
     chunks_checked: int = 0
     chunks_passed: int = 0
@@ -122,6 +125,9 @@ class ValidationReport:
     def as_dict(self) -> dict[str, object]:
         return {
             "project": self.project,
+            "profile": self.profile,
+            "target_language": self.target_language,
+            "target_locale": self.target_locale,
             "generated_at": self.generated_at,
             "passed": self.passed,
             "chunks_checked": self.chunks_checked,
@@ -495,7 +501,7 @@ def validate_chunk_pair(
 # --- project-level validation -----------------------------------------------
 
 
-def load_effective_translated_chunks(
+def load_effective_translated_chunks(  # noqa: C901
     project: Project,
     *,
     source_chunks: dict[str, Chunk] | None = None,
@@ -769,7 +775,6 @@ def load_effective_translated_chunks(
     return EffectiveTranslations(chunks=merged, findings=findings)
 
 
-
 def _context_render_drift_finding(
     project: Project, context: TranslationContext
 ) -> Finding | None:
@@ -818,6 +823,7 @@ def _context_render_drift_finding(
         message=message,
     )
 
+
 def validate_project(
     project: Project, *, all_versions_strict: bool = False
 ) -> ValidationReport:
@@ -829,6 +835,9 @@ def validate_project(
     """
     report = ValidationReport(
         project=str(project.root),
+        profile=project.profile or "",
+        target_language=project.config.target_language,
+        target_locale=project.config.target_locale or "",
         generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
     )
 

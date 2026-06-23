@@ -8,6 +8,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from booktx.cli import app
+from booktx.config import load_project
 
 runner = CliRunner()
 
@@ -49,6 +50,12 @@ def _make_project(tmp_path: Path) -> Path:
 def _ready_context(project_dir: Path) -> None:
     runner.invoke(app, ["context", "init", str(project_dir), "--non-interactive"])
     runner.invoke(app, ["context", "mark-ready", str(project_dir), "--force"])
+
+
+def _translated_dir(project_dir: Path) -> Path:
+    path = load_project(project_dir).translated_dir
+    assert path is not None
+    return path
 
 
 def test_chapters_lists_detected_ranges(tmp_path: Path):
@@ -93,7 +100,7 @@ def test_next_unit_chapter_matches_next_chapter(tmp_path: Path):
 def test_next_chapter_skips_completed_chapter(tmp_path: Path):
     project_dir = _make_project(tmp_path)
     _ready_context(project_dir)
-    translated_dir = project_dir / ".booktx" / "translated"
+    translated_dir = _translated_dir(project_dir)
     # Chapter one covers chunks 0001 and 0002 in this fixture. Mark them done.
     for cid in ("0001", "0002"):
         chunk_path = project_dir / ".booktx" / "chunks" / f"{cid}.json"

@@ -24,16 +24,16 @@ from booktx.models import (
     Record,
     StoredTranslationRecord,
     StoredTranslationRecordV2,
-    TranslationCandidate,
-    TranslationIdentity,
     TranslatedChunk,
     TranslatedRecord,
+    TranslationCandidate,
+    TranslationIdentity,
     TranslationStore,
     TranslationStoreV2,
+    TranslationSubversionLedgerEntry,
     TranslationTask,
     TranslationTaskRecord,
     TranslationTrackLedgerEntry,
-    TranslationSubversionLedgerEntry,
     TranslationVersionLedger,
 )
 from booktx.record_refs import parse_record_ref, parse_version_ref
@@ -275,7 +275,9 @@ def test_ledger_roundtrip_and_validates_keys():
 
     dumped = json.loads(ledger.model_dump_json())
     assert dumped["tracks"]["1"]["subversions"]["1"]["version_ref"] == "1.1"
-    assert TranslationVersionLedger.model_validate_json(ledger.model_dump_json()) == ledger
+    assert (
+        TranslationVersionLedger.model_validate_json(ledger.model_dump_json()) == ledger
+    )
 
 
 def test_ledger_rejects_mismatched_track_key():

@@ -14,7 +14,11 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from booktx.cli import app
-from booktx.config import load_project, write_translation_store, write_translation_version_ledger
+from booktx.config import (
+    load_project,
+    write_translation_store,
+    write_translation_version_ledger,
+)
 from booktx.models import (
     StoredTranslationRecordV2,
     TranslationCandidate,
@@ -210,7 +214,10 @@ def test_status_json_includes_version_and_track_coverage(tmp_path: Path):
 
     bundle = build_status_snapshot(proj, context_exists=True, context_ready=True)
 
-    assert [item.version_ref for item in bundle.snapshot.version_coverage] == ["1.1", "1.2"]
+    assert [item.version_ref for item in bundle.snapshot.version_coverage] == [
+        "1.1",
+        "1.2",
+    ]
     assert bundle.snapshot.version_coverage[0].active_records == 1
     assert bundle.snapshot.track_coverage[0].label == "gpt-5.5 low"
     assert bundle.snapshot.track_coverage[0].latest_subversion == 2

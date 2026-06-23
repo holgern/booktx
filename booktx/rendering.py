@@ -18,7 +18,6 @@ from rich.console import Console
 from booktx.tasks import task_paths
 
 if TYPE_CHECKING:
-
     from booktx.config import Project
     from booktx.models import TranslationTask
     from booktx.status import ChapterProgress, StatusBundle
@@ -44,9 +43,7 @@ def format_chunk_span(chunk_ids: list[str]) -> str:
     return f"{chunk_ids[0]}..{chunk_ids[-1]}"
 
 
-def print_status_human(
-    bundle: StatusBundle, chapter: ChapterProgress | None
-) -> None:
+def print_status_human(bundle: StatusBundle, chapter: ChapterProgress | None) -> None:
     """Render the human-readable ``booktx status`` summary to the console."""
     snapshot = bundle.snapshot
     totals = snapshot.totals
@@ -83,16 +80,14 @@ def print_status_human(
             f"{totals.stale_translation_files} stale"
         )
     ready_for_final = (
-        totals.records_remaining == 0
-        and totals.invalid_translation_files == 0
+        totals.records_remaining == 0 and totals.invalid_translation_files == 0
     )
     console.print()
     console.print(f"Ready for final build: {'yes' if ready_for_final else 'no'}")
     if not ready_for_final:
         if totals.remaining_words > 0:
             console.print(
-                f"Reason: {totals.remaining_words:,} source words remain "
-                "untranslated"
+                f"Reason: {totals.remaining_words:,} source words remain untranslated"
             )
         elif totals.invalid_translation_files > 0:
             console.print(
@@ -118,12 +113,9 @@ def print_status_human(
         f"{detail.source_words_remaining:,} remaining"
     )
     console.print(f"  chunks: {format_chunk_span(detail.chunk_ids)}")
+    console.print(f"  pending chunks: {format_chunk_span(detail.pending_chunk_ids)}")
     console.print(
-        f"  pending chunks: {format_chunk_span(detail.pending_chunk_ids)}"
-    )
-    console.print(
-        "  record range: "
-        f"{detail.record_range.start}..{detail.record_range.end}"
+        f"  record range: {detail.record_range.start}..{detail.record_range.end}"
     )
 
 
@@ -174,9 +166,7 @@ def print_translate_task(
         return
     if output_format == "tsv":
         console.print(f"# task: {task.task_id}")
-        console.print(
-            f"# chapter: {task.chapter_id}\t{task.chapter_title}".rstrip()
-        )
+        console.print(f"# chapter: {task.chapter_id}\t{task.chapter_title}".rstrip())
         for record in task.records:
             console.print(f"{record.id}\t{record.source}")
         console.print(f"# write translation JSON to: {display.ingest_json}")
@@ -184,26 +174,18 @@ def print_translate_task(
         return
     if output_format == "block":
         console.print(f"task: {task.task_id}")
-        console.print(
-            f"chapter: {task.chapter_id}  {task.chapter_title}".rstrip()
-        )
+        console.print(f"chapter: {task.chapter_id}  {task.chapter_title}".rstrip())
         console.print(f"unit: {task.unit}")
         console.print(f"records: {task.record_count}")
         console.print(f"source words: {task.source_words}")
         console.print()
         console.print(f"Source file: {display.source_block}", soft_wrap=True)
-        console.print(
-            f"Durable block template: {display.ingest_block}", soft_wrap=True
-        )
-        console.print(
-            f"Submit durable file with: {block_submit}", soft_wrap=True
-        )
+        console.print(f"Durable block template: {display.ingest_block}", soft_wrap=True)
+        console.print(f"Submit durable file with: {block_submit}", soft_wrap=True)
         console.print(f"View sources: {view_sources}", soft_wrap=True)
         if show_template:
             console.print()
-            console.print(
-                "Heredoc template (optional, for tiny manual fixes):"
-            )
+            console.print("Heredoc template (optional, for tiny manual fixes):")
             console.print()
             console.print(block_stdin, soft_wrap=True)
             for idx, record in enumerate(task.records):
@@ -224,9 +206,7 @@ def print_translate_task(
         return
     # Default: human-readable list.
     console.print(f"task: {task.task_id}")
-    console.print(
-        f"chapter: {task.chapter_id}  {task.chapter_title}".rstrip()
-    )
+    console.print(f"chapter: {task.chapter_id}  {task.chapter_title}".rstrip())
     console.print(f"unit: {task.unit}")
     console.print(f"records: {task.record_count}")
     console.print(f"source words: {task.source_words}")

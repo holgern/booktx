@@ -20,7 +20,12 @@ from booktx.acceptance import (
     accept_translation_records,
 )
 from booktx.cli import app
-from booktx.config import BooktxError, load_project, write_identity
+from booktx.config import (
+    BooktxError,
+    load_project,
+    translation_store_path,
+    write_identity,
+)
 from booktx.context import load_context, write_context
 from booktx.models import TranslationIdentity
 from booktx.status import build_status_snapshot
@@ -84,9 +89,7 @@ def test_accept_one_record_persists_and_reports_chapter(tmp_path: Path):
     assert result.version_ref == "1.1"
     assert result.chapter_id  # mapped to a chapter
 
-    store = json.loads(
-        (project_dir / ".booktx" / "translation-store.json").read_text("utf-8")
-    )
+    store = json.loads(translation_store_path(proj).read_text("utf-8"))
     assert store["records"][rid]["active_version"] == "1.1"
     assert store["records"][rid]["versions"][0]["target"] == "Alice traf Bob."
 
@@ -122,13 +125,9 @@ def test_same_version_reaccept_updates_existing_candidate_and_preserves_created_
     bundle = build_status_snapshot(proj, context_exists=True, context_ready=True)
 
     first = accept_one_record(proj, rid, "Alice traf Bob.", bundle=bundle)
-    before = json.loads(
-        (project_dir / ".booktx" / "translation-store.json").read_text("utf-8")
-    )
+    before = json.loads(translation_store_path(proj).read_text("utf-8"))
     second = accept_one_record(proj, rid, "Alice begegnete Bob.", bundle=bundle)
-    after = json.loads(
-        (project_dir / ".booktx" / "translation-store.json").read_text("utf-8")
-    )
+    after = json.loads(translation_store_path(proj).read_text("utf-8"))
     before_version = before["records"][rid]["versions"][0]
     after_version = after["records"][rid]["versions"][0]
 
@@ -161,9 +160,7 @@ def test_changed_context_creates_next_subversion_without_auto_switching_active(
     ctx.global_rules.append("Prefer shorter German clauses.")
     write_context(proj, ctx)
     second = accept_one_record(proj, rid, "Alice begegnete Bob.", bundle=bundle)
-    store = json.loads(
-        (project_dir / ".booktx" / "translation-store.json").read_text("utf-8")
-    )
+    store = json.loads(translation_store_path(proj).read_text("utf-8"))
     record = store["records"][rid]
     version_refs = [candidate["version_ref"] for candidate in record["versions"]]
 
@@ -247,7 +244,7 @@ def test_duplicate_id_raises_before_store_write(tmp_path: Path):
         raise AssertionError("expected BooktxError for duplicate id")
 
     # Store must not have been written for the failed submission.
-    store_path = project_dir / ".booktx" / "translation-store.json"
+    store_path = translation_store_path(proj)
     if store_path.exists():
         store = json.loads(store_path.read_text("utf-8"))
         assert rid not in store.get("records", {})

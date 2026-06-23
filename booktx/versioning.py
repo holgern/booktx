@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from booktx.config import (
     Project,
     _err,
+    identity_path,
     load_identity,
     load_translation_version_ledger,
     project_source_sha256,
@@ -146,7 +147,9 @@ def resolve_current_version(
         None,
     )
     if track is None:
-        next_version = max((entry.version for entry in ledger.tracks.values()), default=0) + 1
+        next_version = (
+            max((entry.version for entry in ledger.tracks.values()), default=0) + 1
+        )
         track = TranslationTrackLedgerEntry(
             version=next_version,
             actor=identity.actor,
@@ -172,7 +175,8 @@ def resolve_current_version(
         )
     if subversion is None:
         next_subversion = (
-            max((entry.subversion for entry in track.subversions.values()), default=0) + 1
+            max((entry.subversion for entry in track.subversions.values()), default=0)
+            + 1
         )
         version_ref = format_version_ref(track.version, next_subversion)
         subversion = TranslationSubversionLedgerEntry(
@@ -180,6 +184,11 @@ def resolve_current_version(
             subversion=next_subversion,
             version_ref=version_ref,
             context_sha256=context_sha256,
+            context_path=str(
+                identity_path(project)
+                .parent.joinpath("context.json")
+                .relative_to(project.root)
+            ),
             context_label=context_label,
             created_at=now,
             updated_at=now,
@@ -211,7 +220,9 @@ def resolve_current_version(
     )
 
 
-def select_active_version(project: Project, version_ref: str) -> TranslationVersionLedger:
+def select_active_version(
+    project: Project, version_ref: str
+) -> TranslationVersionLedger:
     """Select the project-wide active version in the ledger."""
     ledger = load_translation_version_ledger(project)
     lookup_version(ledger, version_ref)

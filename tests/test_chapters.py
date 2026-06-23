@@ -97,7 +97,7 @@ def _make_epub_project(tmp_path: Path, *, headings: bool = True) -> Path:
 
 
 def _rewrite_manifest(project_dir: Path, transform) -> None:
-    manifest_path = project_dir / ".booktx" / "manifest.json"
+    manifest_path = project_dir / ".booktx" / "source-manifest.json"
     payload = json.loads(manifest_path.read_text("utf-8"))
     transform(payload)
     manifest_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

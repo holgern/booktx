@@ -38,14 +38,18 @@ from booktx.config import (
     current_source_sha256,
     extracted_source_sha256,
     find_source_file,
+    list_profiles,
     load_manifest,
+    load_profile_config,
+    load_profile_project,
+    load_profile_state,
     load_translation_store,
     load_translation_version_ledger,
     project_source_sha256,
 )
+from booktx.context import load_context
 from booktx.models import Chunk, TranslatedRecord
 from booktx.progress import SourceRecordView, load_source_chunks, load_source_records
-from booktx.translation_store import active_candidate
 from booktx.validate import (
     Severity,
     load_effective_translated_chunks,
@@ -67,8 +71,11 @@ __all__ = [
     "StatusSnapshot",
     "StatusRuntimeIndex",
     "StatusBundle",
+    "ProfileOverview",
+    "ProfilesOverview",
     "coverage_status",
     "build_status_snapshot",
+    "build_profiles_overview",
     "selected_chapter",
 ]
 
@@ -200,6 +207,29 @@ class StatusSnapshot(BaseModel):
     chapters: list[ChapterProgress] = Field(default_factory=list)
     version_coverage: list[VersionCoverage] = Field(default_factory=list)
     track_coverage: list[TrackCoverage] = Field(default_factory=list)
+
+
+class ProfileOverview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile: str
+    target_language: str
+    target_locale: str = ""
+    model: str = ""
+    path: str
+    translated_records: int = 0
+    total_records: int = 0
+    active: bool = False
+
+
+class ProfilesOverview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    source: str = ""
+    source_records: int = 0
+    active_profile: str | None = None
+    profiles: list[ProfileOverview] = Field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -414,8 +444,8 @@ def build_status_snapshot(
         else project_source_sha256(proj)
     )
     extracted_sha = extracted_source_sha256(proj)
-    source_drifted = (
-        bool(extracted_sha) and extracted_sha != current_source_sha256(proj)
+    source_drifted = bool(extracted_sha) and extracted_sha != current_source_sha256(
+        proj
     )
 
     snapshot = StatusSnapshot(
@@ -505,14 +535,17 @@ def build_status_snapshot(
                 coverage.label = track.label
                 if track.subversions:
                     coverage.latest_subversion = max(
-                        subversion.subversion for subversion in track.subversions.values()
+                        subversion.subversion
+                        for subversion in track.subversions.values()
                     )
         snapshot.version_coverage = [
-            version_counts[key] for key in sorted(version_counts, key=lambda item: tuple(int(part) for part in item.split(".")))
+            version_counts[key]
+            for key in sorted(
+                version_counts,
+                key=lambda item: tuple(int(part) for part in item.split(".")),
+            )
         ]
-        snapshot.track_coverage = [
-            track_counts[key] for key in sorted(track_counts)
-        ]
+        snapshot.track_coverage = [track_counts[key] for key in sorted(track_counts)]
 
     index = StatusRuntimeIndex(
         source_chunks=source_chunks,
@@ -526,6 +559,50 @@ def build_status_snapshot(
     )
 
     return StatusBundle(snapshot=snapshot, index=index)
+
+
+def build_profiles_overview(project: Project) -> ProfilesOverview:
+    profiles = list_profiles(project)
+    active_profile = load_profile_state(project).active_profile
+    source = ""
+    source_records = 0
+    try:
+        source = find_source_file(project).name
+    except Exception:  # noqa: BLE001
+        source = project.config.source_file
+
+    if project.chunks():
+        source_records = len(load_source_records(project))
+
+    items: list[ProfileOverview] = []
+    for profile_name in profiles:
+        profile_project = load_profile_project(project.root, profile_name)
+        profile_cfg = load_profile_config(project.root, profile_name)
+        context = load_context(profile_project)
+        snapshot = build_status_snapshot(
+            profile_project,
+            context_exists=context is not None,
+            context_ready=bool(context and context.ready),
+        )
+        items.append(
+            ProfileOverview(
+                profile=profile_name,
+                target_language=profile_cfg.target_language,
+                target_locale=profile_cfg.target_locale or profile_cfg.target_language,
+                model=profile_cfg.identity.model,
+                path=str(profile_project.profile_dir.relative_to(project.root)),
+                translated_records=snapshot.snapshot.totals.records_translated,
+                total_records=snapshot.snapshot.totals.records_total,
+                active=profile_name == active_profile,
+            )
+        )
+    return ProfilesOverview(
+        project=str(project.root),
+        source=source,
+        source_records=source_records,
+        active_profile=active_profile,
+        profiles=items,
+    )
 
 
 def selected_chapter(

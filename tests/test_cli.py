@@ -10,6 +10,7 @@ from ebooklib import epub
 from typer.testing import CliRunner
 
 from booktx.cli import app
+from booktx.config import load_manifest, load_project, translation_store_path
 
 runner = CliRunner()
 
@@ -72,7 +73,7 @@ def _make_epub_project(tmp_path: Path) -> Path:
 def _rewrite_project_chunk_size(project_dir: Path, chunk_size: int) -> None:
     from booktx.config import tomllib
 
-    config_path = project_dir / ".booktx" / "config.toml"
+    config_path = project_dir / ".booktx" / "source-config.toml"
     with config_path.open("rb") as fh:
         data = tomllib.load(fh)
     data["chunk_size"] = chunk_size
@@ -80,9 +81,11 @@ def _rewrite_project_chunk_size(project_dir: Path, chunk_size: int) -> None:
 
 
 def _write_accepted_store_record(project_dir: Path) -> None:
-    chunk = json.loads(next((project_dir / ".booktx" / "chunks").glob("*.json")).read_text("utf-8"))
+    chunk = json.loads(
+        next((project_dir / ".booktx" / "chunks").glob("*.json")).read_text("utf-8")
+    )
     record = chunk["records"][0]
-    (project_dir / ".booktx" / "translation-store.json").write_text(
+    translation_store_path(load_project(project_dir)).write_text(
         json.dumps(
             {
                 "version": 2,
@@ -110,6 +113,10 @@ def _write_accepted_store_record(project_dir: Path) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def _selected_project(project_dir: Path):
+    return load_project(project_dir)
 
 
 def test_version_flag():
@@ -141,7 +148,7 @@ def test_whoami_reports_missing_context_without_failing(tmp_path: Path):
     assert "active_version:" in res.output
     assert "none" in res.output
     assert "context:" in res.output
-    assert "MISSING .booktx/context.json" in res.output
+    assert "MISSING translations/de_default/context.json" in res.output
     assert "store_version:" in res.output
     assert "store_records:" in res.output
 
@@ -155,7 +162,7 @@ def test_whoami_json_is_stable_when_optional_state_is_missing(tmp_path: Path):
     payload = json.loads(res.output)
     assert payload["project_dir"] == str(project_dir)
     assert payload["active_version"] is None
-    assert payload["context"]["path"] == ".booktx/context.json"
+    assert payload["context"]["path"] == "translations/de_default/context.json"
     assert payload["context"]["exists"] is False
     assert payload["context"]["ready"] is None
     assert payload["context"]["sha256"] is None
@@ -174,15 +181,24 @@ def test_harness_set_accepts_all_supported_argument_orders(tmp_path: Path, monke
 
     res = runner.invoke(app, ["harness", "set", "qa", str(project_dir)])
     assert res.exit_code == 0, res.output
-    assert runner.invoke(app, ["harness", "whoami", str(project_dir)]).output.strip() == "qa"
+    assert (
+        runner.invoke(app, ["harness", "whoami", str(project_dir)]).output.strip()
+        == "qa"
+    )
 
     res = runner.invoke(app, ["harness", "set", str(project_dir), "ops"])
     assert res.exit_code == 0, res.output
-    assert runner.invoke(app, ["harness", "whoami", str(project_dir)]).output.strip() == "ops"
+    assert (
+        runner.invoke(app, ["harness", "whoami", str(project_dir)]).output.strip()
+        == "ops"
+    )
 
     res = runner.invoke(app, ["harness", "set", "--project", str(project_dir), "pi"])
     assert res.exit_code == 0, res.output
-    assert runner.invoke(app, ["harness", "whoami", str(project_dir)]).output.strip() == "pi"
+    assert (
+        runner.invoke(app, ["harness", "whoami", str(project_dir)]).output.strip()
+        == "pi"
+    )
 
 
 def test_actor_and_model_set_support_project_option(tmp_path: Path):
@@ -197,7 +213,10 @@ def test_actor_and_model_set_support_project_option(tmp_path: Path):
 
     assert actor_res.exit_code == 0, actor_res.output
     assert model_res.exit_code == 0, model_res.output
-    assert runner.invoke(app, ["actor", "whoami", str(project_dir)]).output.strip() == "user:test"
+    assert (
+        runner.invoke(app, ["actor", "whoami", str(project_dir)]).output.strip()
+        == "user:test"
+    )
     assert (
         runner.invoke(app, ["model", "whoami", str(project_dir)]).output.strip()
         == "codex-openai/gpt-5.5@low"
@@ -224,27 +243,50 @@ def test_init_accepts_source_lang_alias(tmp_path: Path):
     assert res.exit_code == 0, res.output
     from booktx.config import tomllib
 
-    with (project_dir / ".booktx" / "config.toml").open("rb") as fh:
+    with (project_dir / ".booktx" / "source-config.toml").open("rb") as fh:
         cfg = tomllib.load(fh)
     assert cfg["source_language"] == "en"
-    assert cfg["target_language"] == "fr"
+
+
+def test_init_without_target_creates_source_only_layout(tmp_path: Path):
+    project_dir = tmp_path / "source-only-book"
+    src = tmp_path / "novel.md"
+    src.write_text(MARKDOWN_DOC, encoding="utf-8")
+
+    res = runner.invoke(
+        app,
+        [
+            "init",
+            str(project_dir),
+            "--source-file",
+            str(src),
+            "--source-lang",
+            "en",
+        ],
+    )
+
+    assert res.exit_code == 0, res.output
+    assert (project_dir / ".booktx" / "source-config.toml").is_file()
+    assert (project_dir / ".booktx" / "chunks").is_dir()
+    assert (project_dir / "translations").is_dir()
+    assert not any((project_dir / "translations").iterdir())
+    assert not (project_dir / ".booktx" / "translated").exists()
 
 
 def test_init_creates_layout(tmp_path: Path):
     project_dir = _make_markdown_project(tmp_path)
     from booktx.config import tomllib
 
-    with (project_dir / ".booktx" / "config.toml").open("rb") as fh:
+    with (project_dir / ".booktx" / "source-config.toml").open("rb") as fh:
         cfg = tomllib.load(fh)
-    assert cfg["target_language"] == "de"
     assert cfg["source_language"] == "en"
     assert cfg["format"] == "markdown"
     for sub in (
         "source",
         ".booktx",
         ".booktx/chunks",
-        ".booktx/translated",
-        "output",
+        "translations/de_default/translated",
+        "translations/de_default/output",
     ):
         assert (project_dir / sub).is_dir()
 
@@ -285,7 +327,7 @@ def test_extract_writes_chunks(tmp_path: Path):
     assert first["chunk_size"] == 50
     assert first["record_id_scheme"] == "chunk-local:v1"
     assert first["records"][0]["id"].count("-") == 1
-    manifest = json.loads((project_dir / ".booktx" / "manifest.json").read_text("utf-8"))
+    manifest = load_manifest(_selected_project(project_dir)).model_dump(mode="json")
     assert manifest["chunk_size"] == 50
     assert manifest["record_id_scheme"] == "chunk-local:v1"
     assert manifest["segmenter"]["name"] == "phrasplit"
@@ -298,18 +340,46 @@ def test_extract_epub_writes_manifest_metadata(tmp_path: Path):
     res = runner.invoke(app, ["extract", str(project_dir)])
 
     assert res.exit_code == 0, res.output
-    manifest = json.loads((project_dir / ".booktx" / "manifest.json").read_text("utf-8"))
+    manifest = load_manifest(_selected_project(project_dir)).model_dump(mode="json")
     assert manifest["chunk_size"] == 50
     assert manifest["record_id_scheme"] == "chunk-local:v1"
     assert manifest["segmenter"]["name"] == "phrasplit"
     assert manifest["names_sha256"]
 
 
+def test_extract_source_only_writes_shared_manifest(tmp_path: Path):
+    project_dir = tmp_path / "source-only-book"
+    src = tmp_path / "novel.md"
+    src.write_text(MARKDOWN_DOC, encoding="utf-8")
+    assert (
+        runner.invoke(
+            app,
+            [
+                "init",
+                str(project_dir),
+                "--source-file",
+                str(src),
+                "--source-lang",
+                "en",
+            ],
+        ).exit_code
+        == 0
+    )
+
+    res = runner.invoke(app, ["extract", str(project_dir)])
+
+    assert res.exit_code == 0, res.output
+    manifest = load_manifest(load_project(project_dir))
+    assert manifest is not None
+    assert manifest.source.target_language == ""
+
+
 def test_extract_is_idempotent_and_preserves_translated(tmp_path: Path):
     project_dir = _make_markdown_project(tmp_path)
     runner.invoke(app, ["extract", str(project_dir)])
     # Pretend a translation exists
-    translated_dir = project_dir / ".booktx" / "translated"
+    translated_dir = _selected_project(project_dir).translated_dir
+    assert translated_dir is not None
     translated_dir.mkdir(parents=True, exist_ok=True)
     (translated_dir / "0001.json").write_text(
         '{"chunk_id": "0001", "records": []}', encoding="utf-8"
@@ -324,7 +394,9 @@ def test_extract_is_idempotent_and_preserves_translated(tmp_path: Path):
     assert (translated_dir / "0001.json").is_file()
 
 
-def test_extract_refuses_chunk_size_change_with_existing_store_for_legacy_ids(tmp_path: Path):
+def test_extract_refuses_chunk_size_change_with_existing_store_for_legacy_ids(
+    tmp_path: Path,
+):
     project_dir = _make_markdown_project(tmp_path)
     assert runner.invoke(app, ["extract", str(project_dir)]).exit_code == 0
     _write_accepted_store_record(project_dir)
@@ -346,7 +418,6 @@ def test_extract_force_rechunk_allows_chunk_size_change(tmp_path: Path):
     res = runner.invoke(app, ["extract", str(project_dir), "--force-rechunk"])
 
     assert res.exit_code == 0, res.output
-
 
 
 def test_extract_leaves_chunks_intact_when_write_fails(tmp_path: Path, monkeypatch):
@@ -387,12 +458,9 @@ def test_extract_leaves_chunks_intact_when_write_fails(tmp_path: Path, monkeypat
     assert (chunks_dir / before[0]).read_text("utf-8") == first_before
     # No leftover temp chunks dir should remain in .booktx/.
     booktx_dir = project_dir / ".booktx"
-    leftovers = [
-        p.name
-        for p in booktx_dir.iterdir()
-        if p.name.startswith(".chunks.")
-    ]
+    leftovers = [p.name for p in booktx_dir.iterdir() if p.name.startswith(".chunks.")]
     assert leftovers == []
+
 
 def test_next_prints_first_untranslated_then_exits_nonzero_when_done(tmp_path: Path):
     project_dir = _make_markdown_project(tmp_path)
@@ -402,7 +470,8 @@ def test_next_prints_first_untranslated_then_exits_nonzero_when_done(tmp_path: P
     assert res.exit_code == 0, res.output
     assert "0001" in res.output
     # Provide a translation for every chunk
-    translated_dir = project_dir / ".booktx" / "translated"
+    translated_dir = _selected_project(project_dir).translated_dir
+    assert translated_dir is not None
     for chunk_file in (project_dir / ".booktx" / "chunks").glob("*.json"):
         chunk = json.loads(chunk_file.read_text("utf-8"))
         payload = {
@@ -468,7 +537,8 @@ def test_next_prints_context_path_when_context_ready(tmp_path: Path):
 def test_validate_passes_with_identity_translation(tmp_path: Path):
     project_dir = _make_markdown_project(tmp_path)
     runner.invoke(app, ["extract", str(project_dir)])
-    translated_dir = project_dir / ".booktx" / "translated"
+    translated_dir = _selected_project(project_dir).translated_dir
+    assert translated_dir is not None
     for chunk_file in (project_dir / ".booktx" / "chunks").glob("*.json"):
         chunk = json.loads(chunk_file.read_text("utf-8"))
         payload = {
@@ -488,7 +558,8 @@ def test_validate_passes_with_identity_translation(tmp_path: Path):
 def test_validate_fails_on_empty_target(tmp_path: Path):
     project_dir = _make_markdown_project(tmp_path)
     runner.invoke(app, ["extract", str(project_dir)])
-    translated_dir = project_dir / ".booktx" / "translated"
+    translated_dir = _selected_project(project_dir).translated_dir
+    assert translated_dir is not None
     chunk_file = next((project_dir / ".booktx" / "chunks").glob("*.json"))
     chunk = json.loads(chunk_file.read_text("utf-8"))
     payload = {
@@ -504,7 +575,8 @@ def test_validate_fails_on_empty_target(tmp_path: Path):
 def test_build_produces_output(tmp_path: Path):
     project_dir = _make_markdown_project(tmp_path)
     runner.invoke(app, ["extract", str(project_dir)])
-    translated_dir = project_dir / ".booktx" / "translated"
+    translated_dir = _selected_project(project_dir).translated_dir
+    assert translated_dir is not None
     for chunk_file in (project_dir / ".booktx" / "chunks").glob("*.json"):
         chunk = json.loads(chunk_file.read_text("utf-8"))
         payload = {
@@ -518,7 +590,7 @@ def test_build_produces_output(tmp_path: Path):
         )
     res = runner.invoke(app, ["build", str(project_dir)])
     assert res.exit_code == 0, res.output
-    out_file = project_dir / "output" / "novel.de.md"
+    out_file = project_dir / "translations" / "de_default" / "output" / "novel.de.md"
     assert out_file.is_file()
     out = out_file.read_text("utf-8")
     assert "Alice" in out and "Bob" in out
@@ -534,7 +606,8 @@ def test_full_pipeline_end_to_end(tmp_path: Path):
     res_next = runner.invoke(app, ["next", str(project_dir), "--allow-missing-context"])
     assert res_next.exit_code == 0
     # translate identity
-    translated_dir = project_dir / ".booktx" / "translated"
+    translated_dir = _selected_project(project_dir).translated_dir
+    assert translated_dir is not None
     for chunk_file in (project_dir / ".booktx" / "chunks").glob("*.json"):
         chunk = json.loads(chunk_file.read_text("utf-8"))
         payload = {
@@ -549,7 +622,9 @@ def test_full_pipeline_end_to_end(tmp_path: Path):
     # validate + build
     assert runner.invoke(app, ["validate", str(project_dir)]).exit_code == 0
     assert runner.invoke(app, ["build", str(project_dir)]).exit_code == 0
-    assert (project_dir / "output" / "novel.de.md").is_file()
+    assert (
+        project_dir / "translations" / "de_default" / "output" / "novel.de.md"
+    ).is_file()
 
 
 def test_init_rejects_unsupported_source(tmp_path: Path):

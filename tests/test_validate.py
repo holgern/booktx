@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import tomli_w
-
 from typer.testing import CliRunner
 
 from booktx.cli import app
@@ -17,7 +16,7 @@ from booktx.config import (
     write_translation_store,
     write_translation_version_ledger,
 )
-from booktx.context import default_context, write_context
+from booktx.context import context_markdown_path, default_context, write_context
 from booktx.models import (
     Chunk,
     EpubTemplateData,
@@ -27,9 +26,9 @@ from booktx.models import (
     Record,
     StoredTranslationRecord,
     StoredTranslationRecordV2,
+    TranslationCandidate,
     TranslationStore,
     TranslationStoreV2,
-    TranslationCandidate,
     TranslationSubversionLedgerEntry,
     TranslationTrackLedgerEntry,
     TranslationVersionLedger,
@@ -48,12 +47,11 @@ runner = CliRunner()
 def _rewrite_project_chunk_size(project_dir: Path, chunk_size: int) -> None:
     from booktx.config import tomllib
 
-    config_path = project_dir / ".booktx" / "config.toml"
+    config_path = project_dir / ".booktx" / "source-config.toml"
     with config_path.open("rb") as fh:
         data = tomllib.load(fh)
     data["chunk_size"] = chunk_size
     config_path.write_bytes(tomli_w.dumps(data).encode("utf-8"))
-
 
 
 def _src_chunk(chunk_id: str = "0001") -> Chunk:
@@ -398,7 +396,9 @@ def test_missing_ledger_version_is_an_error_for_v2_store(tmp_path: Path):
     proj = init_project(tmp_path / "book", target_language="de")
     proj.chunks_dir.mkdir(parents=True, exist_ok=True)
     source = _src_chunk()
-    (proj.chunks_dir / "0001.json").write_text(source.model_dump_json(), encoding="utf-8")
+    (proj.chunks_dir / "0001.json").write_text(
+        source.model_dump_json(), encoding="utf-8"
+    )
     write_translation_store(
         proj,
         TranslationStoreV2(
@@ -433,11 +433,13 @@ def test_missing_ledger_version_is_an_error_for_v2_store(tmp_path: Path):
 def test_context_render_drift_is_a_warning(tmp_path: Path):
     proj = init_project(tmp_path / "book", target_language="de")
     proj.chunks_dir.mkdir(parents=True, exist_ok=True)
-    (proj.chunks_dir / "0001.json").write_text(_src_chunk().model_dump_json(), encoding="utf-8")
+    (proj.chunks_dir / "0001.json").write_text(
+        _src_chunk().model_dump_json(), encoding="utf-8"
+    )
     ctx = default_context(proj)
     ctx.ready = True
     write_context(proj, ctx)
-    (proj.booktx_dir / "context.md").write_text("stale render\n", encoding="utf-8")
+    context_markdown_path(proj).write_text("stale render\n", encoding="utf-8")
 
     report = validate_project(proj)
 
@@ -472,8 +474,7 @@ def test_validate_errors_on_chunk_manifest_record_id_scheme_mismatch(tmp_path: P
 
     assert not report.passed
     assert any(
-        f.rule == "chunk_manifest_record_id_scheme_mismatch"
-        for f in report.findings
+        f.rule == "chunk_manifest_record_id_scheme_mismatch" for f in report.findings
     )
 
 

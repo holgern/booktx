@@ -97,13 +97,13 @@ def _build_target_stream(
 
 _prose_span_from_ref = prose_span_from_epub_ref  # backward-compatible alias
 
+
 def _build_markdown(project: Project, *, require_complete: bool = False) -> BuildResult:
     source = find_source_file(project)
     from booktx.config import current_source_sha256, extracted_source_sha256
 
     extracted = extracted_source_sha256(project)
     if extracted and extracted != current_source_sha256(project):
-
         raise BuildError(
             "source file has changed since last extraction; "
             "run 'booktx extract' to update chunks before building"
@@ -253,6 +253,8 @@ def _load_names(project: Project) -> list[str]:
 
 
 def _output_path(project: Project, source: Path, *, suffix: str) -> Path:
+    if project.config.output_filename:
+        return project.output_dir / project.config.output_filename
     stem = source.stem
     target = project.config.target_language
     return project.output_dir / f"{stem}.{target}{suffix}"

@@ -73,6 +73,7 @@ def test_write_context_markdown_renders(tmp_path: Path):
     assert "Open questions" in md
     assert "Q001" in md
 
+
 def test_render_context_markdown_ready_status(tmp_path: Path):
     proj = _project(tmp_path)
     ctx = default_context(proj)
@@ -308,9 +309,7 @@ def test_drift_no_findings_when_equivalent(tmp_path: Path):
 
 
 def test_drift_chunk_ids_only_is_not_conflicting(tmp_path: Path):
-    chapter = ChapterContext(
-        chapter_id="0006", title="TWO", chunk_ids=["0006", "0007"]
-    )
+    chapter = ChapterContext(chapter_id="0006", title="TWO", chunk_ids=["0006", "0007"])
     proj, ctx = _project_with_context(tmp_path, chapters=[chapter])
     drift = analyze_context_markdown_drift(proj, ctx)
     assert drift.conflicting == []
@@ -366,9 +365,7 @@ def test_hydrate_fills_title_and_chunk_ids_when_absent(tmp_path: Path):
 def test_hydrate_does_not_overwrite_existing_values(tmp_path: Path):
     proj, ctx = _project_with_context(
         tmp_path,
-        chapters=[
-            ChapterContext(chapter_id="0006", title="Kept", chunk_ids=["0009"])
-        ],
+        chapters=[ChapterContext(chapter_id="0006", title="Kept", chunk_ids=["0009"])],
     )
     chapter_map_path(proj).write_text(
         '{"version": 1, "source_sha256": "", '

@@ -1,180 +1,70 @@
 # Quickstart
 
-This page shows the shortest complete local workflow.
-
-## Install from a checkout
+## 1. Initialize a source project
 
 ```bash
-python -m pip install -e .
+booktx init ./demo --source-file book.epub --source-lang en
 ```
 
-For development:
-
-```bash
-python -m pip install -e ".[dev]"
-```
-
-If you want to build the Sphinx documentation locally, install the docs tools as well. See [Development](development.md).
-
-## Create a project
-
-```bash
-booktx init ./demo --target de --source-file ./book.md --source-lang en
-```
-
-This creates:
-
-```text
-demo/
-  source/
-  .booktx/
-  output/
-```
-
-The source document is copied to `demo/source/`.
-
-## Inspect the source
-
-```bash
-booktx inspect ./demo
-```
-
-`inspect` reports the detected format, language settings, estimated record count, and protected terms.
-
-## Extract chunks
+## 2. Extract the source
 
 ```bash
 booktx extract ./demo
 ```
 
-This writes source chunks to:
+## 3. Create and select a translation profile
+
+```bash
+booktx profile create ./demo de_gpt5_5 \
+  --target de \
+  --target-locale de-DE \
+  --model codex-openai/gpt-5.5@low \
+  --select
+```
+
+## 4. Initialize the profile-local context
+
+```bash
+booktx context init ./demo --profile de_gpt5_5 --non-interactive
+booktx context mark-ready ./demo --profile de_gpt5_5 --force
+```
+
+## 5. Request a translation task
+
+```bash
+booktx translate next ./demo --profile de_gpt5_5 --unit batch --max-words 500 --format block
+```
+
+Read `translations/de_gpt5_5/context.md`, then fill the generated durable file
+under `translations/de_gpt5_5/ingest/`.
+
+## 6. Submit the translation
+
+```bash
+booktx translate insert ./demo \
+  --profile de_gpt5_5 \
+  --task-id TASK \
+  --file translations/de_gpt5_5/ingest/TASK.block.txt \
+  --format block
+```
+
+## 7. Validate and build
+
+```bash
+booktx validate ./demo --profile de_gpt5_5
+booktx build ./demo --profile de_gpt5_5
+```
+
+The rebuilt output is written under:
 
 ```text
-demo/.booktx/chunks/0001.json
-demo/.booktx/chunks/0002.json
-...
+demo/translations/de_gpt5_5/output/
 ```
 
-Extraction is idempotent: rerunning it rebuilds `chunks/` but leaves the
-translation store and compatibility `translated/` files intact. If you change
-`chunk_size` under `record_id_scheme=chunk-local:v1` while accepted translations
-exist, rerun with `booktx extract ./demo --force-rechunk` only after intentionally
-backing up or migrating that work.
+## Legacy projects
 
-## Build translation context
+Old single-layout projects can be migrated with:
 
 ```bash
-booktx context init ./demo --non-interactive
-booktx context questions ./demo
-```
-
-Answer the required questions:
-
-```bash
-booktx context answer ./demo Q001 --text de-DE
-booktx context answer ./demo Q002 --text "fluent literary German"
-booktx context answer ./demo Q003 --text "neutral to elevated"
-booktx context answer ./demo Q004 --text "natural dialogue; preserve character voice"
-booktx context answer ./demo Q005 --text "Keep named people, places, and titles unchanged unless glossary says otherwise."
-booktx context answer ./demo Q006 --text "Translate transparent invented terms only after glossary approval."
-booktx context answer ./demo Q007 --text "Use a consistent approved rendering for kinden terms."
-booktx context answer ./demo Q008 --text "Keep Sieur unless the user approves an equivalent."
-booktx context answer ./demo Q009 --text "Do not use Netherlands/Dutch meanings for Lowlands/Lowlander."
-booktx context answer ./demo Q012 --text "Forbidden glossary targets are errors."
-booktx context mark-ready ./demo
-```
-
-The JSON context is authoritative. The Markdown context is a rendered agent-readable view:
-
-```text
-demo/.booktx/context.json
-demo/.booktx/context.md
-```
-
-## Translate the next task
-
-Ask for the next task:
-
-```bash
-booktx status ./demo
-booktx translate next ./demo --unit batch --max-words 500 --format block
-```
-
-The command returns a task id and the exact records to translate. Submit the
-translated records through the CLI:
-
-```bash
-booktx translate insert ./demo --task-id TASK --stdin --format block
-```
-
-The record contract is still:
-
-```json
-{
-  "schema_version": 2,
-  "chunk_id": "0001",
-  "chunk_size": 50,
-  "record_id_scheme": "chunk-local:v1",
-  "source_language": "en",
-  "target_language": "de",
-  "records": [
-    {
-      "id": "0001-000001",
-      "source": "__NAME_001__ looked at the city.",
-      "protected_terms": ["Alice"],
-      "placeholders": [
-        { "token": "__NAME_001__", "original": "Alice", "kind": "name" }
-      ]
-    }
-  ]
-}
-```
-
-Compatibility translated chunk shape:
-
-```json
-{
-  "chunk_id": "0001",
-  "records": [
-    {
-      "id": "0001-000001",
-      "version": "1.1",
-      "target": "__NAME_001__ sah die Stadt an."
-    }
-  ]
-}
-```
-
-Do not translate the placeholder token. The build step restores the original protected term.
-
-## Validate
-
-```bash
-booktx validate ./demo
-```
-
-Validation writes:
-
-```text
-demo/.booktx/reports/validation-report.json
-```
-
-Fix every error before building. Warnings should be reviewed and resolved where possible.
-
-## Build
-
-```bash
-booktx build ./demo
-```
-
-Markdown output:
-
-```text
-demo/output/book.de.md
-```
-
-EPUB output:
-
-```text
-demo/output/book.de.epub
+booktx profile migrate-current ./demo de_gpt5_5 --select
 ```

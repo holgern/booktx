@@ -154,7 +154,7 @@ def pack_chunks(
     records: list[Record],
     *,
     source_language: str,
-    target_language: str,
+    target_language: str = "",
     chunk_size: int = 50,
 ) -> list[Chunk]:
     """Pack records into chunks of at most ``chunk_size`` and assign final ids.
@@ -188,7 +188,7 @@ def spans_to_chunks(
     spans: list[ProseSpan],
     *,
     source_language: str,
-    target_language: str,
+    target_language: str = "",
     chunk_size: int = 50,
 ) -> list[Chunk]:
     """Convenience: segment spans then pack into chunks."""

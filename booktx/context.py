@@ -147,18 +147,18 @@ class TranslationContext(BaseModel):
 
 
 def context_path(project: Project) -> Path:
-    """Path to the authoritative ``.booktx/context.json``."""
-    return project.booktx_dir / "context.json"
+    """Path to the authoritative context JSON for the selected translation scope."""
+    return project.context_json_path or (project.booktx_dir / "context.json")
 
 
 def context_markdown_path(project: Project) -> Path:
-    """Path to the rendered ``.booktx/context.md``."""
-    return project.booktx_dir / "context.md"
+    """Path to the rendered context markdown for the selected translation scope."""
+    return project.context_md_path or (project.booktx_dir / "context.md")
 
 
 def chapter_map_path(project: Project) -> Path:
     """Path to ``.booktx/chapter-map.json`` (owned by :mod:`booktx.chapters`)."""
-    return project.booktx_dir / "chapter-map.json"
+    return project.chapter_map_path
 
 
 # --- IO ---------------------------------------------------------------------
@@ -273,7 +273,6 @@ def seed_glossary() -> list[GlossaryEntry]:
     return []
 
 
-
 def load_seed_template(name: str) -> tuple[list[ContextQuestion], list[GlossaryEntry]]:
     """Load book-specific seeds from a packaged template.
 
@@ -320,6 +319,7 @@ def available_seed_templates() -> list[str]:
     if not template_dir.is_dir():
         return []
     return sorted(p.stem for p in template_dir.glob("*.json"))
+
 
 def default_context(project: Project, source_sha256: str = "") -> TranslationContext:
     """Build a not-ready context pre-filled from the project config.
@@ -571,9 +571,7 @@ def parse_context_markdown_chapter_notes(markdown: str) -> list[ChapterContext]:
             chapters.append(current)
             continue
         if current is None:
-            raise ValueError(
-                f"unexpected content before first chapter note: {line!r}"
-            )
+            raise ValueError(f"unexpected content before first chapter note: {line!r}")
         matched = False
         for prefix, field_name in _CHAPTER_NOTE_BULLETS:
             if line.startswith(prefix):

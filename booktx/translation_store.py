@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from booktx.models import (
-    StoredTranslationRecord,
     StoredTranslationRecordV2,
     TranslationCandidate,
     TranslationStore,
@@ -40,12 +39,14 @@ class MigrationResult:
 def legacy_store_to_v2(
     legacy: TranslationStore,
     *,
-    source_records: dict[str, "SourceRecordView"] | None = None,
+    source_records: dict[str, SourceRecordView] | None = None,
 ) -> TranslationStoreV2:
     """Convert a legacy flat store into the nested v2 shape in memory."""
     records: dict[str, StoredTranslationRecordV2] = {}
     for record_id, stored in legacy.records.items():
-        source_view = source_records.get(record_id) if source_records is not None else None
+        source_view = (
+            source_records.get(record_id) if source_records is not None else None
+        )
         record_ref = parse_record_ref(record_id)
         source_text = source_view.source if source_view is not None else ""
         source_sha256 = stored.source_sha256 or (
@@ -76,7 +77,7 @@ def legacy_store_to_v2(
 def migrate_legacy_store(
     legacy: TranslationStore,
     *,
-    source_records: dict[str, "SourceRecordView"],
+    source_records: dict[str, SourceRecordView],
     version_ref: str = "1.1",
 ) -> MigrationResult:
     """Convert a legacy store into v2 and report any records missing source data."""

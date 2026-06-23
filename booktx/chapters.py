@@ -243,6 +243,7 @@ _HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 
 _prose_span_from_ref = prose_span_from_epub_ref  # backward-compatible alias
 
+
 def _epub_boundaries_from_refs(span_refs, navigation_refs) -> list[_Boundary]:
     boundaries = _navigation_boundaries(span_refs, navigation_refs)
     if boundaries:

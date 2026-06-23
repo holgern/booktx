@@ -1,316 +1,137 @@
 [![PyPI - Version](https://img.shields.io/pypi/v/booktx)](https://pypi.org/project/booktx/)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/booktx)
-![PyPI - Downloads](https://img.shields.io/pypi/dm/booktx)
 
 # booktx
 
-`booktx` is a deterministic command-line tool that prepares **Markdown** and
-**EPUB** documents for translation by a coding agent (or a human translator).
-It does the mechanical bookkeeping — extract translatable sentences, report
-progress, hand out the next safe work unit, validate submissions, rebuild the
-document — and leaves the actual translation to you or your agent.
+`booktx` is a deterministic local CLI that prepares **Markdown** and **EPUB**
+documents for translation by a coding agent or human translator.
 
-**booktx never translates text itself** and makes no LLM or network calls. All
-translation text comes from local CLI submissions that `booktx` stores and validates.
+It:
 
-## Legal notice
+- extracts source text into stable record chunks,
+- tracks progress and translation versions,
+- hands out safe translation tasks,
+- validates submissions,
+- rebuilds translated output.
 
-booktx is intended for DRM-free documents that you lawfully own or are allowed
-to process. The license of booktx applies only to the software, not to input
-books or generated translations. Do not redistribute translated books unless
-you have the rights to do so.
-
----
+`booktx` never translates text itself and makes no network calls.
 
 ## Install
 
 ```bash
-pip install -e .          # editable install from a checkout
-# or, once published:
-pip install booktx
+pip install -e .
 ```
 
-Requires Python 3.10+. The `booktx` console script is installed automatically.
+Python 3.10+ is supported.
+
+## Core model
+
+```text
+Profile = hard isolation boundary
+Version = history/candidate boundary inside that profile
+```
+
+`.booktx/` now holds only shared source-derived state. Mutable translation state
+lives under `translations/<profile>/`.
 
 ## Project layout
-
-`booktx init ./book --target de` creates this layout:
 
 ```text
 book/
   source/
-    book.md        # or book.epub — exactly one source document
+    book.epub
+
   .booktx/
-    config.toml    # source/target language, format, chunk size
-    manifest.json  # source digest + EPUB extraction/rebuild metadata
-    names.json     # manually protected verbatim terms (names, brands, places)
-    context.json   # authoritative style/glossary/questions context
-    context.md     # rendered context that agents must read before translating
-    identity.json  # optional actor/harness/model defaults for new version tracks
-    translation-version-ledger.json # project-wide major-track/subversion metadata
-    chapter-map.json # detected chapter -> chunk ranges (additive metadata)
-    chunks/        # 0001.json, 0002.json ... (booktx writes these)
-    translation-store.json # primary nested record/version translation state
-    tasks/         # persisted work items created by booktx translate next
-    translated/    # compatibility/export chunk JSON managed by booktx
-    reports/       # validation-report.json
-  output/
-    book.de.md     # or book.de.epub — the rebuilt translated document
+    source-config.toml
+    source-manifest.json
+    names.json
+    chapter-map.json
+    profile-state.json
+    chunks/
+
+  translations/
+    de_gpt5_5/
+      config.toml
+      identity.json
+      context.json
+      context.md
+      translation-store.json
+      translation-version-ledger.json
+      tasks/
+      ingest/
+      translated/
+      reports/
+      output/
+        book.de.epub
 ```
 
-## Commands
+## Quickstart
 
 ```bash
-booktx init ./book --target de                 # create the project
-booktx init ./book --target de --source-file book.md --source-lang en
-booktx inspect ./book                          # summarise the source
-booktx extract ./book                          # write .booktx/chunks/*.json
-booktx context init ./book --non-interactive   # create open questions/context
-booktx context questions ./book                # show required context questions
-booktx context answer ./book Q001 --text de-DE # answer one context question
-booktx context mark-ready ./book               # mark ready after required answers
-booktx status ./book                           # report translation progress
-booktx chapters ./book                         # list detected chapter ranges
-booktx translate next ./book --unit batch --max-words 500 --format block
-booktx translate insert ./book --task-id TASK --file .booktx/ingest/TASK.block.txt --format block
-booktx translate task-status ./book --task-id TASK
-booktx translate set-record ./book --task-id TASK --record-id RECORD_ID --stdin
-booktx translation get-record ./book 74@38 --before 2 --after 2
-booktx translation compare ./book 74@38 --versions 1.1,1.2
-booktx translation activate ./book 74@38 1.2
-booktx whoami ./book
-booktx actor set ./book user:nahrstaedt
-booktx harness set ./book pi
-booktx model set ./book codex-openai/gpt-5.5@low
-booktx --version
-booktx version current ./book
-booktx version list ./book
-booktx version fork-context ./book --note "manual context split"
-booktx translate import-legacy ./book          # import valid translated/*.json
-booktx translate export ./book                 # export active accepted chunks
-booktx translate export ./book --version 1.2  # export one exact version
-booktx next ./book                             # legacy next-chunk summary
-booktx next ./book --unit chapter              # legacy next-chapter summary
-booktx next-chapter ./book                     # chapter workflow shortcut
-booktx validate ./book                         # enforce contract + context lint
-booktx build ./book                            # rebuild output/book.<target>.<ext>
-booktx build ./book --require-complete         # fail on any missing/invalid record
-```
-
-Use `booktx --version` for the installed CLI package version. `booktx version`
-is the translation-version command group and requires a subcommand such as
-`current`, `list`, `show`, `select`, `fork-context`, or `set-label`.
-
-`booktx translate next` refuses to return translation work until `.booktx/context.json`
-exists and has `ready: true`. Use `--allow-missing-context` only for legacy
-workflows and tests that deliberately bypass the context gate.
-
-`booktx status` reports record-, chunk-, chapter-, and word-level progress.
-It also reports active coverage plus per-version and per-track coverage in JSON mode.
-`booktx translate next` returns the next paragraph, batch, chunk, or chapter
-task together with a task id and submit hint. `booktx translate insert`
-validates each submitted record before writing `translation-store.json` and prints
-the resolved ledger version ref.
-
-`booktx next --unit chapter` and `booktx next-chapter` remain available as
-legacy summaries, but they now point agents at `booktx translate next` and
-`booktx translate insert`. `booktx chapters` writes `.booktx/chapter-map.json`
-and lists detected chapter ranges.
-
-`booktx context init --non-interactive` creates a not-ready context with open
-questions and a seed glossary. Required questions must be answered before
-`booktx context mark-ready` succeeds. `context.md` is generated from
-`context.json`; the JSON file is authoritative.
-
-`booktx extract` is **idempotent**: it rebuilds `chunks/` on every run but
-leaves both `translation-store.json` and compatibility `translated/` files
-untouched, so re-extracting after editing the source never destroys work in
-progress. Same source plus same extraction settings must reproduce byte-identical
-chunk files. If `chunk_size` changes under `record_id_scheme=chunk-local:v1`
-while accepted translations exist, extract refuses by default and requires
-`booktx extract ./book --force-rechunk`. Stale `translated/*.json` files whose
-chunk no longer exists are kept and reported as warnings.
-
-## Nested version store
-
-Accepted translations are now stored per source record as nested candidates.
-
-- Canonical store keys stay padded, for example `0074-000038`.
-- `74@38` is a CLI shorthand only; booktx normalizes it to the padded key.
-- Each candidate stores `version`, `subversion`, and string `version_ref` such as `1.2`.
-- Major version tracks store actor, harness, and model once in `translation-version-ledger.json`.
-- Subversions store context SHA once in the ledger.
-- Each source record keeps its own `active_version`, so build and default export use the currently active accepted target for that record.
-
-That means `1.1` and `1.2` can share the same model track while differing only by context SHA, and a model change creates a new major track such as `2.1`.
-
-## The translation contract
-
-`booktx extract` writes a chunk file like this:
-
-```json
-{
-  "schema_version": 2,
-  "chunk_id": "0001",
-  "chunk_size": 50,
-  "record_id_scheme": "chunk-local:v1",
-  "source_language": "en",
-  "target_language": "de",
-  "records": [
-    {
-      "id": "0001-000001",
-      "source": "Alice looked at Mr. Smith.",
-      "protected_terms": ["Alice", "Mr. Smith"],
-      "placeholders": []
-    }
-  ]
-}
-```
-
-`booktx translate next --format block` prints a concise summary (task id, chapter, unit, record count, source words, and the source/durable-file/submit-command paths) instead of dumping source text. It writes `.booktx/tasks/TASK.source.block.txt` with the source text, an editable `.booktx/ingest/TASK.block.txt` durable target file with metadata headers, and `.booktx/ingest/TASK.json` for JSON compatibility. New task and ingest artifacts also carry `translation_version`, `context_sha256`, and `source_sha256` metadata so stale task submissions can be rejected safely. Prefer filling and submitting the durable `.block.txt` file for normal agent work (it is resumable and version-control friendly); use a stdin heredoc only for tiny manual fixes. `booktx translate task-status` diagnoses interrupted runs, `booktx translate set-record` commits one record at a time, and `booktx translate insert --json-file .booktx/ingest/TASK.json` remains available for JSON-based tooling. Never use `/tmp`; missing submission files produce a concise error, not a traceback. When you need compatibility chunk files,
-`booktx translate export` materializes compatibility `.booktx/translated/NNNN.json`
-from active accepted store entries by default, or from an exact ledger version
-when you pass `--version`:
-
-```json
-{
-  "chunk_id": "0001",
-  "records": [
-    {
-      "id": "0001-000001",
-      "version": "1.1",
-      "target": "Alice sah Mr. Smith an."
-    }
-  ]
-}
-```
-
-### Hard rules (enforced by `booktx validate`)
-
-A translated chunk is rejected if any of the following is true:
-
-- the JSON is invalid, or there is commentary outside the JSON object;
-- the record count changed;
-- any record id changed;
-- any target is empty;
-- a placeholder (`__NAME_NNN__` and any visible legacy `__TAG_NNN__`) was removed, changed, or added;
-- a protected name was translated or removed.
-
-The goal is **one source sentence to one translated sentence**. The validator
-never merges or splits records.
-
-## Placeholders and protected names
-
-Before segmentation, booktx hides protected spans behind stable tokens and
-restores them during build:
-
-```text
-Alice           -> __NAME_001__        (from names.json#protected_terms)
-Mr. Smith       -> __NAME_002__
-inline code     -> __TAG_001__         (markdown / legacy EPUB chunks)
-link URL        -> __TAG_002__         (markdown / legacy EPUB chunks)
-```
-
-Edit `.booktx/names.json` to add names, brands, or places that must survive
-translation untouched:
-
-```json
-{
-  "protected_terms": ["Alice", "Mr. Smith", "Baker Street"]
-}
-```
-
-The agent **must** preserve every visible `__NAME_NNN__` token and every visible
-legacy `__TAG_NNN__` token exactly. New EPUB extraction no longer emits TAG
-tokens; if they appear in freshly extracted EPUB chunks, treat that as a
-maintenance defect and re-run extraction after upgrading.
-
-## Markdown handling
-
-- Translate prose text only.
-- Do not translate fenced code blocks, inline code, URLs, or YAML front-matter
-  **keys** (front-matter values are prose).
-- Preserve headings, lists, blockquotes, links, emphasis, and tables.
-
-booktx replaces each extracted prose span with an internal placeholder and
-reinserts the translated text during build.
-
-## EPUB handling
-
-- Extract with `epub2text`; rebuild with `text2epub`.
-- New EPUB chunks contain clean block text plus `__NAME_NNN__` placeholders only.
-- `booktx build` uses the stored `.booktx/manifest.json` extraction data as the
-  source of truth and fails if the source EPUB SHA changed after extract.
-- Identity/no-op EPUB builds are byte-identical to the extracted source EPUB.
-- Changed EPUB blocks rebuild as valid EPUB with no leaked internal tokens.
-- The original source EPUB is never modified.
-
-### EPUB MVP inline-formatting tradeoff
-
-The current EPUB rebuild path replaces changed blocks with escaped translated
-text for the whole block body. That means identity/no-op builds preserve
-everything byte-for-byte, but changed blocks may lose inner inline markup such
-as `<strong>` or `<em>` until a future text-run-preserving replacement mode is
-added.
-
-### EPUB migration note
-
-Existing EPUB projects extracted with the legacy TAG-placeholder pipeline should
-be re-extracted after upgrading:
-
-```bash
-booktx extract ./project
-```
-
-Do not mix old EPUB chunks containing `__TAG_NNN__` with the new manifest v2
-pipeline.
-
-## End-to-end example (Markdown)
-
-```bash
-booktx init ./demo --target de
-cp book.md ./demo/source/
+booktx init ./demo --source-file book.epub --source-lang en
 booktx extract ./demo
-booktx context init ./demo --non-interactive
-booktx context mark-ready ./demo --force
-booktx translate next ./demo --unit batch --max-words 500 --format block
 
-# Submit the returned records through the CLI, then:
+booktx profile create ./demo de_gpt5_5 \
+  --target de \
+  --target-locale de-DE \
+  --model codex-openai/gpt-5.5@low \
+  --select
 
-booktx validate ./demo
-booktx build ./demo            # -> demo/output/book.de.md
+booktx context init ./demo --profile de_gpt5_5 --non-interactive
+booktx context mark-ready ./demo --profile de_gpt5_5 --force
+
+booktx translate next ./demo \
+  --profile de_gpt5_5 \
+  --unit batch \
+  --max-words 500 \
+  --format block
+
+booktx translate insert ./demo \
+  --profile de_gpt5_5 \
+  --task-id TASK \
+  --file translations/de_gpt5_5/ingest/TASK.block.txt \
+  --format block
+
+booktx validate ./demo --profile de_gpt5_5
+booktx build ./demo --profile de_gpt5_5
 ```
 
-## End-to-end example (EPUB)
+## Legacy projects
+
+Old single-layout projects can be migrated in place:
 
 ```bash
-booktx init ./demo --target de --source-file book.epub
-booktx extract ./demo
-booktx context init ./demo --non-interactive
-booktx context mark-ready ./demo --force
-booktx translate next ./demo --chapter 0001 --unit batch --max-words 500 --format block
-
-# Submit translated records with booktx translate insert, then:
-
-booktx validate ./demo
-booktx build ./demo            # -> demo/output/book.de.epub
+booktx profile migrate-current ./demo de_gpt5_5 --select
 ```
 
-## What v1 does NOT do
-
-PDF, DOCX, AsciiDoc, a web UI, direct OpenAI/Anthropic/Ollama API calls, DRM
-handling, automatic publishing, translation memory, or parallel agent
-execution. The CLI itself performs no translation. v1 is intentionally small
-and deterministic.
-
-## Development
+## Common commands
 
 ```bash
-pip install -e '.[dev]'
-pytest -q
-ruff check .
+booktx status ./demo
+booktx status ./demo --profile de_gpt5_5
+booktx profile list ./demo
+booktx profile show ./demo de_gpt5_5
+booktx whoami ./demo --profile de_gpt5_5
+booktx version current ./demo --profile de_gpt5_5
+booktx translate task-status ./demo --profile de_gpt5_5 --task-id TASK
+booktx translation compare ./demo --profile de_gpt5_5 74@38 --versions 1.1,1.2
+booktx profile compare ./demo --profiles de_gpt5_5,de_glm_5_2 --record 0001-000001
 ```
 
-## License
+## Translation contract
 
-MIT. See [LICENSE](LICENSE).
+- record ids must stay unchanged;
+- placeholders must stay unchanged;
+- targets must be non-empty;
+- submissions must stay in the selected profile;
+- `translations/<profile>/translation-store.json` is the primary record-level state;
+- `translations/<profile>/translated/*.json` is compatibility/export output.
+
+## Documentation
+
+- [quickstart](docs/quickstart.md)
+- [project layout](docs/project-layout.md)
+- [profiles](docs/profiles.md)
+- [commands](docs/commands.md)
+- [context](docs/context.md)
+- [agent workflow](docs/agent-workflow.md)

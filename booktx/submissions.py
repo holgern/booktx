@@ -42,17 +42,19 @@ _BLOCK_HEADER_RE = re.compile(r"^>>>\s+(?P<id>\S+)\s*$")
 class ParsedSubmission:
     """A parsed submission payload: optional task id + validated records."""
 
-    __slots__ = ("task_id", "records", "translation_version")
+    __slots__ = ("task_id", "records", "translation_version", "profile")
 
     def __init__(
         self,
         records: list[SubmittedRecord],
         task_id: str | None = None,
         translation_version: str | None = None,
+        profile: str | None = None,
     ) -> None:
         self.records = records
         self.task_id = task_id
         self.translation_version = translation_version
+        self.profile = profile
 
 
 def _trim_blank_edge_lines(lines: list[str]) -> str:
@@ -79,15 +81,19 @@ def parse_json_submission(text: str) -> ParsedSubmission:
     schema_version = payload.get("schema_version")
     if schema_version is not None and not isinstance(schema_version, int):
         raise _err(
-            "invalid_json_submission", "JSON submission field 'schema_version' must be an integer"
+            "invalid_json_submission",
+            "JSON submission field 'schema_version' must be an integer",
         )
     legacy_version = payload.get("version")
     if legacy_version is not None and not isinstance(legacy_version, int):
         raise _err(
-            "invalid_json_submission", "JSON submission field 'version' must be an integer"
+            "invalid_json_submission",
+            "JSON submission field 'version' must be an integer",
         )
     translation_version_raw = payload.get("translation_version")
+    profile_raw = payload.get("profile")
     translation_version = None
+    profile = None
     if translation_version_raw is not None:
         if not isinstance(translation_version_raw, str):
             raise _err(
@@ -98,6 +104,13 @@ def parse_json_submission(text: str) -> ParsedSubmission:
             translation_version = parse_version_ref(translation_version_raw).version_ref
         except ValueError as exc:
             raise _err("invalid_json_submission", str(exc)) from None
+    if profile_raw is not None:
+        if not isinstance(profile_raw, str):
+            raise _err(
+                "invalid_json_submission",
+                "JSON submission field 'profile' must be a string",
+            )
+        profile = profile_raw.strip() or None
     records = payload.get("records")
     if not isinstance(records, list):
         raise _err(
@@ -126,6 +139,7 @@ def parse_json_submission(text: str) -> ParsedSubmission:
         parsed,
         str(task_id).strip() if task_id else None,
         translation_version=translation_version,
+        profile=profile,
     )
 
 
@@ -156,6 +170,8 @@ def parse_block_submission(text: str) -> ParsedSubmission:
     current_id: str | None = None
     current_lines: list[str] = []
     seen: set[str] = set()
+    translation_version: str | None = None
+    profile: str | None = None
 
     def flush() -> None:
         nonlocal current_id, current_lines
@@ -165,15 +181,11 @@ def parse_block_submission(text: str) -> ParsedSubmission:
         # this record and the next header (or EOF). Internal and leading
         # comment lines are preserved as target text.
         lines = list(current_lines)
-        while lines and (
-            not lines[-1].strip() or lines[-1].lstrip().startswith("#")
-        ):
+        while lines and (not lines[-1].strip() or lines[-1].lstrip().startswith("#")):
             lines.pop()
         target = _trim_blank_edge_lines(lines)
         if not target:
-            raise _err(
-                "empty_block_target", f"empty target for record {current_id}"
-            )
+            raise _err("empty_block_target", f"empty target for record {current_id}")
         parsed.append(SubmittedRecord(id=current_id, target=target))
         current_id = None
         current_lines = []
@@ -194,7 +206,21 @@ def parse_block_submission(text: str) -> ParsedSubmission:
             continue
         if current_id is None:
             stripped = raw_line.strip()
-            if stripped and not stripped.startswith("#"):
+            if stripped.startswith("#"):
+                content = stripped[1:].strip()
+                if ":" in content:
+                    key, value = content.split(":", 1)
+                    key = key.strip().lower()
+                    value = value.strip()
+                    if key == "translation_version" and value and value != "none":
+                        try:
+                            translation_version = parse_version_ref(value).version_ref
+                        except ValueError as exc:
+                            raise _err("malformed_block", str(exc)) from None
+                    elif key == "profile" and value and value != "none":
+                        profile = value
+                continue
+            if stripped:
                 raise _err(
                     "malformed_block",
                     f"malformed block submission line {line_no}: "
@@ -209,7 +235,11 @@ def parse_block_submission(text: str) -> ParsedSubmission:
             "empty_block_submission",
             "block submission did not contain any records",
         )
-    return ParsedSubmission(parsed)
+    return ParsedSubmission(
+        parsed,
+        translation_version=translation_version,
+        profile=profile,
+    )
 
 
 def read_submission_file(path: Path) -> str:

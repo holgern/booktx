@@ -1,128 +1,76 @@
 # Project layout
 
-`booktx init ./book --target de` creates this layout:
+`booktx` now uses a **source-first, profile-aware** layout.
 
 ```text
 book/
   source/
     book.md
+
   .booktx/
-    config.toml
-    manifest.json
+    source-config.toml
+    source-manifest.json
     names.json
-    context.json
-    context.md
     chapter-map.json
-    translation-store.json
-    tasks/
-    ingest/
+    profile-state.json
     chunks/
       0001.json
       0002.json
-    translated/
-      0001.json
-      0002.json
-    reports/
-      validation-report.json
-  output/
-    book.de.md
+
+  translations/
+    de_gpt5_5/
+      config.toml
+      identity.json
+      context.json
+      context.md
+      translation-store.json
+      translation-version-ledger.json
+      tasks/
+      ingest/
+      translated/
+      reports/
+      output/
+        book.de.md
 ```
 
-For EPUB, the source and output suffixes are `.epub`.
+## Shared source scope
 
-## `source/`
+`.booktx/` contains only source-derived or source-shared state.
 
-Contains the source book. Keep exactly one supported source file here unless `config.toml` explicitly selects a file.
+| Path | Scope | Notes |
+| --- | --- | --- |
+| `.booktx/source-config.toml` | shared | Source language, source file, format, chunk size |
+| `.booktx/source-manifest.json` | shared | Source digest and rebuild metadata |
+| `.booktx/names.json` | shared | Protected terms |
+| `.booktx/chapter-map.json` | shared | Chapter-to-record/chunk metadata |
+| `.booktx/profile-state.json` | shared | Active profile selection only |
+| `.booktx/chunks/` | shared | Extracted source chunks |
 
-Do not modify the source file after extraction unless you intend to re-extract. EPUB build verifies the source checksum stored in the manifest.
+Do **not** put target-language translation state under `.booktx/` in a profile
+project.
 
-## `.booktx/config.toml`
+## Translation profile scope
 
-Stores project-level settings:
+Every translation effort lives under `translations/<profile>/`.
 
-```toml
-source_language = "en"
-target_language = "de"
-source_file = "book.md"
-format = "markdown"
-chunk_size = 50
-```
+| Path | Scope | Notes |
+| --- | --- | --- |
+| `translations/<profile>/config.toml` | profile-local | Target language, locale, output filename, default identity |
+| `translations/<profile>/identity.json` | profile-local | Stored actor/harness/model defaults |
+| `translations/<profile>/context.json` | profile-local | Authoritative translation context |
+| `translations/<profile>/context.md` | profile-local | Rendered context for agents |
+| `translations/<profile>/translation-store.json` | profile-local | Primary record-level translation state |
+| `translations/<profile>/translation-version-ledger.json` | profile-local | Version history inside this profile |
+| `translations/<profile>/tasks/` | profile-local | Persisted translation tasks |
+| `translations/<profile>/ingest/` | profile-local | Durable submission files |
+| `translations/<profile>/translated/` | profile-local | Compatibility/export chunk JSON |
+| `translations/<profile>/reports/` | profile-local | Validation reports |
+| `translations/<profile>/output/` | profile-local | Rebuilt translated documents |
 
-The config is human-editable, but invalid formats and invalid chunk sizes are rejected when the project is loaded.
+## Safety rules
 
-## `.booktx/names.json`
-
-Stores manually protected terms:
-
-```json
-{
-  "protected_terms": ["Alice", "Mr. Smith", "Baker Street"]
-}
-```
-
-Add names, brands, invented terms, and titles here when they must survive translation verbatim.
-
-## `.booktx/chunks/`
-
-Owned by booktx. `booktx extract` deletes and rewrites this directory on every extraction run.
-
-Do not manually edit source chunks unless you are fixing the package or intentionally repairing test fixtures.
-
-## `.booktx/translation-store.json`
-
-Owned by `booktx`. `booktx translate insert` writes validated accepted records
-here atomically.
-
-## `.booktx/tasks/`
-
-Owned by `booktx`. `booktx translate next` stores task payloads here so later
-submissions can be checked against an explicit task id.
-
-## `.booktx/ingest/`
-
-Durable user/agent-authored translation submissions. `booktx translate next` creates `.booktx/ingest/TASK.block.txt` for durable block-text submissions and keeps `.booktx/ingest/TASK.json` for compatibility tooling. Prefer direct `booktx translate insert --stdin --format block` submissions for normal agent work; use the durable `.block.txt` file when you want the submission payload version-controlled. The directory is intended to be kept in version control so unfinished or failed translation attempts are not lost.
-New task artifacts carry `translation_version`, `context_sha256`, and `source_sha256`
-metadata so stale task submissions can be rejected safely.
-
-## `.booktx/translated/`
-
-Compatibility/export output. `booktx extract` leaves this directory untouched,
-valid legacy files still count as progress, and `booktx translate export`
-materializes full translated chunks here. Do not edit these files directly;
-regenerate them through `booktx translate export`.
-
-## `.booktx/context.json`
-
-Authoritative translation context. This file is machine-readable and should be updated through `booktx context` commands where possible.
-
-## `.booktx/context.md`
-
-Rendered context for agents. This file is generated from `context.json`; do not treat it as authoritative.
-
-## `.booktx/manifest.json`
-
-Stores source metadata and rebuild metadata.
-
-For Markdown and EPUB, the manifest records the extracted source SHA, `chunk_size`,
-`record_id_scheme`, segmenter metadata, and a deterministic protected-name hash.
-For EPUB, it also includes the `text2epub` extraction manifest and span references
-needed for safe rebuild.
-
-## `.booktx/chapter-map.json`
-
-Generated chapter-to-chunk map. It may be regenerated by:
-
-```bash
-booktx chapters ./book
-booktx status ./book --chapter 0006
-booktx next ./book --unit chapter
-booktx next-chapter ./book
-```
-
-## `.booktx/reports/`
-
-Validation reports are written here.
-
-## `output/`
-
-The final translated document is written here. The source file is never modified by `booktx build`.
+1. A profile is the hard isolation boundary.
+2. Different languages must not share one translation store.
+3. Model experiments should usually be separate profiles, even for the same target language.
+4. When multiple profiles exist, pass `--profile` or select one with `booktx profile select`.
+5. Legacy single-layout projects should be migrated with `booktx profile migrate-current`.

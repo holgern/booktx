@@ -30,7 +30,7 @@ booktx then:
 2. protects configured names
 3. stores ordered span references
 4. converts structured extraction data into a `text2epub` manifest
-5. writes `.booktx/manifest.json`
+5. writes `.booktx/source-manifest.json`
 
 ## Fresh EPUB chunk rule
 
@@ -47,7 +47,7 @@ If these appear in fresh EPUB chunks, extraction is considered defective. Legacy
 
 ## Manifest v2
 
-EPUB rebuild uses `.booktx/manifest.json` version 2.
+EPUB rebuild uses `.booktx/source-manifest.json` version 2.
 
 The manifest stores:
 

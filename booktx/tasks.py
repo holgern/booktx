@@ -8,6 +8,8 @@ the command layer stops reconstructing paths and submit-hints inline. The
 the project-relative display strings and submit commands the CLI prints.
 """
 
+# ruff: noqa: E501
+
 from __future__ import annotations
 
 import hashlib
@@ -25,7 +27,7 @@ from booktx.config import (
 )
 from booktx.io_utils import write_json_text_atomic, write_text_atomic
 from booktx.models import TranslationTask, TranslationTaskRecord
-from booktx.versioning import resolve_current_version
+from booktx.versioning import canonical_json_sha256, resolve_current_version
 
 if TYPE_CHECKING:
     from booktx.status import ChapterProgress, StatusBundle
@@ -84,20 +86,35 @@ class TaskPaths:
         )
 
     def block_submit_hint(self, task_id: str, root: Path) -> str:
+        profile_part = (
+            f" --profile {self.task_json.parent.parent.name}"
+            if self.task_json.parent.parent.name != ".booktx"
+            else ""
+        )
         return (
-            f"booktx translate insert . --task-id {task_id} "
+            f"booktx translate insert .{profile_part} --task-id {task_id} "
             f"--file {project_relative(self.ingest_block, root)} --format block"
         )
 
     def json_submit_hint(self, task_id: str, root: Path) -> str:
+        profile_part = (
+            f" --profile {self.task_json.parent.parent.name}"
+            if self.task_json.parent.parent.name != ".booktx"
+            else ""
+        )
         return (
-            f"booktx translate insert . --task-id {task_id} "
+            f"booktx translate insert .{profile_part} --task-id {task_id} "
             f"--json-file {project_relative(self.ingest_json, root)}"
         )
 
     def block_stdin_submit_hint(self, task_id: str) -> str:
+        profile_part = (
+            f" --profile {self.task_json.parent.parent.name}"
+            if self.task_json.parent.parent.name != ".booktx"
+            else ""
+        )
         return (
-            f"booktx translate insert . --task-id {task_id} "
+            f"booktx translate insert .{profile_part} --task-id {task_id} "
             "--stdin --format block <<'BOOKTX'"
         )
 
@@ -129,6 +146,7 @@ def write_ingest_template(project: Project, task: TranslationTask) -> Path:
         return path
     payload = {
         "schema_version": 2,
+        "profile": task.profile or None,
         "task_id": task.task_id,
         "translation_version": task.translation_version,
         "records": [{"id": record.id, "target": ""} for record in task.records],
@@ -153,13 +171,18 @@ def write_block_ingest_template(project: Project, task: TranslationTask) -> Path
     source_display = project_relative(paths.source_block, project.root)
     block_display = project_relative(path, project.root)
     submit_hint = (
-        f"booktx translate insert . --task-id {task.task_id} "
+        f"booktx translate insert ."
+        f"{f' --profile {task.profile}' if task.profile else ''} --task-id {task.task_id} "
         f"--file {block_display} --format block"
     )
     headers = [
         "# booktx block submission",
+        f"# profile: {task.profile or 'none'}",
+        f"# target: {task.target_locale or task.target_language}",
         f"# task: {task.task_id}",
         f"# translation_version: {task.translation_version or 'none'}",
+        f"# context_sha256: {task.context_sha256 or ''}",
+        f"# source_sha256: {task.source_sha256 or ''}",
         f"# source: {source_display}",
         f"# submit: {submit_hint}",
         "",
@@ -179,6 +202,8 @@ def write_task_source_block(project: Project, task: TranslationTask) -> Path:
     if path.exists():
         return path
     parts = [
+        f"# profile: {task.profile or 'none'}",
+        f"# target: {task.target_locale or task.target_language}",
         f"# task: {task.task_id}",
         f"# chapter: {task.chapter_id} {task.chapter_title}".rstrip(),
         f"# unit: {task.unit}",
@@ -221,11 +246,21 @@ def create_translation_task(
         unit=unit,  # type: ignore[arg-type]
         chapter_id=chapter.chapter_id,
         chapter_title=chapter.title,
+        profile=project.profile or "",
         source_language=project.config.source_language,
         target_language=project.config.target_language,
+        target_locale=project.config.target_locale or project.config.target_language,
         translation_version=translation_version,
         context_sha256=context_sha256,
         source_sha256=source_sha256,
+        profile_config_sha256=(
+            canonical_json_sha256(project.profile_config.model_dump(mode="json"))
+            if project.profile_config is not None
+            else None
+        ),
+        source_config_sha256=canonical_json_sha256(
+            project.source_config.model_dump(mode="json")
+        ),
         source_words=sum(
             source_by_id[record_id].source_words for record_id in record_ids
         ),

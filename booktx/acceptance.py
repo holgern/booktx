@@ -26,6 +26,8 @@ intentionally not produced here so the service is unit-testable without
 Typer/Rich.
 """
 
+# ruff: noqa: E501
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -148,6 +150,24 @@ def _resolved_submission_version(
     return current_version_ref
 
 
+def _validate_task_profile(
+    proj: Project,
+    task: TranslationTask | None,
+    submission_profile: str | None,
+) -> None:
+    selected = proj.profile or ""
+    if task is not None and task.profile and task.profile != selected:
+        raise _err(
+            "task_profile_mismatch",
+            f"task {task.task_id} belongs to profile {task.profile}, but selected profile is {selected or '<none>'}",
+        )
+    if submission_profile and submission_profile != selected:
+        raise _err(
+            "submission_profile_mismatch",
+            f"submission profile {submission_profile} does not match selected profile {selected or '<none>'}",
+        )
+
+
 def _validate_submitted(
     proj: Project,
     bundle: StatusBundle,
@@ -233,6 +253,7 @@ def accept_translation_records(
     bundle: StatusBundle,
     task: TranslationTask | None = None,
     submission_translation_version: str | None = None,
+    submission_profile: str | None = None,
     enforce_task_version: bool = False,
 ) -> AcceptResult:
     """Validate and atomically persist a batch of accepted records.
@@ -248,6 +269,8 @@ def accept_translation_records(
     """
     if not submitted:
         raise _err("empty_submission", "no records to accept")
+
+    _validate_task_profile(proj, task, submission_profile)
 
     if enforce_task_version:
         version_ref = _resolved_submission_version(
@@ -304,6 +327,7 @@ def accept_one_record(
     bundle: StatusBundle,
     task: TranslationTask | None = None,
     submission_translation_version: str | None = None,
+    submission_profile: str | None = None,
     enforce_task_version: bool = False,
 ) -> AcceptResult:
     """Validate and persist a single accepted record.
@@ -320,5 +344,6 @@ def accept_one_record(
         bundle=bundle,
         task=task,
         submission_translation_version=submission_translation_version,
+        submission_profile=submission_profile,
         enforce_task_version=enforce_task_version,
     )

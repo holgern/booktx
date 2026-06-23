@@ -12,6 +12,8 @@ Commands (see ``booktx_coding_agent_start.md``)::
 booktx never translates text; it extracts, validates, and rebuilds.
 """
 
+# ruff: noqa: E501
+
 from __future__ import annotations
 
 import json
@@ -36,17 +38,24 @@ from booktx.chapters import detect_chapters, load_chapter_map, write_chapter_map
 from booktx.chunking import RECORD_ID_SCHEME, segmenter_metadata, spans_to_chunks
 from booktx.config import (
     BooktxError,
+    _err,
+    create_profile,
     find_source_file,
     identity_path,
     init_project,
     load_identity,
     load_manifest,
+    load_profile_config,
+    load_profile_project,
     load_project,
+    load_source_project,
     load_translation_store,
     load_translation_task,
     load_translation_version_ledger,
+    migrate_current_project,
     project_source_sha256,
     protected_terms_sha256,
+    select_profile,
     translation_ingest_block_path,
     translation_ingest_path,
     translation_store_path,
@@ -94,7 +103,9 @@ from booktx.progress import (
 from booktx.record_refs import parse_record_ref, resolve_record_range
 from booktx.status import (
     ChapterProgress,
+    ProfilesOverview,
     StatusBundle,
+    build_profiles_overview,
     build_status_snapshot,
 )
 from booktx.submissions import resolve_submission
@@ -141,8 +152,11 @@ translate_app = typer.Typer(help="Command-based translation workflow.")
 actor_app = typer.Typer(help="Manage translation actor defaults.")
 harness_app = typer.Typer(help="Manage translation harness defaults.")
 model_app = typer.Typer(help="Manage translation model defaults.")
-identity_app = typer.Typer(help="Inspect resolved translation identity and project state.")
+identity_app = typer.Typer(
+    help="Inspect resolved translation identity and project state."
+)
 version_app = typer.Typer(help="Inspect and manage translation version tracks.")
+profile_app = typer.Typer(help="Manage isolated translation profiles.")
 app.add_typer(context_app, name="context")
 app.add_typer(translate_app, name="translate")
 app.add_typer(translate_app, name="translation")
@@ -151,6 +165,7 @@ app.add_typer(harness_app, name="harness")
 app.add_typer(model_app, name="model")
 app.add_typer(identity_app, name="identity")
 app.add_typer(version_app, name="version")
+app.add_typer(profile_app, name="profile")
 
 
 def _die(message: str, code: int = 1) -> None:
@@ -203,9 +218,7 @@ def _resolve_project_value_args(
     """Accept VALUE, VALUE PROJECT_DIR, or PROJECT_DIR VALUE."""
     if project_dir is not None:
         if arg2 is not None:
-            _die(
-                f"--project cannot be combined with a second positional {value_name}"
-            )
+            _die(f"--project cannot be combined with a second positional {value_name}")
         return project_dir.expanduser(), arg1
 
     if arg2 is None:
@@ -213,8 +226,12 @@ def _resolve_project_value_args(
 
     p1 = Path(arg1).expanduser()
     p2 = Path(arg2).expanduser()
-    p1_is_project = (p1 / ".booktx" / "config.toml").is_file()
-    p2_is_project = (p2 / ".booktx" / "config.toml").is_file()
+    p1_is_project = (p1 / ".booktx" / "config.toml").is_file() or (
+        p1 / ".booktx" / "source-config.toml"
+    ).is_file()
+    p2_is_project = (p2 / ".booktx" / "config.toml").is_file() or (
+        p2 / ".booktx" / "source-config.toml"
+    ).is_file()
 
     if p1_is_project and not p2_is_project:
         return p1, arg2
@@ -225,7 +242,7 @@ def _resolve_project_value_args(
 
 def _context_identity_payload(proj) -> dict[str, Any]:
     path = context_path(proj)
-    rel_path = ".booktx/context.json"
+    rel_path = _project_relative(path, proj.root)
     if not path.is_file():
         return {
             "path": rel_path,
@@ -256,9 +273,7 @@ def _context_identity_payload(proj) -> dict[str, Any]:
         "path": rel_path,
         "exists": True,
         "ready": context.ready,
-        "sha256": canonical_json_sha256(
-            context.model_dump(mode="json", by_alias=True)
-        ),
+        "sha256": canonical_json_sha256(context.model_dump(mode="json", by_alias=True)),
         "status": "ready" if context.ready else "not_ready",
     }
 
@@ -338,8 +353,18 @@ def _render_identity_human(payload: dict[str, Any]) -> None:
         ("context", f"{context_state} {context_payload['path']}"),
         ("context_sha256", context_payload["sha256"] or "none"),
         ("source_sha256", payload["source_sha256"] or "none"),
-        ("store_version", store_payload["version"] if store_payload["version"] is not None else "none"),
-        ("store_records", store_payload["record_count"] if store_payload["record_count"] is not None else "none"),
+        (
+            "store_version",
+            store_payload["version"]
+            if store_payload["version"] is not None
+            else "none",
+        ),
+        (
+            "store_records",
+            store_payload["record_count"]
+            if store_payload["record_count"] is not None
+            else "none",
+        ),
     ]
     width = max(len(label) for label, _ in rows)
     console.print(f"booktx identity: {payload['project_dir']}", soft_wrap=True)
@@ -347,8 +372,8 @@ def _render_identity_human(payload: dict[str, Any]) -> None:
         console.print(f"{label + ':':<{width + 2}} {value}", soft_wrap=True)
 
 
-def _print_identity(project_dir: Path, *, as_json: bool) -> None:
-    proj = _load_project_or_exit(project_dir)
+def _print_identity(project_dir: Path, *, profile: str | None, as_json: bool) -> None:
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     payload = _identity_payload(proj)
     if as_json:
         console.print_json(json.dumps(payload, ensure_ascii=False))
@@ -376,25 +401,36 @@ def version_root(ctx: typer.Context) -> None:
 @app.command(name="whoami")
 def whoami(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     """Show resolved translation identity and project status."""
-    _print_identity(project_dir, as_json=as_json)
+    _print_identity(project_dir, profile=profile, as_json=as_json)
 
 
 @identity_app.command(name="whoami")
 def identity_whoami(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     """Alias for the top-level whoami command."""
-    _print_identity(project_dir, as_json=as_json)
+    _print_identity(project_dir, profile=profile, as_json=as_json)
 
 
 @actor_app.command(name="whoami")
-def actor_whoami(project_dir: Path = typer.Argument(..., help="Project directory.")) -> None:
+def actor_whoami(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+) -> None:
     """Show the resolved actor default for translation versioning."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     console.print(_resolved_identity(proj).actor)
 
 
@@ -407,30 +443,41 @@ def actor_set(
         None, help="Optional project directory or actor value."
     ),
     project: Path | None = typer.Option(None, "--project", help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
 ) -> None:
     """Persist the actor default used for new version tracks."""
     project_dir, actor = _resolve_project_value_args(
         arg1, arg2, value_name="actor", project_dir=project
     )
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     identity = _write_identity_defaults(proj, actor=actor)
     console.print(identity.actor)
 
 
 @actor_app.command(name="clear")
-def actor_clear(project_dir: Path = typer.Argument(..., help="Project directory.")) -> None:
+def actor_clear(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+) -> None:
     """Clear the stored actor default back to the local fallback."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     identity = _clear_identity_field(proj, "actor")
     console.print(identity.actor)
 
 
 @harness_app.command(name="whoami")
 def harness_whoami(
-    project_dir: Path = typer.Argument(..., help="Project directory.")
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
 ) -> None:
     """Show the resolved harness default for translation versioning."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     console.print(_resolved_identity(proj).harness)
 
 
@@ -443,28 +490,41 @@ def harness_set(
         None, help="Optional project directory or harness value."
     ),
     project: Path | None = typer.Option(None, "--project", help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
 ) -> None:
     """Persist the harness default used for new version tracks."""
     project_dir, harness = _resolve_project_value_args(
         arg1, arg2, value_name="harness", project_dir=project
     )
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     identity = _write_identity_defaults(proj, harness=harness)
     console.print(identity.harness)
 
 
 @harness_app.command(name="clear")
-def harness_clear(project_dir: Path = typer.Argument(..., help="Project directory.")) -> None:
+def harness_clear(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+) -> None:
     """Clear the stored harness default back to the local fallback."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     identity = _clear_identity_field(proj, "harness")
     console.print(identity.harness)
 
 
 @model_app.command(name="whoami")
-def model_whoami(project_dir: Path = typer.Argument(..., help="Project directory.")) -> None:
+def model_whoami(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+) -> None:
     """Show the resolved model default for translation versioning."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     console.print(_resolved_identity(proj).model)
 
 
@@ -477,20 +537,28 @@ def model_set(
         None, help="Optional project directory or model value."
     ),
     project: Path | None = typer.Option(None, "--project", help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
 ) -> None:
     """Persist the model default used for new version tracks."""
     project_dir, model = _resolve_project_value_args(
         arg1, arg2, value_name="model", project_dir=project
     )
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     identity = _write_identity_defaults(proj, model=model)
     console.print(identity.model)
 
 
 @model_app.command(name="clear")
-def model_clear(project_dir: Path = typer.Argument(..., help="Project directory.")) -> None:
+def model_clear(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+) -> None:
     """Clear the stored model default back to the local fallback."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     identity = _clear_identity_field(proj, "model")
     console.print(identity.model)
 
@@ -498,12 +566,18 @@ def model_clear(project_dir: Path = typer.Argument(..., help="Project directory.
 @version_app.command(name="current")
 def version_current(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     """Show the current ledger-wide active version."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     ledger = load_translation_version_ledger(proj)
-    payload = {"active_version": ledger.active_version, "track_count": len(ledger.tracks)}
+    payload = {
+        "active_version": ledger.active_version,
+        "track_count": len(ledger.tracks),
+    }
     if as_json:
         console.print_json(json.dumps(payload, ensure_ascii=False))
         return
@@ -513,23 +587,33 @@ def version_current(
 @version_app.command(name="list")
 def version_list(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
 ) -> None:
     """List all known major tracks and subversions."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     ledger = load_translation_version_ledger(proj)
     if not ledger.tracks:
         console.print("no versions")
         return
     for track_id in sorted(ledger.tracks, key=int):
         track = ledger.tracks[track_id]
-        active_marker = "*" if ledger.active_version and ledger.active_version.startswith(f"{track.version}.") else " "
+        active_marker = (
+            "*"
+            if ledger.active_version
+            and ledger.active_version.startswith(f"{track.version}.")
+            else " "
+        )
         console.print(
             f"{active_marker} track {track.version}: {track.actor} / {track.harness} / "
             f"{track.model}{f' [{track.label}]' if track.label else ''}"
         )
         for sub_id in sorted(track.subversions, key=int):
             sub = track.subversions[sub_id]
-            current_marker = " (active)" if ledger.active_version == sub.version_ref else ""
+            current_marker = (
+                " (active)" if ledger.active_version == sub.version_ref else ""
+            )
             console.print(
                 f"    {sub.version_ref}  {sub.context_sha256}{current_marker}"
             )
@@ -539,9 +623,12 @@ def version_list(
 def version_select(
     project_dir: Path = typer.Argument(..., help="Project directory."),
     version_ref: str = typer.Argument(..., help="Version ref such as 1.2."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
 ) -> None:
     """Select the ledger-wide active version."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     ledger = select_active_version(proj, version_ref)
     console.print(ledger.active_version or "none")
 
@@ -551,9 +638,12 @@ def version_set_label(
     project_dir: Path = typer.Argument(..., help="Project directory."),
     major_version: int = typer.Argument(..., help="Major track number."),
     label: str = typer.Argument(..., help="Human label for the track."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
 ) -> None:
     """Set the label for one major version track."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     ledger = set_track_label(proj, major_version, label)
     console.print(ledger.tracks[str(major_version)].label or "")
 
@@ -562,9 +652,12 @@ def version_set_label(
 def version_fork_context(
     project_dir: Path = typer.Argument(..., help="Project directory."),
     note: str | None = typer.Option(None, "--note", help="Reason for the forced fork."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
 ) -> None:
     """Force a new subversion for the current track even when context hash matches."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     resolution = fork_current_context(proj, note=note)
     console.print(resolution.version_ref)
 
@@ -573,10 +666,13 @@ def version_fork_context(
 def version_show(
     project_dir: Path = typer.Argument(..., help="Project directory."),
     selector: str = typer.Argument(..., help="Track number or dotted version ref."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     """Show one major track or one specific dotted version entry."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     ledger = load_translation_version_ledger(proj)
     if "." in selector:
         track, sub = lookup_version(ledger, selector)
@@ -603,7 +699,9 @@ def version_show(
             "harness": track.harness,
             "model": track.model,
             "label": track.label,
-            "subversions": [sub.model_dump(mode="json") for sub in track.subversions.values()],
+            "subversions": [
+                sub.model_dump(mode="json") for sub in track.subversions.values()
+            ],
         }
     if as_json:
         console.print_json(json.dumps(payload, ensure_ascii=False))
@@ -611,12 +709,304 @@ def version_show(
     console.print_json(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+# --- profile ------------------------------------------------------------------
+
+
+def _render_profiles_overview_human(overview: ProfilesOverview) -> None:
+    console.print(f"project: {overview.project}")
+    if overview.source:
+        console.print(f"source: {overview.source}")
+    if overview.source_records:
+        console.print(f"source records: {overview.source_records}")
+    if not overview.profiles:
+        console.print("profiles: none")
+        return
+    console.print("profiles:")
+    for item in overview.profiles:
+        marker = "*" if item.active else " "
+        coverage = (
+            f"translated={item.translated_records}/{item.total_records}"
+            if item.total_records
+            else "translated=0/0"
+        )
+        console.print(
+            f"  {marker} {item.profile}   target={item.target_locale or item.target_language}  "
+            f"model={item.model or 'human'}  {coverage}"
+        )
+    if overview.active_profile:
+        console.print()
+        console.print(f"active profile: {overview.active_profile}")
+
+
+def _profile_detail_payload(project_dir: Path, profile_name: str) -> dict[str, Any]:
+    profile_project = load_profile_project(project_dir, profile_name)
+    profile_cfg = load_profile_config(project_dir, profile_name)
+    context = load_context(profile_project)
+    active_version = load_translation_version_ledger(profile_project).active_version
+    records_translated = 0
+    records_total = 0
+    chapters_complete = 0
+    chapters_total = 0
+    if profile_project.chunks():
+        bundle = build_status_snapshot(
+            profile_project,
+            context_exists=context is not None,
+            context_ready=bool(context and context.ready),
+        )
+        records_translated = bundle.snapshot.totals.records_translated
+        records_total = bundle.snapshot.totals.records_total
+        chapters_complete = bundle.snapshot.totals.chapters_complete
+        chapters_total = bundle.snapshot.totals.chapters_total
+    return {
+        "profile": profile_name,
+        "path": _project_relative(profile_project.profile_dir, profile_project.root)
+        if profile_project.profile_dir is not None
+        else "",
+        "target_language": profile_cfg.target_language,
+        "target_locale": profile_cfg.target_locale or profile_cfg.target_language,
+        "output_filename": profile_cfg.output_filename,
+        "actor": profile_cfg.identity.actor,
+        "harness": profile_cfg.identity.harness,
+        "model": profile_cfg.identity.model,
+        "context_ready": bool(context and context.ready),
+        "active_version": active_version,
+        "records_translated": records_translated,
+        "records_total": records_total,
+        "chapters_complete": chapters_complete,
+        "chapters_total": chapters_total,
+    }
+
+
+@profile_app.command(name="create")
+def profile_create_cmd(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile_name: str = typer.Argument(..., help="Translation profile name."),
+    target: str = typer.Option(..., "--target", help="Target language code, e.g. de."),
+    target_locale: str | None = typer.Option(
+        None, "--target-locale", help="Target locale code, e.g. de-DE."
+    ),
+    model: str | None = typer.Option(None, "--model", help="Profile model label."),
+    harness: str | None = typer.Option(
+        None, "--harness", help="Profile harness label."
+    ),
+    actor: str | None = typer.Option(None, "--actor", help="Profile actor label."),
+    output_filename: str | None = typer.Option(
+        None, "--output-filename", help="Optional output filename override."
+    ),
+    select: bool = typer.Option(False, "--select", help="Select the created profile."),
+) -> None:
+    try:
+        project = create_profile(
+            project_dir,
+            profile_name,
+            target_language=target,
+            target_locale=target_locale,
+            actor=actor,
+            harness=harness,
+            model=model,
+            output_filename=output_filename,
+            select=select,
+        )
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
+        return
+    console.print(f"created profile: {project.profile}")
+    if select:
+        console.print(f"selected active profile: {project.profile}")
+
+
+@profile_app.command(name="list")
+def profile_list_cmd(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    try:
+        project = load_source_project(project_dir)
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
+        return
+    overview = build_profiles_overview(project)
+    if as_json:
+        console.print_json(
+            json.dumps(overview.model_dump(mode="json"), ensure_ascii=False)
+        )
+        return
+    _render_profiles_overview_human(overview)
+
+
+@profile_app.command(name="select")
+def profile_select_cmd(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile_name: str = typer.Argument(..., help="Translation profile name."),
+) -> None:
+    try:
+        project = select_profile(project_dir, profile_name)
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
+        return
+    console.print(project.profile or profile_name)
+
+
+@profile_app.command(name="show")
+def profile_show_cmd(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile_name: str = typer.Argument(..., help="Translation profile name."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    try:
+        payload = _profile_detail_payload(project_dir, profile_name)
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
+        return
+    if as_json:
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
+    console.print(f"profile: {payload['profile']}")
+    console.print(f"path: {payload['path']}")
+    console.print(f"target: {payload['target_locale']}")
+    console.print(f"model: {payload['model']}")
+    console.print(f"context: {'ready' if payload['context_ready'] else 'not ready'}")
+    console.print(f"active version: {payload['active_version'] or 'none'}")
+    console.print(
+        f"records translated: {payload['records_translated']}/{payload['records_total']}"
+    )
+    console.print(
+        f"chapters complete: {payload['chapters_complete']}/{payload['chapters_total']}"
+    )
+
+
+@profile_app.command(name="compare")
+def profile_compare_cmd(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profiles: str = typer.Option(
+        ..., "--profiles", help="Comma-separated profile names."
+    ),
+    record: str = typer.Option(
+        ..., "--record", help="Record ref or canonical record id."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    try:
+        source_project = load_source_project(project_dir)
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
+        return
+    requested = [item.strip() for item in profiles.split(",") if item.strip()]
+    if len(requested) < 2:
+        _die("--profiles must contain at least two profile names")
+        return
+    canonical_id = parse_record_ref(record).canonical_id
+    source_by_id = {
+        item.record_id: item for item in load_source_records(source_project)
+    }
+    source_record = source_by_id.get(canonical_id)
+    if source_record is None:
+        _die(f"unknown source record id: {canonical_id}")
+        return
+    comparisons: list[dict[str, Any]] = []
+    for profile_name in requested:
+        try:
+            profile_project = load_profile_project(project_dir, profile_name)
+        except BooktxError as exc:
+            _handle_booktx_error(exc)
+            return
+        store = load_translation_store(profile_project)
+        stored = store.records.get(canonical_id)
+        candidate = active_candidate(stored) if stored is not None else None
+        comparisons.append(
+            {
+                "profile": profile_name,
+                "target_language": profile_project.config.target_language,
+                "target_locale": profile_project.config.target_locale,
+                "active_version": stored.active_version if stored is not None else None,
+                "target": candidate.target if candidate is not None else None,
+                "status": candidate.status if candidate is not None else None,
+            }
+        )
+    payload = {
+        "record_ref": canonical_id,
+        "source": source_record.source,
+        "comparisons": comparisons,
+    }
+    if as_json:
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
+    console.print(f"record: {canonical_id}")
+    console.print(f"source: {source_record.source}")
+    for item in comparisons:
+        console.print(
+            f"{item['profile']} ({item['target_locale'] or item['target_language']}): "
+            f"{item['target'] or '<missing>'}"
+        )
+
+
+@profile_app.command(name="migrate-current")
+def profile_migrate_current_cmd(
+    project_dir: Path = typer.Argument(..., help="Legacy project directory."),
+    profile_name: str = typer.Argument(..., help="Target translation profile name."),
+    target: str | None = typer.Option(
+        None, "--target", help="Override target language."
+    ),
+    target_locale: str | None = typer.Option(
+        None, "--target-locale", help="Target locale code, e.g. de-DE."
+    ),
+    actor: str | None = typer.Option(None, "--actor", help="Profile actor label."),
+    harness: str | None = typer.Option(
+        None, "--harness", help="Profile harness label."
+    ),
+    model: str | None = typer.Option(None, "--model", help="Profile model label."),
+    select: bool = typer.Option(False, "--select", help="Select the migrated profile."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print the migration plan only."
+    ),
+) -> None:
+    try:
+        payload = migrate_current_project(
+            project_dir,
+            profile_name,
+            target_language=target,
+            target_locale=target_locale,
+            actor=actor,
+            harness=harness,
+            model=model,
+            select=select,
+            dry_run=dry_run,
+        )
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
+        return
+    if dry_run:
+        console.print(
+            f"dry-run: would migrate legacy project to profile {profile_name}"
+        )
+        for move in payload["moves"]:
+            move_dict = move
+            console.print(f"{move_dict['source']} -> {move_dict['destination']}")
+        return
+    console.print(f"migrated profile: {payload['profile']}")
+    if "migration_manifest" in payload:
+        console.print(f"migration manifest: {payload['migration_manifest']}")
+    if select:
+        console.print(f"selected active profile: {profile_name}")
+    console.print(f"next: booktx status {project_dir} --profile {profile_name}")
+    console.print(
+        f"next: booktx translate next {project_dir} --profile {profile_name} --unit batch --max-words 500 --format block"
+    )
+
+
 # --- context -----------------------------------------------------------------
 
 
-def _load_project_or_exit(project_dir: Path):
+def _load_project_or_exit(
+    project_dir: Path,
+    *,
+    profile: str | None = None,
+    require_profile: bool = False,
+):
     try:
-        return load_project(project_dir)
+        return load_project(
+            project_dir, profile=profile, require_profile=require_profile
+        )
     except BooktxError as exc:
         _handle_booktx_error(exc)
         raise typer.Exit(code=1) from exc
@@ -699,7 +1089,9 @@ def _ordered_source_records(proj):
     return load_source_records(proj)
 
 
-def _ledger_metadata_for_version(proj, version_ref: str | None) -> dict[str, Any] | None:
+def _ledger_metadata_for_version(
+    proj, version_ref: str | None
+) -> dict[str, Any] | None:
     if not version_ref:
         return None
     ledger = load_translation_version_ledger(proj)
@@ -721,7 +1113,9 @@ def _ledger_metadata_for_version(proj, version_ref: str | None) -> dict[str, Any
     }
 
 
-def _store_record_payload(proj, record_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+def _store_record_payload(
+    proj, record_id: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
     ordered = _ordered_source_records(proj)
     by_id = {record.record_id: record for record in ordered}
     canonical_id = parse_record_ref(record_id).canonical_id
@@ -762,6 +1156,9 @@ def _store_record_payload(proj, record_id: str) -> tuple[dict[str, Any], dict[st
 @context_app.command(name="init")
 def context_init(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
     non_interactive: bool = typer.Option(
         True, "--non-interactive/--interactive", help="Create open questions or prompt."
     ),
@@ -780,7 +1177,7 @@ def context_init(
     """Create .booktx/context.json and rendered context.md."""
     from booktx.context import load_seed_template
 
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     existing = None if force else load_context(proj)
     if existing is not None:
         _guard_md_safe_or_die(proj, existing)
@@ -822,16 +1219,19 @@ def context_init(
     _guard_md_safe_or_die(proj, ctx, allow_discard_md_only=force)
     write_context(proj, ctx)
     write_context_markdown(proj, ctx)
-    console.print(f"wrote {proj.booktx_dir / 'context.json'}")
+    console.print(f"wrote {context_path(proj)}")
     console.print(f"wrote {context_markdown_path(proj)}")
 
 
 @context_app.command(name="questions")
 def context_questions(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
 ) -> None:
     """List context questions."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     ctx = _load_context_or_exit(proj)
     for q in ctx.questions:
         marker = "required" if q.required else "optional"
@@ -842,9 +1242,12 @@ def context_questions(
 @context_app.command(name="status")
 def context_status(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
 ) -> None:
     """Show translation context readiness."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     ctx = _load_context_or_exit(proj)
     open_required = _open_required_questions(ctx)
     open_total = [q for q in ctx.questions if q.status == "open"]
@@ -858,6 +1261,9 @@ def context_status(
 @context_app.command(name="render")
 def context_render(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
     write: bool = typer.Option(False, "--write", help="Write .booktx/context.md."),
     stdout: bool = typer.Option(
         False, "--stdout", help="Print rendered Markdown without writing."
@@ -875,7 +1281,7 @@ def context_render(
     ``--write`` persists, but refuses when drift analysis says the write is
     unsafe unless ``--force-discard-md-only`` is also passed.
     """
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     ctx = _load_context_or_exit(proj)
     rendered = render_context_markdown(ctx)
     if stdout:
@@ -913,9 +1319,12 @@ def context_answer(
     project_dir: Path = typer.Argument(..., help="Project directory."),
     question_id: str = typer.Argument(..., help="Question id, e.g. Q001."),
     text: str = typer.Option(..., "--text", help="Answer text."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
 ) -> None:
     """Answer one context question non-interactively."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     ctx = _load_context_or_exit(proj)
     for q in ctx.questions:
         if q.id == question_id:
@@ -943,11 +1352,14 @@ def context_add_term(
     enforce: str = typer.Option(
         "warn", "--enforce", help="Enforcement: off, warn, or error."
     ),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
 ) -> None:
     """Add or update a glossary entry."""
     if enforce not in {"off", "warn", "error"}:
         _die("--enforce must be off, warn, or error")
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     ctx = _load_context_or_exit(proj)
     forbidden = forbid or []
     for entry in ctx.glossary:
@@ -986,9 +1398,12 @@ def context_mark_ready(
     force: bool = typer.Option(
         False, "--force", help="Mark ready even with open required questions."
     ),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
 ) -> None:
     """Mark context ready once required questions are answered."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     ctx = _load_context_or_exit(proj)
     open_required = _open_required_questions(ctx)
     if open_required and not force:
@@ -1017,6 +1432,9 @@ def context_import_md(
         "--append-existing-lists",
         help="Append decisions and open issues for conflicting chapters.",
     ),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
 ) -> None:
     """Import chapter notes from context.md into context.json.
 
@@ -1028,7 +1446,7 @@ def context_import_md(
     """
     if replace_existing and append_existing_lists:
         _die("--replace-existing and --append-existing-lists are mutually exclusive")
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     ctx = _load_context_or_exit(proj)
     md_path = context_markdown_path(proj)
     if not md_path.is_file():
@@ -1091,6 +1509,9 @@ def context_chapter_note(
         "--force-discard-md-only",
         help="Overwrite despite unsafe Markdown-only notes.",
     ),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
 ) -> None:
     """Create or update one chapter note in context.json.
 
@@ -1098,7 +1519,7 @@ def context_chapter_note(
     completed chapter. Decisions and open issues append by default; pass
     ``--replace-decisions`` or ``--replace-open-issues`` to replace a list.
     """
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     ctx = _load_context_or_exit(proj)
     try:
         ensure_context_markdown_safe_to_overwrite(
@@ -1136,8 +1557,11 @@ def context_chapter_note(
 @app.command()
 def init(
     project_dir: Path = typer.Argument(..., help="Directory to create the project in."),
-    target: str = typer.Option(
-        ..., "--target", "-t", help="Target language code, e.g. de."
+    target: str | None = typer.Option(
+        None, "--target", "-t", help="Optional target language code, e.g. de."
+    ),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Optional profile name to create when --target is used."
     ),
     source_lang: str = typer.Option(
         "en",
@@ -1159,7 +1583,8 @@ def init(
     try:
         proj = init_project(
             project_dir,
-            target_language=target,
+            target_language=target or "",
+            profile_name=profile,
             source_language=source_lang,
             source_file=source,
             chunk_size=chunk_size,
@@ -1168,9 +1593,15 @@ def init(
         _handle_booktx_error(exc)
         return
 
-    console.print(f"[green]Created project:[/green] {proj.root}")
+    if target:
+        console.print(f"[green]Initialized source project:[/green] {proj.root}")
+        console.print(f"[green]Created profile:[/green] {proj.profile}")
+        console.print(f"[green]Selected active profile:[/green] {proj.profile}")
+    else:
+        console.print(f"[green]Initialized source project:[/green] {proj.root}")
     console.print(f"  source_language: {proj.config.source_language}")
-    console.print(f"  target_language: {proj.config.target_language}")
+    if proj.config.target_language:
+        console.print(f"  target_language: {proj.config.target_language}")
     console.print(f"  format:          {proj.config.format}")
     if proj.config.source_file:
         console.print(f"  source_file:     {proj.config.source_file}")
@@ -1386,7 +1817,9 @@ def extract(
     from booktx.config import sha256_path as _sha256
     from booktx.io_utils import write_text_atomic
 
-    current_source_sha256 = extraction.source_sha256 if fmt == "epub" else _sha256(source)
+    current_source_sha256 = (
+        extraction.source_sha256 if fmt == "epub" else _sha256(source)
+    )
     names_sha256 = protected_terms_sha256(names)
     chunk_texts = _chunk_json_texts(chunks)
     warning_message = _guard_extract_repeatability_and_rechunk(
@@ -1398,9 +1831,7 @@ def extract(
     )
 
     proj.booktx_dir.mkdir(parents=True, exist_ok=True)
-    tmp_chunks = Path(
-        tempfile.mkdtemp(prefix=".chunks.", dir=proj.booktx_dir)
-    )
+    tmp_chunks = Path(tempfile.mkdtemp(prefix=".chunks.", dir=proj.booktx_dir))
     try:
         for filename, text in chunk_texts.items():
             write_text_atomic(tmp_chunks / filename, text)
@@ -1521,6 +1952,8 @@ def _require_no_source_drift(proj) -> None:
             "source file has changed since last extraction; "
             "run 'booktx extract' to update chunks before translating"
         )
+
+
 def _coverage_status(*, total: int, translated: int, has_error: bool) -> str:
     """Backward-compatible alias for :func:`booktx.status.coverage_status`."""
     from booktx.status import coverage_status
@@ -1530,6 +1963,7 @@ def _coverage_status(*, total: int, translated: int, has_error: bool) -> str:
 
 def _format_chunk_span(chunk_ids: list[str]) -> str:
     from booktx.rendering import format_chunk_span
+
     return format_chunk_span(chunk_ids)
 
 
@@ -1563,7 +1997,6 @@ def _project_status_snapshot(proj) -> StatusBundle:
     return build_status_snapshot(
         proj, context_exists=context_exists, context_ready=context_ready
     )
-
 
 
 def _selected_chapter(
@@ -1654,22 +2087,33 @@ def _create_translation_task(
         proj, bundle, chapter, unit=unit, record_ids=record_ids
     )
 
+
 def _print_status_human(bundle, chapter):
     from booktx.rendering import print_status_human
+
     print_status_human(bundle, chapter)
 
+
 def _print_translate_task(
-    task, proj, *, as_json, output_format,
-    show_sources=False, show_template=False,
+    task,
+    proj,
+    *,
+    as_json,
+    output_format,
+    show_sources=False,
+    show_template=False,
 ):
     from booktx.rendering import print_translate_task
+
     print_translate_task(
-        task, proj,
+        task,
+        proj,
         as_json=as_json,
         output_format=output_format,
         show_sources=show_sources,
         show_template=show_template,
     )
+
 
 def _load_translation_task_or_exit(proj, task_id: str) -> TranslationTask:
     task = load_translation_task(proj, task_id)
@@ -1680,7 +2124,9 @@ def _load_translation_task_or_exit(proj, task_id: str) -> TranslationTask:
 
 def _render_submission_failures(findings):
     from booktx.rendering import render_submission_failures
+
     render_submission_failures(findings)
+
 
 def _next_chapter(proj, *, print_context: bool) -> None:
     summary = _project_status_snapshot(proj)
@@ -1693,8 +2139,7 @@ def _next_chapter(proj, *, print_context: bool) -> None:
     console.print(f"chapter: {chapter.chapter_id}  {chapter.title}".rstrip())
     console.print(f"status: {chapter.status}")
     console.print(
-        "record range: "
-        f"{chapter.record_range.start}..{chapter.record_range.end}"
+        f"record range: {chapter.record_range.start}..{chapter.record_range.end}"
     )
     console.print(
         f"records: {chapter.records_translated} / "
@@ -1718,6 +2163,9 @@ def _next_chapter(proj, *, print_context: bool) -> None:
 @app.command(name="status")
 def status_cmd(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
     chapter: str | None = typer.Option(
         None, "--chapter", help="Optional chapter id to focus the report."
     ),
@@ -1725,9 +2173,18 @@ def status_cmd(
 ) -> None:
     """Report record-aware translation progress."""
     try:
-        proj = load_project(project_dir)
+        proj = load_project(project_dir, profile=profile, require_profile=False)
     except BooktxError as exc:
         _handle_booktx_error(exc)
+        return
+    if proj.layout_version == "profiles" and proj.profile is None:
+        overview = build_profiles_overview(load_source_project(project_dir))
+        if as_json:
+            console.print_json(
+                json.dumps(overview.model_dump(mode="json"), ensure_ascii=False)
+            )
+            return
+        _render_profiles_overview_human(overview)
         return
     _require_chunks(proj)
     summary = _project_status_snapshot(proj)
@@ -1746,6 +2203,9 @@ def status_cmd(
 @app.command(name="next")
 def next_cmd(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
     allow_missing_context: bool = typer.Option(
         False,
         "--allow-missing-context",
@@ -1756,11 +2216,7 @@ def next_cmd(
     ),
 ) -> None:
     """Print the next pending legacy work item and point callers at translate/*."""
-    try:
-        proj = load_project(project_dir)
-    except BooktxError as exc:
-        _handle_booktx_error(exc)
-        return
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
 
     if unit not in {"chunk", "chapter"}:
         _die("--unit must be chunk or chapter")
@@ -1792,8 +2248,12 @@ def next_cmd(
     console.print(f"{cid}\t{chunk_path}", soft_wrap=True)
     console.print(f"records remaining: {records_remaining}")
     console.print("[dim]submit with:[/dim]")
-    console.print(f"booktx translate next {project_dir} --unit chunk", soft_wrap=True)
-    console.print("booktx translate insert . --stdin")
+    profile_part = f" --profile {proj.profile}" if proj.profile else ""
+    console.print(
+        f"booktx translate next {project_dir}{profile_part} --unit chunk",
+        soft_wrap=True,
+    )
+    console.print(f"booktx translate insert .{profile_part} --stdin")
     raise typer.Exit(code=0)
 
 
@@ -1824,6 +2284,9 @@ def chapters_cmd(
 @app.command(name="next-chapter")
 def next_chapter_cmd(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
     allow_missing_context: bool = typer.Option(
         False,
         "--allow-missing-context",
@@ -1831,11 +2294,7 @@ def next_chapter_cmd(
     ),
 ) -> None:
     """Print the next incomplete chapter and all chunks it covers."""
-    try:
-        proj = load_project(project_dir)
-    except BooktxError as exc:
-        _handle_booktx_error(exc)
-        return
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     _require_chunks(proj)
     print_context = _require_ready_context(
         proj, allow_missing_context=allow_missing_context
@@ -1846,6 +2305,9 @@ def next_chapter_cmd(
 @translate_app.command(name="next")
 def translate_next(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
     chapter: str | None = typer.Option(None, "--chapter", help="Optional chapter id."),
     unit: str = typer.Option(
         "paragraph",
@@ -1880,11 +2342,7 @@ def translate_next(
     ),
 ) -> None:
     """Return the next text to translate and persist a task id."""
-    try:
-        proj = load_project(project_dir)
-    except BooktxError as exc:
-        _handle_booktx_error(exc)
-        return
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     if unit not in {"paragraph", "batch", "chunk", "chapter"}:
         _die("--unit must be paragraph, batch, chunk, or chapter")
     if output_format not in {"text", "tsv", "block"}:
@@ -1928,6 +2386,9 @@ def translate_next(
 @translate_app.command(name="insert")
 def translate_insert(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
     task_id: str | None = typer.Option(None, "--task-id", help="Optional task id."),
     stdin: bool = typer.Option(False, "--stdin", help="Read the payload from stdin."),
     record_id: str | None = typer.Option(None, "--record-id", help="Single record id."),
@@ -1954,11 +2415,7 @@ def translate_insert(
     ),
 ) -> None:
     """Accept translated text through the CLI and write the store atomically."""
-    try:
-        proj = load_project(project_dir)
-    except BooktxError as exc:
-        _handle_booktx_error(exc)
-        return
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     if input_format not in {"json", "tsv", "block"}:
         _die("--format must be json, tsv, or block")
     _require_chunks(proj)
@@ -1995,6 +2452,7 @@ def translate_insert(
             bundle=summary,
             task=task,
             submission_translation_version=parsed.translation_version,
+            submission_profile=parsed.profile,
             enforce_task_version=True,
         )
     except SubmissionValidationError as exc:
@@ -2018,20 +2476,22 @@ def translate_insert(
         )
         console.print(
             "next: "
-            f"booktx translate next . --chapter {result.chapter_id} --unit batch "
+            f"booktx translate next ."
+            f"{f' --profile {proj.profile}' if proj.profile else ''} "
+            f"--chapter {result.chapter_id} --unit batch "
             "--max-words 500 --format block"
         )
+
 
 @translate_app.command(name="import-legacy")
 def translate_import_legacy(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
 ) -> None:
     """Import valid legacy translated chunk files into the translation store."""
-    try:
-        proj = load_project(project_dir)
-    except BooktxError as exc:
-        _handle_booktx_error(exc)
-        return
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     _require_chunks(proj)
     store = load_translation_store(proj)
     resolution = resolve_current_version(
@@ -2083,14 +2543,23 @@ def translate_import_legacy(
 @translate_app.command(name="migrate-store")
 def translate_migrate_store(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
     write: bool = typer.Option(False, "--write", help="Rewrite the store as v2."),
-    actor: str | None = typer.Option(None, "--actor", help="Actor for migrated ledger."),
+    actor: str | None = typer.Option(
+        None, "--actor", help="Actor for migrated ledger."
+    ),
     harness: str | None = typer.Option(
         None, "--harness", help="Harness for migrated ledger."
     ),
-    model: str | None = typer.Option(None, "--model", help="Model for migrated ledger."),
+    model: str | None = typer.Option(
+        None, "--model", help="Model for migrated ledger."
+    ),
     context_label: str | None = typer.Option(
-        None, "--context-label", help="Optional label stored on the migrated subversion."
+        None,
+        "--context-label",
+        help="Optional label stored on the migrated subversion.",
     ),
     allow_missing_source: bool = typer.Option(
         False,
@@ -2099,11 +2568,7 @@ def translate_migrate_store(
     ),
 ) -> None:
     """Inspect or rewrite a legacy translation-store.json into the v2 schema."""
-    try:
-        proj = load_project(project_dir)
-    except BooktxError as exc:
-        _handle_booktx_error(exc)
-        return
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     path = translation_store_path(proj)
     if not path.is_file():
         _die("translation-store.json is missing")
@@ -2165,20 +2630,27 @@ def translate_migrate_store(
     console.print(f"version: {resolution.version_ref}")
     console.print(
         "ledger: "
-        + _project_relative(proj.booktx_dir / "translation-version-ledger.json", proj.root)
+        + _project_relative(
+            proj.booktx_dir / "translation-version-ledger.json", proj.root
+        )
     )
     if actor is not None or harness is not None or model is not None:
         console.print(f"identity: {_project_relative(identity_path(proj), proj.root)}")
 
 
 @translate_app.command(name="export")
-def translate_export(
+def translate_export(  # noqa: C901
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
     version_ref: str | None = typer.Option(
         None, "--version", help="Export one exact version ref such as 1.2."
     ),
     track: int | None = typer.Option(
-        None, "--track", help="Export one major track, optionally with --latest-subversion."
+        None,
+        "--track",
+        help="Export one major track, optionally with --latest-subversion.",
     ),
     latest_subversion: bool = typer.Option(
         False,
@@ -2192,11 +2664,7 @@ def translate_export(
     ),
 ) -> None:
     """Export fully accepted store-backed chunks into translated/*.json."""
-    try:
-        proj = load_project(project_dir)
-    except BooktxError as exc:
-        _handle_booktx_error(exc)
-        return
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     _require_chunks(proj)
     store = load_translation_store(proj)
     if all_versions and (version_ref is not None or track is not None):
@@ -2213,7 +2681,11 @@ def translate_export(
             return None
         if version_ref is not None:
             candidate = find_candidate(stored, version_ref)
-            return candidate if candidate is not None and candidate.status == "accepted" else None
+            return (
+                candidate
+                if candidate is not None and candidate.status == "accepted"
+                else None
+            )
         if track is not None:
             matches = [
                 candidate
@@ -2224,7 +2696,11 @@ def translate_export(
                 return None
             return max(matches, key=lambda item: item.subversion)
         candidate = active_candidate(stored)
-        return candidate if candidate is not None and candidate.status == "accepted" else None
+        return (
+            candidate
+            if candidate is not None and candidate.status == "accepted"
+            else None
+        )
 
     exported = 0
     if all_versions:
@@ -2278,7 +2754,9 @@ def translate_export(
             )
         if not translated_records:
             continue
-        translated_chunk = TranslatedChunk(chunk_id=chunk.chunk_id, records=translated_records)
+        translated_chunk = TranslatedChunk(
+            chunk_id=chunk.chunk_id, records=translated_records
+        )
         findings = []
         for source_record, translated_record in zip(
             chunk.records, translated_chunk.records, strict=True
@@ -2301,6 +2779,9 @@ def translate_export(
 def translate_task_status(
     project_dir: Path = typer.Argument(..., help="Project directory."),
     task_id: str = typer.Option(..., "--task-id", help="Task id to inspect."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     """Report accepted vs missing progress for one persisted translation task.
@@ -2308,11 +2789,7 @@ def translate_task_status(
     Makes interrupted translation runs diagnosable without inspecting the store
     by hand. Exits 0 only when every task record is accepted and current.
     """
-    try:
-        proj = load_project(project_dir)
-    except BooktxError as exc:
-        _handle_booktx_error(exc)
-        return
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     _require_chunks(proj)
     task = _load_translation_task_or_exit(proj, task_id)
     store = load_translation_store(proj)
@@ -2338,8 +2815,9 @@ def translate_task_status(
     total = len(task.records)
     accepted = len(accepted_ids)
     not_current = total - accepted
-    first_missing = (missing_ids[0] if missing_ids
-                     else (stale_ids[0] if stale_ids else None))
+    first_missing = (
+        missing_ids[0] if missing_ids else (stale_ids[0] if stale_ids else None)
+    )
     complete = not_current == 0
 
     source_display = _project_relative(
@@ -2352,7 +2830,8 @@ def translate_task_status(
         translation_ingest_path(proj, task.task_id), proj.root
     )
     submit_hint = (
-        f"booktx translate insert . --task-id {task.task_id} "
+        f"booktx translate insert ."
+        f"{f' --profile {task.profile}' if task.profile else ''} --task-id {task.task_id} "
         f"--file {block_ingest_display} --format block"
     )
 
@@ -2380,9 +2859,7 @@ def translate_task_status(
 
     console.print(f"task: {task.task_id}")
     console.print(f"chapter: {task.chapter_id}  {task.chapter_title}".rstrip())
-    console.print(
-        f"records: {accepted} / {total} accepted, {not_current} missing"
-    )
+    console.print(f"records: {accepted} / {total} accepted, {not_current} missing")
     if stale_ids:
         console.print(f"stale: {len(stale_ids)} record(s) need re-translation")
     if first_missing is not None:
@@ -2399,11 +2876,16 @@ def translation_get_record(
     record_ref: str = typer.Argument(..., help="Record ref such as 74@38."),
     before: int = typer.Option(0, "--before", min=0, help="Neighbor records before."),
     after: int = typer.Option(0, "--after", min=0, help="Neighbor records after."),
-    version: str | None = typer.Option(None, "--version", help="Show one specific version."),
+    version: str | None = typer.Option(
+        None, "--version", help="Show one specific version."
+    ),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     """Inspect one source record with nearby context and available versions."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     selected, details = _store_record_payload(proj, record_ref)
     ordered = details["ordered"]
     ordered_ids = [record.record_id for record in ordered]
@@ -2437,8 +2919,7 @@ def translation_get_record(
         return payload
 
     before_records = [
-        _record_payload(record)
-        for record in ordered[max(0, index - before) : index]
+        _record_payload(record) for record in ordered[max(0, index - before) : index]
     ]
     selected_payload = _record_payload(ordered[index])
     selected_payload["available_targets"] = details["versions"]
@@ -2446,8 +2927,7 @@ def translation_get_record(
         proj, version or selected_payload.get("active_version")
     )
     after_records = [
-        _record_payload(record)
-        for record in ordered[index + 1 : index + 1 + after]
+        _record_payload(record) for record in ordered[index + 1 : index + 1 + after]
     ]
     payload = {
         "selected_record_ref": selected_id,
@@ -2479,11 +2959,16 @@ def translation_list(
         None, "--range", help="Range spec such as 74@38..74@42."
     ),
     chapter: int | None = typer.Option(None, "--chapter", help="Chapter number."),
-    version: str | None = typer.Option(None, "--version", help="Show a specific version."),
+    version: str | None = typer.Option(
+        None, "--version", help="Show a specific version."
+    ),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     """List records for a range or chapter in source reading order."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     if (range_spec is None) == (chapter is None):
         _die("use exactly one of --range or --chapter")
         return
@@ -2540,11 +3025,16 @@ def translation_list(
 def translation_compare(
     project_dir: Path = typer.Argument(..., help="Project directory."),
     record_ref: str = typer.Argument(..., help="Record ref such as 74@38."),
-    versions: str = typer.Option(..., "--versions", help="Comma-separated version refs."),
+    versions: str = typer.Option(
+        ..., "--versions", help="Comma-separated version refs."
+    ),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     """Compare multiple stored version candidates for one record."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     selected, details = _store_record_payload(proj, record_ref)
     store = details["store"]
     stored = store.records.get(selected["id"])
@@ -2574,9 +3064,12 @@ def translation_activate(
     project_dir: Path = typer.Argument(..., help="Project directory."),
     record_ref: str = typer.Argument(..., help="Record ref such as 74@38."),
     version_ref: str = typer.Argument(..., help="Version ref to activate."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
 ) -> None:
     """Activate one stored candidate version for a single record."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     store = load_translation_store(proj)
     record_id = parse_record_ref(record_ref).canonical_id
     stored = store.records.get(record_id)
@@ -2596,11 +3089,16 @@ def translation_activate(
 def translation_review(
     project_dir: Path = typer.Argument(..., help="Project directory."),
     record_ref: str = typer.Argument(..., help="Record ref such as 74@38."),
-    activate: str | None = typer.Option(None, "--activate", help="Optionally activate a version."),
+    activate: str | None = typer.Option(
+        None, "--activate", help="Optionally activate a version."
+    ),
     note: str | None = typer.Option(None, "--note", help="Review note."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
 ) -> None:
     """Review one stored candidate and optionally activate it."""
-    proj = _load_project_or_exit(project_dir)
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     store = load_translation_store(proj)
     record_id = parse_record_ref(record_ref).canonical_id
     stored = store.records.get(record_id)
@@ -2608,7 +3106,9 @@ def translation_review(
         _die(f"record {record_id} has no stored translations")
         return
     candidate = (
-        find_candidate(stored, activate) if activate is not None else active_candidate(stored)
+        find_candidate(stored, activate)
+        if activate is not None
+        else active_candidate(stored)
     )
     if candidate is None:
         _die(f"record {record_id} has no matching review target")
@@ -2616,7 +3116,10 @@ def translation_review(
     if activate is not None:
         stored.active_version = candidate.version_ref
     candidate.reviewed_at = (
-        datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
     )
     candidate.reviewed_by = _resolved_identity(proj).actor
     candidate.review_note = note
@@ -2629,6 +3132,9 @@ def translate_set_record(
     project_dir: Path = typer.Argument(..., help="Project directory."),
     task_id: str = typer.Option(..., "--task-id", help="Task id owning the record."),
     record_id: str = typer.Option(..., "--record-id", help="Record id to set."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
     stdin: bool = typer.Option(
         False,
         "--stdin",
@@ -2647,11 +3153,7 @@ def translate_set_record(
     translation-store.json survives interruption. Prefer this over embedding a
     whole chapter section in one shell command when truncation is a concern.
     """
-    try:
-        proj = load_project(project_dir)
-    except BooktxError as exc:
-        _handle_booktx_error(exc)
-        return
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     _require_chunks(proj)
     _require_ready_context(proj, allow_missing_context=allow_missing_context)
     task = _load_translation_task_or_exit(proj, task_id)
@@ -2674,7 +3176,12 @@ def translate_set_record(
     summary = _project_status_snapshot(proj)
     try:
         result = accept_one_record(
-            proj, record_id, target_text, bundle=summary, task=task
+            proj,
+            record_id,
+            target_text,
+            bundle=summary,
+            task=task,
+            submission_profile=task.profile or None,
         )
     except SubmissionValidationError as exc:
         _render_submission_failures(exc.findings)
@@ -2698,6 +3205,9 @@ def translate_set_record(
 @app.command()
 def validate(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
     all_versions_strict: bool = typer.Option(
         False,
         "--all-versions-strict",
@@ -2705,11 +3215,7 @@ def validate(
     ),
 ) -> None:
     """Validate translated chunks against the translation contract."""
-    try:
-        proj = load_project(project_dir)
-    except BooktxError as exc:
-        _handle_booktx_error(exc)
-        return
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
 
     report = validate_project(proj, all_versions_strict=all_versions_strict)
     out = write_report(proj, report)
@@ -2739,6 +3245,9 @@ def validate(
 @app.command()
 def build(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
     require_complete: bool = typer.Option(
         False,
         "--require-complete",
@@ -2747,7 +3256,7 @@ def build(
 ) -> None:
     """Rebuild the translated document into ``output/``."""
     try:
-        proj = load_project(project_dir)
+        proj = load_project(project_dir, profile=profile, require_profile=True)
         result = build_project(proj, require_complete=require_complete)
     except BooktxError as exc:
         _handle_booktx_error(exc)

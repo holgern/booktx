@@ -9,6 +9,8 @@ the translating coding agent:
 Both must round-trip through JSON with stable field names and ordering.
 """
 
+# ruff: noqa: E501
+
 from __future__ import annotations
 
 from typing import Any, Literal
@@ -22,7 +24,11 @@ from pydantic import (
     model_validator,
 )
 
-from booktx.record_refs import canonical_record_id, format_version_ref, parse_version_ref
+from booktx.record_refs import (
+    canonical_record_id,
+    format_version_ref,
+    parse_version_ref,
+)
 
 __all__ = [
     "Placeholder",
@@ -42,6 +48,10 @@ __all__ = [
     "TranslationTaskRecord",
     "TranslationTask",
     "NamesFile",
+    "SourceConfig",
+    "ProfileIdentityConfig",
+    "ProfileConfig",
+    "ProfileState",
     "ProjectConfig",
     "EpubSpanRef",
     "EpubNavigationRef",
@@ -132,13 +142,18 @@ class Chunk(BaseModel):
 
     schema_version: int = Field(default=2, description="Source chunk schema version")
     chunk_id: str = Field(..., description="Chunk id, e.g. 0001")
-    chunk_size: int = Field(default=50, ge=1, description="Configured max records per chunk")
+    chunk_size: int = Field(
+        default=50, ge=1, description="Configured max records per chunk"
+    )
     record_id_scheme: str = Field(
         default="chunk-local:v1",
         description="Record id scheme used by this extraction",
     )
     source_language: str = Field(..., description="BCP-47-ish source code, e.g. en")
-    target_language: str = Field(..., description="BCP-47-ish target code, e.g. de")
+    target_language: str = Field(
+        default="",
+        description="BCP-47-ish target code kept for legacy compatibility",
+    )
     records: list[Record] = Field(default_factory=list)
 
 
@@ -201,7 +216,7 @@ class TranslationCandidate(BaseModel):
         return parse_version_ref(value).version_ref
 
     @model_validator(mode="after")
-    def _version_ref_matches_fields(self) -> "TranslationCandidate":
+    def _version_ref_matches_fields(self) -> TranslationCandidate:
         expected = format_version_ref(self.version, self.subversion)
         if self.version_ref != expected:
             raise ValueError(
@@ -230,7 +245,7 @@ class StoredTranslationRecordV2(BaseModel):
         return parse_version_ref(value).version_ref
 
     @model_validator(mode="after")
-    def _validate_versions(self) -> "StoredTranslationRecordV2":
+    def _validate_versions(self) -> StoredTranslationRecordV2:
         seen: set[str] = set()
         for candidate in self.versions:
             if candidate.version_ref in seen:
@@ -255,7 +270,7 @@ class TranslationStoreV2(BaseModel):
     records: dict[str, StoredTranslationRecordV2] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _validate_record_keys(self) -> "TranslationStoreV2":
+    def _validate_record_keys(self) -> TranslationStoreV2:
         for record_id, record in self.records.items():
             expected = canonical_record_id(record.chunk_id, record.part_id)
             if record_id != expected:
@@ -287,7 +302,7 @@ class TranslationSubversionLedgerEntry(BaseModel):
         return parse_version_ref(value).version_ref
 
     @model_validator(mode="after")
-    def _validate_version_ref(self) -> "TranslationSubversionLedgerEntry":
+    def _validate_version_ref(self) -> TranslationSubversionLedgerEntry:
         expected = format_version_ref(self.version, self.subversion)
         if self.version_ref != expected:
             raise ValueError(
@@ -315,7 +330,7 @@ class TranslationTrackLedgerEntry(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _validate_subversion_keys(self) -> "TranslationTrackLedgerEntry":
+    def _validate_subversion_keys(self) -> TranslationTrackLedgerEntry:
         for subversion_id, entry in self.subversions.items():
             if subversion_id != str(entry.subversion):
                 raise ValueError(
@@ -346,12 +361,10 @@ class TranslationVersionLedger(BaseModel):
         return parse_version_ref(value).version_ref
 
     @model_validator(mode="after")
-    def _validate_track_keys(self) -> "TranslationVersionLedger":
+    def _validate_track_keys(self) -> TranslationVersionLedger:
         for track_id, entry in self.tracks.items():
             if track_id != str(entry.version):
-                raise ValueError(
-                    f"track key {track_id!r} must equal {entry.version!r}"
-                )
+                raise ValueError(f"track key {track_id!r} must equal {entry.version!r}")
         return self
 
 
@@ -387,8 +400,10 @@ class TranslationTask(BaseModel):
     unit: Literal["paragraph", "batch", "chunk", "chapter"]
     chapter_id: str = ""
     chapter_title: str = ""
+    profile: str = ""
     source_language: str
     target_language: str
+    target_locale: str = ""
     translation_version: str | None = Field(
         default=None,
         description="Active translation version ref when the task was created",
@@ -400,6 +415,14 @@ class TranslationTask(BaseModel):
     source_sha256: str | None = Field(
         default=None,
         description="Project source hash when the task was created",
+    )
+    profile_config_sha256: str | None = Field(
+        default=None,
+        description="Canonical profile-config hash when the task was created",
+    )
+    source_config_sha256: str | None = Field(
+        default=None,
+        description="Canonical source-config hash when the task was created",
     )
     source_words: int = 0
     record_count: int = 0
@@ -414,8 +437,61 @@ class NamesFile(BaseModel):
     protected_terms: list[str] = Field(default_factory=list)
 
 
+class SourceConfig(BaseModel):
+    """Source-only config stored in ``.booktx/source-config.toml``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal[1] = 1
+    source_language: str = Field(default="en")
+    source_file: str = Field(default="", description="Filename inside source/")
+    format: str = Field(default="markdown", description="Document format")
+    chunk_size: int = Field(default=50, ge=1, description="Max records per chunk")
+
+    @field_validator("format")
+    @classmethod
+    def _source_format_ok(cls, v: str) -> str:
+        v = (v or "").lower()
+        if v not in {"markdown", "epub"}:
+            raise ValueError("format must be 'markdown' or 'epub'")
+        return v
+
+
+class ProfileIdentityConfig(BaseModel):
+    """Identity defaults embedded in a profile config."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    actor: str = "user:unknown"
+    harness: str = "booktx"
+    model: str = "human"
+
+
+class ProfileConfig(BaseModel):
+    """Per-profile translation config stored in ``translations/<profile>/config.toml``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal[1] = 1
+    profile: str
+    source_language: str = "en"
+    target_language: str
+    target_locale: str | None = None
+    output_filename: str | None = None
+    identity: ProfileIdentityConfig = Field(default_factory=ProfileIdentityConfig)
+
+
+class ProfileState(BaseModel):
+    """Active-profile selector stored in ``.booktx/profile-state.json``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal[1] = 1
+    active_profile: str | None = None
+
+
 class ProjectConfig(BaseModel):
-    """The ``.booktx/config.toml`` content, exposed as a model.
+    """Effective runtime config, or the legacy ``.booktx/config.toml`` shape.
 
     The TOML file mirrors these field names exactly so it stays human-editable.
     """
@@ -423,9 +499,15 @@ class ProjectConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source_language: str = Field(default="en")
-    target_language: str = Field(..., description="Target language code")
-    source_file: str = Field(..., description="Filename inside source/")
-    format: str = Field(..., description="Document format: 'markdown' or 'epub'")
+    target_language: str = Field(default="", description="Target language code")
+    target_locale: str | None = Field(default=None, description="Target locale code")
+    output_filename: str | None = Field(
+        default=None, description="Output filename override"
+    )
+    source_file: str = Field(default="", description="Filename inside source/")
+    format: str = Field(
+        default="markdown", description="Document format: 'markdown' or 'epub'"
+    )
     chunk_size: int = Field(default=50, ge=1, description="Max records per chunk")
 
     @field_validator("format")
@@ -495,7 +577,7 @@ class ManifestSource(BaseModel):
     filename: str
     format: str
     source_language: str
-    target_language: str
+    target_language: str = ""
     sha256: str = Field(default="", description="Hex digest of source bytes")
 
 

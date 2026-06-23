@@ -133,7 +133,11 @@ def resolve_record_range(
         return ordered_record_ids[start_index : start_index + count]
     if text.startswith("chunk:"):
         chunk_id = f"{int(text.split(':', 1)[1]):04d}"
-        return [record_id for record_id in ordered_record_ids if record_id.startswith(f"{chunk_id}-")]
+        return [
+            record_id
+            for record_id in ordered_record_ids
+            if record_id.startswith(f"{chunk_id}-")
+        ]
     if text.startswith("chapter:"):
         if chapter_record_ids is None:
             raise ValueError("chapter ranges require chapter context")
