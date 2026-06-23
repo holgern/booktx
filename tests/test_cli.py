@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import tomli_w
 from ebooklib import epub
 from typer.testing import CliRunner
 
@@ -68,6 +69,49 @@ def _make_epub_project(tmp_path: Path) -> Path:
     return project_dir
 
 
+def _rewrite_project_chunk_size(project_dir: Path, chunk_size: int) -> None:
+    from booktx.config import tomllib
+
+    config_path = project_dir / ".booktx" / "config.toml"
+    with config_path.open("rb") as fh:
+        data = tomllib.load(fh)
+    data["chunk_size"] = chunk_size
+    config_path.write_bytes(tomli_w.dumps(data).encode("utf-8"))
+
+
+def _write_accepted_store_record(project_dir: Path) -> None:
+    chunk = json.loads(next((project_dir / ".booktx" / "chunks").glob("*.json")).read_text("utf-8"))
+    record = chunk["records"][0]
+    (project_dir / ".booktx" / "translation-store.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "records": {
+                    record["id"]: {
+                        "chunk_id": int(record["id"].split("-", 1)[0]),
+                        "part_id": 1,
+                        "source_sha256": "abc123",
+                        "source": record["source"],
+                        "active_version": "1.1",
+                        "versions": [
+                            {
+                                "version": 1,
+                                "subversion": 1,
+                                "version_ref": "1.1",
+                                "target": record["source"],
+                                "status": "accepted",
+                                "created_at": "2026-06-22T12:00:00Z",
+                                "updated_at": "2026-06-22T12:00:00Z",
+                            }
+                        ],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_version_flag():
     res = runner.invoke(app, ["--version"])
     assert res.exit_code == 0
@@ -78,6 +122,86 @@ def test_version_flag():
     assert booktx.__version__
     assert booktx.__version__ != "0.1.0"
     assert booktx.__version__ in res.output
+
+
+def test_version_group_without_subcommand_errors():
+    res = runner.invoke(app, ["version"])
+    assert res.exit_code == 2
+    assert "booktx --version" in res.output
+    assert "version current PROJECT_DIR" in res.output
+
+
+def test_whoami_reports_missing_context_without_failing(tmp_path: Path):
+    project_dir = _make_markdown_project(tmp_path)
+
+    res = runner.invoke(app, ["whoami", str(project_dir)])
+
+    assert res.exit_code == 0, res.output
+    assert f"booktx identity: {project_dir}" in res.output
+    assert "active_version:" in res.output
+    assert "none" in res.output
+    assert "context:" in res.output
+    assert "MISSING .booktx/context.json" in res.output
+    assert "store_version:" in res.output
+    assert "store_records:" in res.output
+
+
+def test_whoami_json_is_stable_when_optional_state_is_missing(tmp_path: Path):
+    project_dir = _make_markdown_project(tmp_path)
+
+    res = runner.invoke(app, ["whoami", str(project_dir), "--json"])
+
+    assert res.exit_code == 0, res.output
+    payload = json.loads(res.output)
+    assert payload["project_dir"] == str(project_dir)
+    assert payload["active_version"] is None
+    assert payload["context"]["path"] == ".booktx/context.json"
+    assert payload["context"]["exists"] is False
+    assert payload["context"]["ready"] is None
+    assert payload["context"]["sha256"] is None
+    assert payload["store"]["exists"] is False
+    assert payload["store"]["version"] is None
+    assert payload["store"]["record_count"] is None
+
+
+def test_harness_set_accepts_all_supported_argument_orders(tmp_path: Path, monkeypatch):
+    project_dir = _make_markdown_project(tmp_path)
+
+    monkeypatch.chdir(project_dir)
+    res = runner.invoke(app, ["harness", "set", "pi"])
+    assert res.exit_code == 0, res.output
+    assert runner.invoke(app, ["harness", "whoami", "."]).output.strip() == "pi"
+
+    res = runner.invoke(app, ["harness", "set", "qa", str(project_dir)])
+    assert res.exit_code == 0, res.output
+    assert runner.invoke(app, ["harness", "whoami", str(project_dir)]).output.strip() == "qa"
+
+    res = runner.invoke(app, ["harness", "set", str(project_dir), "ops"])
+    assert res.exit_code == 0, res.output
+    assert runner.invoke(app, ["harness", "whoami", str(project_dir)]).output.strip() == "ops"
+
+    res = runner.invoke(app, ["harness", "set", "--project", str(project_dir), "pi"])
+    assert res.exit_code == 0, res.output
+    assert runner.invoke(app, ["harness", "whoami", str(project_dir)]).output.strip() == "pi"
+
+
+def test_actor_and_model_set_support_project_option(tmp_path: Path):
+    project_dir = _make_markdown_project(tmp_path)
+
+    actor_res = runner.invoke(
+        app, ["actor", "set", "--project", str(project_dir), "user:test"]
+    )
+    model_res = runner.invoke(
+        app, ["model", "set", "--project", str(project_dir), "codex-openai/gpt-5.5@low"]
+    )
+
+    assert actor_res.exit_code == 0, actor_res.output
+    assert model_res.exit_code == 0, model_res.output
+    assert runner.invoke(app, ["actor", "whoami", str(project_dir)]).output.strip() == "user:test"
+    assert (
+        runner.invoke(app, ["model", "whoami", str(project_dir)]).output.strip()
+        == "codex-openai/gpt-5.5@low"
+    )
 
 
 def test_init_accepts_source_lang_alias(tmp_path: Path):
@@ -149,12 +273,36 @@ def test_extract_writes_chunks(tmp_path: Path):
     assert chunks, "no chunks written"
     first = json.loads(chunks[0].read_text("utf-8"))
     assert set(first.keys()) == {
+        "schema_version",
         "chunk_id",
+        "chunk_size",
+        "record_id_scheme",
         "source_language",
         "target_language",
         "records",
     }
+    assert first["schema_version"] == 2
+    assert first["chunk_size"] == 50
+    assert first["record_id_scheme"] == "chunk-local:v1"
     assert first["records"][0]["id"].count("-") == 1
+    manifest = json.loads((project_dir / ".booktx" / "manifest.json").read_text("utf-8"))
+    assert manifest["chunk_size"] == 50
+    assert manifest["record_id_scheme"] == "chunk-local:v1"
+    assert manifest["segmenter"]["name"] == "phrasplit"
+    assert manifest["names_sha256"]
+
+
+def test_extract_epub_writes_manifest_metadata(tmp_path: Path):
+    project_dir = _make_epub_project(tmp_path)
+
+    res = runner.invoke(app, ["extract", str(project_dir)])
+
+    assert res.exit_code == 0, res.output
+    manifest = json.loads((project_dir / ".booktx" / "manifest.json").read_text("utf-8"))
+    assert manifest["chunk_size"] == 50
+    assert manifest["record_id_scheme"] == "chunk-local:v1"
+    assert manifest["segmenter"]["name"] == "phrasplit"
+    assert manifest["names_sha256"]
 
 
 def test_extract_is_idempotent_and_preserves_translated(tmp_path: Path):
@@ -174,6 +322,30 @@ def test_extract_is_idempotent_and_preserves_translated(tmp_path: Path):
     assert before == after  # deterministic
     # translated file survives
     assert (translated_dir / "0001.json").is_file()
+
+
+def test_extract_refuses_chunk_size_change_with_existing_store_for_legacy_ids(tmp_path: Path):
+    project_dir = _make_markdown_project(tmp_path)
+    assert runner.invoke(app, ["extract", str(project_dir)]).exit_code == 0
+    _write_accepted_store_record(project_dir)
+    _rewrite_project_chunk_size(project_dir, 25)
+
+    res = runner.invoke(app, ["extract", str(project_dir)])
+
+    assert res.exit_code != 0
+    assert "chunk_size changed" in res.output
+    assert "renumber record ids" in res.output
+
+
+def test_extract_force_rechunk_allows_chunk_size_change(tmp_path: Path):
+    project_dir = _make_markdown_project(tmp_path)
+    assert runner.invoke(app, ["extract", str(project_dir)]).exit_code == 0
+    _write_accepted_store_record(project_dir)
+    _rewrite_project_chunk_size(project_dir, 25)
+
+    res = runner.invoke(app, ["extract", str(project_dir), "--force-rechunk"])
+
+    assert res.exit_code == 0, res.output
 
 
 

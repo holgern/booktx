@@ -39,6 +39,20 @@ booktx context mark-ready .
 
 Answer all required questions before marking ready.
 
+## `stale translation task`
+
+The task was created under an older translation version than the current
+resolved context/version state.
+
+Fix:
+
+```bash
+booktx translate next . --unit batch --max-words 500 --format block
+```
+
+Then fill the fresh `.booktx/ingest/` file and resubmit it. If you truly need
+to commit a tiny manual fix to one record, use `booktx translate set-record ...`.
+
 ## Validation: invalid JSON
 
 The translated file is not a single JSON object.
@@ -75,6 +89,16 @@ Fix: provide a non-empty translation.
 A target dropped a visible placeholder or introduced a token that does not exist in the source record.
 
 Fix: compare the source record and target record, then preserve all visible `__NAME_NNN__` and `__TAG_NNN__` tokens exactly.
+
+## `chunk_size changed ... renumber record ids`
+
+You changed `.booktx/config.toml` while the project still had accepted
+translations under `record_id_scheme=chunk-local:v1`.
+
+Fix one of these:
+
+- restore the previous `chunk_size`
+- back up or migrate translations, then run `booktx extract . --force-rechunk`
 
 ## Validation: protected name translated
 

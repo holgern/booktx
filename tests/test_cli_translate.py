@@ -180,22 +180,24 @@ def test_translate_next_creates_ingest_file_and_insert_updates_store(tmp_path: P
     task = json.loads(next_res.output)
     ingest_file = project_dir / task["ingest_path"]
 
+    assert task["translation_version"] == "1.1"
+    assert task["context_sha256"]
+    assert task["source_sha256"]
     assert task["ingest_path"].startswith(".booktx/ingest/")
     assert f"--json-file {task['ingest_path']}" in task["submit_hint"]
     assert ingest_file.is_file()
     template = json.loads(ingest_file.read_text("utf-8"))
+    assert template["schema_version"] == 2
     assert template["task_id"] == task["task_id"]
+    assert template["translation_version"] == "1.1"
     assert [record["target"] for record in template["records"]] == [""] * len(
         task["records"]
     )
 
-    payload = {
-        "task_id": task["task_id"],
-        "records": [
-            {"id": record["id"], "target": record["source"]}
-            for record in task["records"]
-        ],
-    }
+    payload = template
+    payload["records"] = [
+        {"id": record["id"], "target": record["source"]} for record in task["records"]
+    ]
     ingest_file.write_text(json.dumps(payload), encoding="utf-8")
     insert_res = runner.invoke(
         app,
@@ -219,6 +221,21 @@ def test_translate_next_creates_ingest_file_and_insert_updates_store(tmp_path: P
     status_res = runner.invoke(app, ["status", str(project_dir), "--json"])
     status = json.loads(status_res.output)
     assert status["totals"]["records_translated"] >= len(task["records"])
+
+
+def test_translate_next_block_template_includes_translation_version(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+
+    next_res = runner.invoke(
+        app,
+        ["translate", "next", str(project_dir), "--unit", "paragraph", "--json"],
+    )
+    assert next_res.exit_code == 0, next_res.output
+    task = json.loads(next_res.output)
+    block_file = project_dir / task["block_ingest_path"]
+
+    text = block_file.read_text("utf-8")
+    assert "# translation_version: 1.1" in text
 
 
 def test_translate_insert_tsv_accepts_batch(tmp_path: Path):
@@ -353,6 +370,82 @@ def test_translate_insert_block_file_accepts_batch(tmp_path: Path):
 
     assert insert_res.exit_code == 0, insert_res.output
     assert "accepted:" in insert_res.output
+
+
+def test_translate_insert_rejects_stale_task_version(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+
+    next_res = runner.invoke(
+        app,
+        ["translate", "next", str(project_dir), "--unit", "paragraph", "--json"],
+    )
+    assert next_res.exit_code == 0, next_res.output
+    task = json.loads(next_res.output)
+    ingest_file = project_dir / task["ingest_path"]
+    payload = json.loads(ingest_file.read_text("utf-8"))
+    payload["records"][0]["target"] = task["records"][0]["source"]
+    ingest_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    proj = load_project(project_dir)
+    ctx = load_context(proj)
+    assert ctx is not None
+    ctx.global_rules.append("Prefer shorter German clauses.")
+    write_context(proj, ctx)
+
+    insert_res = runner.invoke(
+        app,
+        [
+            "translate",
+            "insert",
+            str(project_dir),
+            "--task-id",
+            task["task_id"],
+            "--json-file",
+            str(ingest_file),
+        ],
+    )
+
+    assert insert_res.exit_code != 0
+    assert "stale translation task" in insert_res.output
+    assert "1.1" in insert_res.output
+    assert "1.2" in insert_res.output
+
+
+def test_translate_insert_legacy_task_without_translation_version_remains_accepted(
+    tmp_path: Path,
+):
+    project_dir = _make_project(tmp_path)
+
+    next_res = runner.invoke(
+        app,
+        ["translate", "next", str(project_dir), "--unit", "paragraph", "--json"],
+    )
+    assert next_res.exit_code == 0, next_res.output
+    task = json.loads(next_res.output)
+    task_path = project_dir / ".booktx" / "tasks" / f"{task['task_id']}.json"
+    task_payload = json.loads(task_path.read_text("utf-8"))
+    task_payload.pop("translation_version", None)
+    task_path.write_text(json.dumps(task_payload), encoding="utf-8")
+
+    ingest_file = project_dir / task["ingest_path"]
+    payload = json.loads(ingest_file.read_text("utf-8"))
+    payload["records"][0]["target"] = task["records"][0]["source"]
+    ingest_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    insert_res = runner.invoke(
+        app,
+        [
+            "translate",
+            "insert",
+            str(project_dir),
+            "--task-id",
+            task["task_id"],
+            "--json-file",
+            str(ingest_file),
+        ],
+    )
+
+    assert insert_res.exit_code == 0, insert_res.output
 
 
 def test_translate_insert_block_rejects_missing_header(tmp_path: Path):
@@ -647,12 +740,10 @@ def test_translate_migrate_store_dry_run_does_not_rewrite(tmp_path: Path):
 
 def test_translate_migrate_store_write_creates_v2_and_ledger(tmp_path: Path):
     project_dir = _make_project(tmp_path)
-    next_res = runner.invoke(
-        app,
-        ["translate", "next", str(project_dir), "--unit", "paragraph", "--json"],
+    chunk = json.loads(
+        next((project_dir / ".booktx" / "chunks").glob("*.json")).read_text("utf-8")
     )
-    task = json.loads(next_res.output)
-    record = task["records"][0]
+    record = chunk["records"][0]
     _write_legacy_store(
         project_dir,
         {
@@ -697,7 +788,7 @@ def test_translate_migrate_store_write_creates_v2_and_ledger(tmp_path: Path):
     )
     assert store["version"] == 2
     migrated = store["records"][record["id"]]
-    assert migrated["chunk_id"] == 1
+    assert migrated["chunk_id"] == int(record["id"].split("-", 1)[0])
     assert migrated["part_id"] == 1
     assert migrated["source"] == record["source"]
     assert migrated["active_version"] == "1.1"
@@ -905,6 +996,36 @@ def test_translation_activate_review_compare_and_version_commands(tmp_path: Path
     assert fork_res.output.strip() == "1.3"
 
 
+def test_whoami_reports_active_version_and_scoped_identity(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    assert runner.invoke(app, ["actor", "set", str(project_dir), "user:nahrstaedt"]).exit_code == 0
+    assert runner.invoke(app, ["harness", "set", str(project_dir), "pi"]).exit_code == 0
+    assert runner.invoke(app, ["model", "set", str(project_dir), "codex-openai/gpt-5.5@low"]).exit_code == 0
+
+    _insert_identity_target(project_dir, target="Erste Fassung.")
+
+    res = runner.invoke(app, ["whoami", str(project_dir), "--json"])
+
+    assert res.exit_code == 0, res.output
+    payload = json.loads(res.output)
+    assert payload["actor"] == "user:nahrstaedt"
+    assert payload["harness"] == "pi"
+    assert payload["model"] == "codex-openai/gpt-5.5@low"
+    assert payload["active_version"] == "1.1"
+    assert payload["context"]["exists"] is True
+    assert payload["context"]["ready"] is True
+    assert payload["context"]["sha256"]
+    assert payload["store"]["exists"] is True
+    assert payload["store"]["version"] == 2
+    assert payload["store"]["record_count"] >= 1
+    assert runner.invoke(app, ["identity", "whoami", str(project_dir)]).exit_code == 0
+    assert runner.invoke(app, ["harness", "whoami", str(project_dir)]).output.strip() == "pi"
+    assert (
+        runner.invoke(app, ["model", "whoami", str(project_dir)]).output.strip()
+        == "codex-openai/gpt-5.5@low"
+    )
+
+
 def test_translate_export_can_select_exact_version(tmp_path: Path):
     project_dir = _make_project(tmp_path)
     next_res = runner.invoke(
@@ -976,6 +1097,7 @@ def test_translate_export_can_select_exact_version(tmp_path: Path):
     )
     assert export_res.exit_code == 0, export_res.output
     exported = json.loads((project_dir / ".booktx" / "translated" / "0001.json").read_text("utf-8"))
+    assert exported["records"][0]["version"] == "1.1"
     assert exported["records"][0]["target"] == "Erste Fassung."
 
 

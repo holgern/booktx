@@ -23,6 +23,7 @@ the single source file, and the active :class:`~booktx.models.ProjectConfig`.
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,7 @@ __all__ = [
     "write_manifest",
     "write_names",
     "load_names",
+    "protected_terms_sha256",
     "project_source_sha256",
     "translation_store_path",
     "translation_version_ledger_path",
@@ -292,6 +294,17 @@ def load_names(project: Project) -> NamesFile:
         return NamesFile.model_validate_json(project.names_path.read_text("utf-8"))
     except Exception as exc:  # noqa: BLE001 - surface as BooktxError
         raise _err("bad_names_json", f"names.json is invalid: {exc}") from exc
+
+
+def protected_terms_sha256(protected_terms: list[str]) -> str:
+    """Return a deterministic hash for the protected-term list used in extraction."""
+    payload = json.dumps(
+        {"protected_terms": list(protected_terms)},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return sha256(payload).hexdigest()
 
 
 def project_source_sha256(project: Project) -> str:

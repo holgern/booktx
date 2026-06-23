@@ -78,9 +78,11 @@ booktx translate set-record ./book --task-id TASK --record-id RECORD_ID --stdin
 booktx translation get-record ./book 74@38 --before 2 --after 2
 booktx translation compare ./book 74@38 --versions 1.1,1.2
 booktx translation activate ./book 74@38 1.2
+booktx whoami ./book
 booktx actor set ./book user:nahrstaedt
 booktx harness set ./book pi
 booktx model set ./book codex-openai/gpt-5.5@low
+booktx --version
 booktx version current ./book
 booktx version list ./book
 booktx version fork-context ./book --note "manual context split"
@@ -94,6 +96,10 @@ booktx validate ./book                         # enforce contract + context lint
 booktx build ./book                            # rebuild output/book.<target>.<ext>
 booktx build ./book --require-complete         # fail on any missing/invalid record
 ```
+
+Use `booktx --version` for the installed CLI package version. `booktx version`
+is the translation-version command group and requires a subcommand such as
+`current`, `list`, `show`, `select`, `fork-context`, or `set-label`.
 
 `booktx translate next` refuses to return translation work until `.booktx/context.json`
 exists and has `ready: true`. Use `--allow-missing-context` only for legacy
@@ -119,8 +125,11 @@ questions and a seed glossary. Required questions must be answered before
 `booktx extract` is **idempotent**: it rebuilds `chunks/` on every run but
 leaves both `translation-store.json` and compatibility `translated/` files
 untouched, so re-extracting after editing the source never destroys work in
-progress. Stale `translated/*.json` files whose chunk no longer exists are kept
-and reported as warnings.
+progress. Same source plus same extraction settings must reproduce byte-identical
+chunk files. If `chunk_size` changes under `record_id_scheme=chunk-local:v1`
+while accepted translations exist, extract refuses by default and requires
+`booktx extract ./book --force-rechunk`. Stale `translated/*.json` files whose
+chunk no longer exists are kept and reported as warnings.
 
 ## Nested version store
 
@@ -141,7 +150,10 @@ That means `1.1` and `1.2` can share the same model track while differing only b
 
 ```json
 {
+  "schema_version": 2,
   "chunk_id": "0001",
+  "chunk_size": 50,
+  "record_id_scheme": "chunk-local:v1",
   "source_language": "en",
   "target_language": "de",
   "records": [
@@ -155,7 +167,7 @@ That means `1.1` and `1.2` can share the same model track while differing only b
 }
 ```
 
-`booktx translate next --format block` prints a concise summary (task id, chapter, unit, record count, source words, and the source/durable-file/submit-command paths) instead of dumping source text. It writes `.booktx/tasks/TASK.source.block.txt` with the source text, an editable `.booktx/ingest/TASK.block.txt` durable target file with metadata headers, and `.booktx/ingest/TASK.json` for JSON compatibility. Prefer filling and submitting the durable `.block.txt` file for normal agent work (it is resumable and version-control friendly); use a stdin heredoc only for tiny manual fixes. `booktx translate task-status` diagnoses interrupted runs, `booktx translate set-record` commits one record at a time, and `booktx translate insert --json-file .booktx/ingest/TASK.json` remains available for JSON-based tooling. Never use `/tmp`; missing submission files produce a concise error, not a traceback. When you need compatibility chunk files,
+`booktx translate next --format block` prints a concise summary (task id, chapter, unit, record count, source words, and the source/durable-file/submit-command paths) instead of dumping source text. It writes `.booktx/tasks/TASK.source.block.txt` with the source text, an editable `.booktx/ingest/TASK.block.txt` durable target file with metadata headers, and `.booktx/ingest/TASK.json` for JSON compatibility. New task and ingest artifacts also carry `translation_version`, `context_sha256`, and `source_sha256` metadata so stale task submissions can be rejected safely. Prefer filling and submitting the durable `.block.txt` file for normal agent work (it is resumable and version-control friendly); use a stdin heredoc only for tiny manual fixes. `booktx translate task-status` diagnoses interrupted runs, `booktx translate set-record` commits one record at a time, and `booktx translate insert --json-file .booktx/ingest/TASK.json` remains available for JSON-based tooling. Never use `/tmp`; missing submission files produce a concise error, not a traceback. When you need compatibility chunk files,
 `booktx translate export` materializes compatibility `.booktx/translated/NNNN.json`
 from active accepted store entries by default, or from an exact ledger version
 when you pass `--version`:
@@ -166,6 +178,7 @@ when you pass `--version`:
   "records": [
     {
       "id": "0001-000001",
+      "version": "1.1",
       "target": "Alice sah Mr. Smith an."
     }
   ]

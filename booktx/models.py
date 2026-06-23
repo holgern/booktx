@@ -13,7 +13,14 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from booktx.record_refs import canonical_record_id, format_version_ref, parse_version_ref
 
@@ -97,7 +104,25 @@ class TranslatedRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(..., description="Record id matching the source chunk")
+    version: str | None = Field(
+        default=None,
+        description="Accepted translation version ref, e.g. 1.1",
+    )
     target: str = Field(..., description="Translated text")
+
+    @field_validator("version")
+    @classmethod
+    def _version_shape(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return parse_version_ref(value).version_ref
+
+    @model_serializer(mode="wrap")
+    def _omit_none_version(self, handler):
+        payload = handler(self)
+        if payload.get("version") is None:
+            payload.pop("version", None)
+        return payload
 
 
 class Chunk(BaseModel):
@@ -105,7 +130,13 @@ class Chunk(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    schema_version: int = Field(default=2, description="Source chunk schema version")
     chunk_id: str = Field(..., description="Chunk id, e.g. 0001")
+    chunk_size: int = Field(default=50, ge=1, description="Configured max records per chunk")
+    record_id_scheme: str = Field(
+        default="chunk-local:v1",
+        description="Record id scheme used by this extraction",
+    )
     source_language: str = Field(..., description="BCP-47-ish source code, e.g. en")
     target_language: str = Field(..., description="BCP-47-ish target code, e.g. de")
     records: list[Record] = Field(default_factory=list)
@@ -358,6 +389,18 @@ class TranslationTask(BaseModel):
     chapter_title: str = ""
     source_language: str
     target_language: str
+    translation_version: str | None = Field(
+        default=None,
+        description="Active translation version ref when the task was created",
+    )
+    context_sha256: str | None = Field(
+        default=None,
+        description="Context hash when the task was created",
+    )
+    source_sha256: str | None = Field(
+        default=None,
+        description="Project source hash when the task was created",
+    )
     source_words: int = 0
     record_count: int = 0
     records: list[TranslationTaskRecord] = Field(default_factory=list)
@@ -465,6 +508,10 @@ class Manifest(BaseModel):
     source: ManifestSource
     chunk_count: int = Field(default=0)
     record_count: int = Field(default=0)
+    chunk_size: int = Field(default=50, ge=1)
+    record_id_scheme: str = Field(default="chunk-local:v1")
+    segmenter: dict[str, Any] = Field(default_factory=dict)
+    names_sha256: str = Field(default="")
     # Mapping of record id -> placeholder-preserving template location. For
     # markdown this is enough to rebuild; epub rebuilds walk spine docs.
     template: dict[str, Any] = Field(default_factory=dict)

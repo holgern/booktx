@@ -18,12 +18,14 @@ from typing import TYPE_CHECKING
 
 from booktx.config import (
     Project,
+    load_translation_version_ledger,
     translation_ingest_block_path,
     translation_ingest_path,
     translation_task_source_block_path,
 )
 from booktx.io_utils import write_json_text_atomic, write_text_atomic
 from booktx.models import TranslationTask, TranslationTaskRecord
+from booktx.versioning import resolve_current_version
 
 if TYPE_CHECKING:
     from booktx.status import ChapterProgress, StatusBundle
@@ -126,8 +128,9 @@ def write_ingest_template(project: Project, task: TranslationTask) -> Path:
     if path.exists():
         return path
     payload = {
-        "version": 1,
+        "schema_version": 2,
         "task_id": task.task_id,
+        "translation_version": task.translation_version,
         "records": [{"id": record.id, "target": ""} for record in task.records],
     }
     import json
@@ -156,6 +159,7 @@ def write_block_ingest_template(project: Project, task: TranslationTask) -> Path
     headers = [
         "# booktx block submission",
         f"# task: {task.task_id}",
+        f"# translation_version: {task.translation_version or 'none'}",
         f"# source: {source_display}",
         f"# submit: {submit_hint}",
         "",
@@ -203,6 +207,15 @@ def create_translation_task(
     from booktx.config import write_translation_task
 
     source_by_id = bundle.index.source_by_id
+    translation_version = None
+    context_sha256 = None
+    source_sha256 = bundle.snapshot.source.source_sha256 or None
+    if bundle.snapshot.context.exists and bundle.snapshot.context.ready:
+        resolution = resolve_current_version(project)
+        translation_version = resolution.version_ref
+        context_sha256 = resolution.context_sha256
+    else:
+        translation_version = load_translation_version_ledger(project).active_version
     task = TranslationTask(
         task_id=make_task_id(chapter.chapter_id, record_ids[0], record_ids),
         unit=unit,  # type: ignore[arg-type]
@@ -210,6 +223,9 @@ def create_translation_task(
         chapter_title=chapter.title,
         source_language=project.config.source_language,
         target_language=project.config.target_language,
+        translation_version=translation_version,
+        context_sha256=context_sha256,
+        source_sha256=source_sha256,
         source_words=sum(
             source_by_id[record_id].source_words for record_id in record_ids
         ),

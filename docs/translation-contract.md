@@ -25,11 +25,24 @@ That means `1.1` and `1.2` may share actor/harness/model metadata while
 differing only by context SHA, and a model change allocates a new major track
 such as `2.1`.
 
+## Distinct version fields
+
+`booktx` now uses several unrelated version fields. Keep them separate:
+
+- **CLI package version**: `booktx --version`
+- **translation-version ledger refs**: dotted refs such as `1.1`, `1.2`
+- **source chunk schema version**: `schema_version` on `.booktx/chunks/*.json`
+- **translation store schema version**: top-level `version` in `translation-store.json`
+- **translated record version**: optional per-record `version` in compatibility exports
+
 ## Source chunk shape
 
 ```json
 {
+  "schema_version": 2,
   "chunk_id": "0001",
+  "chunk_size": 50,
+  "record_id_scheme": "chunk-local:v1",
   "source_language": "en",
   "target_language": "de",
   "records": [
@@ -53,11 +66,14 @@ such as `2.1`.
   "records": [
     {
       "id": "0001-000001",
+      "version": "1.1",
       "target": "__NAME_001__ sah Mr. Smith an."
     }
   ]
 }
 ```
+
+Compatibility files without per-record `version` remain valid.
 
 ## Hard rules
 
@@ -139,6 +155,9 @@ For nested store data, validation treats these as structural problems:
 - an active version whose candidate is not `accepted`
 - a stored source text or source SHA that no longer matches the extracted source
 - a stale `context.md` render that no longer matches `context.json` (warning)
+- chunk metadata that no longer matches the manifest
+- a manifest `record_id_scheme` that is not the currently supported scheme
+- an unsupported source chunk `schema_version`
 
 ## Stale translations
 

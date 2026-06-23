@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from booktx.chunking import RECORD_ID_SCHEME
 from booktx.config import (
     Project,
     load_manifest,
@@ -63,6 +64,7 @@ __all__ = [
 
 #: Severity ordering for reporting.
 SEVERITY_ORDER = ("info", "warn", "error")
+SUPPORTED_SOURCE_CHUNK_SCHEMA_VERSIONS = {2}
 
 
 class Severity:
@@ -143,6 +145,63 @@ class EffectiveTranslations:
 
 def _load_source_chunk(path: Path) -> Chunk:
     return Chunk.model_validate_json(path.read_text("utf-8"))
+
+
+def _load_source_chunk_with_findings(path: Path) -> tuple[Chunk | None, list[Finding]]:
+    chunk_id = path.stem
+    try:
+        raw = json.loads(path.read_text("utf-8"))
+    except json.JSONDecodeError as exc:
+        return None, [
+            Finding(
+                chunk_id=chunk_id,
+                severity=Severity.ERROR,
+                rule="invalid_source_chunk",
+                message=(
+                    f"source chunk {path.name} is invalid JSON: {exc.msg} "
+                    f"(line {exc.lineno} col {exc.colno})"
+                ),
+            )
+        ]
+    if not isinstance(raw, dict):
+        return None, [
+            Finding(
+                chunk_id=chunk_id,
+                severity=Severity.ERROR,
+                rule="invalid_source_chunk",
+                message=f"source chunk {path.name} is not a JSON object",
+            )
+        ]
+    try:
+        chunk = Chunk.model_validate(raw)
+    except Exception as exc:  # noqa: BLE001
+        return None, [
+            Finding(
+                chunk_id=str(raw.get("chunk_id", chunk_id)),
+                severity=Severity.ERROR,
+                rule="invalid_source_chunk",
+                message=f"source chunk {path.name} is invalid: {exc}",
+            )
+        ]
+    findings: list[Finding] = []
+    raw_schema_version = raw.get("schema_version")
+    if (
+        raw_schema_version is not None
+        and isinstance(raw_schema_version, int)
+        and raw_schema_version not in SUPPORTED_SOURCE_CHUNK_SCHEMA_VERSIONS
+    ):
+        findings.append(
+            Finding(
+                chunk_id=chunk.chunk_id,
+                severity=Severity.ERROR,
+                rule="unsupported_chunk_schema_version",
+                message=(
+                    f"chunk {chunk.chunk_id} uses unsupported schema_version "
+                    f"{raw_schema_version}"
+                ),
+            )
+        )
+    return chunk, findings
 
 
 def strict_load_translated(path: Path) -> tuple[TranslatedChunk | None, str | None]:
@@ -723,10 +782,77 @@ def validate_project(
         generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
     )
 
-    source_chunks = {
-        path.stem: _load_source_chunk(path)
-        for path in sorted(project.chunks(), key=lambda path: path.stem)
-    }
+    source_chunks: dict[str, Chunk] = {}
+    for path in sorted(project.chunks(), key=lambda path: path.stem):
+        chunk, findings = _load_source_chunk_with_findings(path)
+        report.findings.extend(findings)
+        if chunk is not None:
+            source_chunks[path.stem] = chunk
+    try:
+        manifest = load_manifest(project)
+    except Exception as exc:  # noqa: BLE001
+        manifest = None
+        report.findings.append(
+            Finding(
+                chunk_id="manifest",
+                severity=Severity.ERROR,
+                rule="invalid_manifest",
+                message=f"manifest.json is invalid: {exc}",
+            )
+        )
+    if manifest is not None:
+        if manifest.chunk_size != project.config.chunk_size:
+            report.findings.append(
+                Finding(
+                    chunk_id="manifest",
+                    severity=Severity.WARN,
+                    rule="manifest_chunk_size_drift",
+                    message=(
+                        f"manifest chunk_size {manifest.chunk_size} differs from the "
+                        f"current config chunk_size {project.config.chunk_size}"
+                    ),
+                )
+            )
+        if manifest.record_id_scheme != RECORD_ID_SCHEME:
+            report.findings.append(
+                Finding(
+                    chunk_id="manifest",
+                    severity=Severity.ERROR,
+                    rule="manifest_record_id_scheme_mismatch",
+                    message=(
+                        "manifest record_id_scheme "
+                        f"{manifest.record_id_scheme!r} does not match the current "
+                        f"supported scheme {RECORD_ID_SCHEME!r}"
+                    ),
+                )
+            )
+        for chunk in source_chunks.values():
+            if chunk.chunk_size != manifest.chunk_size:
+                report.findings.append(
+                    Finding(
+                        chunk_id=chunk.chunk_id,
+                        severity=Severity.ERROR,
+                        rule="chunk_manifest_chunk_size_mismatch",
+                        message=(
+                            f"chunk {chunk.chunk_id} has chunk_size "
+                            f"{chunk.chunk_size}, but the manifest records "
+                            f"{manifest.chunk_size}"
+                        ),
+                    )
+                )
+            if chunk.record_id_scheme != manifest.record_id_scheme:
+                report.findings.append(
+                    Finding(
+                        chunk_id=chunk.chunk_id,
+                        severity=Severity.ERROR,
+                        rule="chunk_manifest_record_id_scheme_mismatch",
+                        message=(
+                            f"chunk {chunk.chunk_id} uses record_id_scheme "
+                            f"{chunk.record_id_scheme!r}, but the manifest records "
+                            f"{manifest.record_id_scheme!r}"
+                        ),
+                    )
+                )
     new_epub_pipeline = _uses_new_epub_pipeline(project)
     try:
         context = load_context(project)
@@ -788,7 +914,10 @@ def validate_project(
 def _uses_new_epub_pipeline(project: Project) -> bool:
     if project.config.format != "epub":
         return False
-    manifest = load_manifest(project)
+    try:
+        manifest = load_manifest(project)
+    except Exception:  # noqa: BLE001
+        return False
     if manifest is None:
         return False
     try:

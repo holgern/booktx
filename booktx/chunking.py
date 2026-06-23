@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import phrasplit
 from phrasplit import split_with_offsets
 
 from booktx.models import Chunk, Placeholder, Record
@@ -26,10 +27,14 @@ from booktx.placeholders import collect_tokens
 
 __all__ = [
     "ProseSpan",
+    "RECORD_ID_SCHEME",
+    "segmenter_metadata",
     "segment_spans",
     "pack_chunks",
     "spans_to_chunks",
 ]
+
+RECORD_ID_SCHEME = "chunk-local:v1"
 
 # phrasplit's simple backend expects spaCy-style model names for abbreviation
 # lookup, even when spaCy is not used. Keep booktx deterministic by forcing the
@@ -94,6 +99,21 @@ def _sentences(text: str, *, language: str) -> list[str]:
     return [segment.text for segment in segments]
 
 
+def segmenter_metadata(language: str) -> dict[str, object]:
+    """Return deterministic metadata describing the extraction segmenter."""
+    payload: dict[str, object] = {
+        "name": "phrasplit",
+        "mode": "sentence",
+        "use_spacy": False,
+        "language": language,
+        "backend": "regex",
+    }
+    version = getattr(phrasplit, "__version__", None)
+    if isinstance(version, str) and version:
+        payload["version"] = version
+    return payload
+
+
 def segment_spans(spans: list[ProseSpan], *, language: str = "en") -> list[Record]:
     """Segment every span into one :class:`Record` per sentence.
 
@@ -152,7 +172,10 @@ def pack_chunks(
             renumbered.append(rec.model_copy(update={"id": f"{chunk_id}-{intra:06d}"}))
         chunks.append(
             Chunk(
+                schema_version=2,
                 chunk_id=chunk_id,
+                chunk_size=chunk_size,
+                record_id_scheme=RECORD_ID_SCHEME,
                 source_language=source_language,
                 target_language=target_language,
                 records=renumbered,

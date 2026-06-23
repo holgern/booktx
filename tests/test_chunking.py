@@ -101,6 +101,9 @@ def test_pack_assigns_contract_ids():
     assert [c.chunk_id for c in chunks] == ["0001", "0002"]
     assert [r.id for r in chunks[0].records] == ["0001-000001", "0001-000002"]
     assert [r.id for r in chunks[1].records] == ["0002-000001"]
+    assert chunks[0].schema_version == 2
+    assert chunks[0].chunk_size == 2
+    assert chunks[0].record_id_scheme == "chunk-local:v1"
     assert chunks[0].source_language == "en"
     assert chunks[0].target_language == "de"
 

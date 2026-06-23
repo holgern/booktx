@@ -5,6 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import tomli_w
+
+from typer.testing import CliRunner
+
+from booktx.cli import app
 from booktx.config import (
     init_project,
     load_project,
@@ -36,6 +41,19 @@ from booktx.validate import (
     validate_project,
     write_report,
 )
+
+runner = CliRunner()
+
+
+def _rewrite_project_chunk_size(project_dir: Path, chunk_size: int) -> None:
+    from booktx.config import tomllib
+
+    config_path = project_dir / ".booktx" / "config.toml"
+    with config_path.open("rb") as fh:
+        data = tomllib.load(fh)
+    data["chunk_size"] = chunk_size
+    config_path.write_bytes(tomli_w.dumps(data).encode("utf-8"))
+
 
 
 def _src_chunk(chunk_id: str = "0001") -> Chunk:
@@ -424,6 +442,56 @@ def test_context_render_drift_is_a_warning(tmp_path: Path):
     report = validate_project(proj)
 
     assert any(f.rule == "context_render_drift" for f in report.findings)
+
+
+def test_validate_warns_on_config_chunk_size_drift(tmp_path: Path):
+    src = tmp_path / "story.md"
+    src.write_text("# One\n\nHello there.\n", encoding="utf-8")
+    proj = init_project(tmp_path / "book", target_language="de", source_file=src)
+    assert runner.invoke(app, ["extract", str(proj.root)]).exit_code == 0
+
+    _rewrite_project_chunk_size(proj.root, 25)
+    report = validate_project(load_project(proj.root))
+
+    assert report.passed
+    assert any(f.rule == "manifest_chunk_size_drift" for f in report.findings)
+
+
+def test_validate_errors_on_chunk_manifest_record_id_scheme_mismatch(tmp_path: Path):
+    src = tmp_path / "story.md"
+    src.write_text("# One\n\nHello there.\n", encoding="utf-8")
+    proj = init_project(tmp_path / "book", target_language="de", source_file=src)
+    assert runner.invoke(app, ["extract", str(proj.root)]).exit_code == 0
+
+    chunk_path = proj.chunks_dir / "0001.json"
+    chunk = json.loads(chunk_path.read_text("utf-8"))
+    chunk["record_id_scheme"] = "opaque:v9"
+    chunk_path.write_text(json.dumps(chunk), encoding="utf-8")
+
+    report = validate_project(load_project(proj.root))
+
+    assert not report.passed
+    assert any(
+        f.rule == "chunk_manifest_record_id_scheme_mismatch"
+        for f in report.findings
+    )
+
+
+def test_validate_errors_on_unsupported_chunk_schema_version(tmp_path: Path):
+    src = tmp_path / "story.md"
+    src.write_text("# One\n\nHello there.\n", encoding="utf-8")
+    proj = init_project(tmp_path / "book", target_language="de", source_file=src)
+    assert runner.invoke(app, ["extract", str(proj.root)]).exit_code == 0
+
+    chunk_path = proj.chunks_dir / "0001.json"
+    chunk = json.loads(chunk_path.read_text("utf-8"))
+    chunk["schema_version"] = 99
+    chunk_path.write_text(json.dumps(chunk), encoding="utf-8")
+
+    report = validate_project(load_project(proj.root))
+
+    assert not report.passed
+    assert any(f.rule == "unsupported_chunk_schema_version" for f in report.findings)
 
 
 def test_write_report_creates_json(tmp_path: Path):

@@ -15,6 +15,15 @@ booktx translate next . --unit batch --max-words 500 --format block
 
 If context is missing or not ready, stop translating and build the context first.
 
+Before translating, inspect the resolved defaults and active version with:
+
+```bash
+booktx whoami .
+booktx actor whoami .
+booktx harness whoami .
+booktx model whoami .
+```
+
 ## Before opening work items
 
 Read:
@@ -137,7 +146,12 @@ JSON remains available for compatibility:
 booktx translate insert . --task-id TASK --json-file .booktx/ingest/TASK.json
 ```
 
-Never use `/tmp`; Termux and some restricted environments do not provide it, and booktx reports a missing submission file with a concise error rather than a traceback. Do not request `--unit chapter --json` for normal translation, do not write Python helper scripts to build submission payloads, and do not edit `.booktx/translated/*.json` directly during normal work. That directory is compatibility output managed by `booktx translate export`.
+Never use `/tmp`; Termux and some restricted environments do not provide it, and booktx reports a missing submission file with a concise error rather than a traceback. Do not request `--unit chapter --json` for normal translation, do not write Python helper scripts to build submission payloads, do not edit `.booktx/chunks/*.json` or `.booktx/translation-store.json` directly during normal work, and do not edit `.booktx/translated/*.json` directly. That directory is compatibility output managed by `booktx translate export`.
+
+If `translate insert --task-id TASK ...` reports a stale translation task, do not
+reuse the old task file. Request a fresh task with `booktx translate next . ...`,
+fill the new `.booktx/ingest/` file, and resubmit under the current translation
+version.
 
 ## Version-aware review
 

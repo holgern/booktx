@@ -40,10 +40,16 @@ Example:
 
 This means the twelfth record inside chunk `0003`.
 
+The current extraction records `record_id_scheme = "chunk-local:v1"`. Under that
+scheme, changing `chunk_size` can renumber later record ids, so `booktx extract`
+refuses risky rechunking when accepted translations already exist unless you
+pass `--force-rechunk`.
+
 ## Chunk
 
 A chunk is a JSON file containing a small ordered batch of source records. Chunks are written to `.booktx/chunks/`.
 
+Chunks now also record `schema_version`, `chunk_size`, and `record_id_scheme`.
 The chunk size is configured in `.booktx/config.toml` as `chunk_size`.
 
 ## Translation store
@@ -79,7 +85,9 @@ A protected term is an original source string listed in `.booktx/names.json` or 
 
 ## Manifest
 
-`.booktx/manifest.json` stores source metadata and format-specific rebuild metadata.
+`.booktx/manifest.json` stores source metadata, extraction settings
+(`chunk_size`, `record_id_scheme`, segmenter metadata, protected-name hash), and
+format-specific rebuild metadata.
 
 For EPUB projects, the manifest is critical. It stores the source EPUB checksum, the `epub2text` to `text2epub` mapping, span references, and navigation references. Build fails if the source EPUB bytes no longer match the manifest.
 

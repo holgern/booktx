@@ -71,6 +71,7 @@ def test_chunk_matches_contract_example():
     """Mirrors the exact JSON in booktx_coding_agent_start.md."""
     chunk = Chunk(
         chunk_id="0001",
+        chunk_size=50,
         source_language="en",
         target_language="de",
         records=[
@@ -84,11 +85,17 @@ def test_chunk_matches_contract_example():
     )
     dumped = json.loads(chunk.model_dump_json())
     assert list(dumped.keys()) == [
+        "schema_version",
         "chunk_id",
+        "chunk_size",
+        "record_id_scheme",
         "source_language",
         "target_language",
         "records",
     ]
+    assert dumped["schema_version"] == 2
+    assert dumped["chunk_size"] == 50
+    assert dumped["record_id_scheme"] == "chunk-local:v1"
     assert dumped["records"][0]["id"] == "0001-000001"
 
 
@@ -104,6 +111,25 @@ def test_translated_chunk_matches_contract_example():
         "id": "0001-000001",
         "target": "Alice sah Mr. Smith an.",
     }
+
+
+def test_translated_record_accepts_optional_version():
+    rec = TranslatedRecord(
+        id="0002-000013",
+        version="1.1",
+        target="Zeit für das Übliche.",
+    )
+    assert rec.version == "1.1"
+
+
+def test_translated_record_rejects_bad_version():
+    with pytest.raises(ValidationError):
+        TranslatedRecord(id="0002-000013", version="1", target="x")
+
+
+def test_translated_record_legacy_without_version_is_valid():
+    rec = TranslatedRecord(id="0002-000013", target="Zeit für das Übliche.")
+    assert rec.version is None
 
 
 def test_translation_store_roundtrip():
@@ -285,6 +311,9 @@ def test_translation_task_roundtrip():
         chapter_title="Two",
         source_language="en",
         target_language="de",
+        translation_version="1.1",
+        context_sha256="a" * 64,
+        source_sha256="b" * 64,
         source_words=12,
         record_count=1,
         records=[
@@ -303,8 +332,26 @@ def test_translation_task_roundtrip():
     dumped = json.loads(task.model_dump_json())
 
     assert dumped["task_id"] == "bt-task-1"
+    assert dumped["translation_version"] == "1.1"
+    assert dumped["context_sha256"] == "a" * 64
+    assert dumped["source_sha256"] == "b" * 64
     assert dumped["records"][0]["chunk_id"] == "0006"
     assert TranslationTask.model_validate_json(task.model_dump_json()) == task
+
+
+def test_translation_task_legacy_without_metadata_is_valid():
+    task = TranslationTask.model_validate(
+        {
+            "task_id": "bt-task-legacy",
+            "unit": "batch",
+            "source_language": "en",
+            "target_language": "de",
+            "records": [],
+        }
+    )
+    assert task.translation_version is None
+    assert task.context_sha256 is None
+    assert task.source_sha256 is None
 
 
 def test_chunk_roundtrip_through_json():
@@ -327,6 +374,20 @@ def test_chunk_roundtrip_through_json():
     back = Chunk.model_validate_json(js)
     assert back == chunk
     assert back.records[0].placeholders[0].original == "Alice"
+
+
+def test_old_chunk_without_metadata_loads():
+    chunk = Chunk.model_validate(
+        {
+            "chunk_id": "0001",
+            "source_language": "en",
+            "target_language": "de",
+            "records": [],
+        }
+    )
+    assert chunk.schema_version == 2
+    assert chunk.chunk_size == 50
+    assert chunk.record_id_scheme == "chunk-local:v1"
 
 
 def test_project_config_defaults_and_validation():
@@ -367,10 +428,18 @@ def test_manifest_roundtrip():
         ),
         chunk_count=3,
         record_count=42,
+        chunk_size=50,
+        record_id_scheme="chunk-local:v1",
+        segmenter={"name": "phrasplit"},
+        names_sha256="abc123",
     )
     back = Manifest.model_validate_json(m.model_dump_json())
     assert back.source.filename == "book.md"
     assert back.record_count == 42
+    assert back.chunk_size == 50
+    assert back.record_id_scheme == "chunk-local:v1"
+    assert back.segmenter["name"] == "phrasplit"
+    assert back.names_sha256 == "abc123"
 
 
 def test_epub_template_data_roundtrip():

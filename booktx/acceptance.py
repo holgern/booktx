@@ -103,6 +103,51 @@ def _error_findings(findings: list[Finding]) -> list[Finding]:
     return [f for f in findings if f.severity == Severity.ERROR]
 
 
+def _resolved_submission_version(
+    proj: Project,
+    *,
+    task: TranslationTask | None,
+    submission_translation_version: str | None,
+) -> str:
+    """Resolve the version for this write and reject stale task metadata."""
+    resolution = resolve_current_version(proj)
+    current_version_ref = resolution.version_ref
+
+    if (
+        task is not None
+        and task.translation_version is not None
+        and task.translation_version != current_version_ref
+    ):
+        raise _err(
+            "stale_translation_task",
+            "stale translation task "
+            f"{task.task_id} was created for version {task.translation_version}, "
+            f"but the current active version is {current_version_ref}.\n"
+            "Run `booktx translate next .` to create a fresh task, or select the "
+            "old version explicitly before submitting.",
+        )
+
+    if submission_translation_version is not None:
+        expected_version = (
+            task.translation_version
+            if task is not None and task.translation_version is not None
+            else current_version_ref
+        )
+        if submission_translation_version != expected_version:
+            subject = (
+                f"task {task.task_id} version {expected_version}"
+                if task is not None and task.translation_version is not None
+                else f"current active version {expected_version}"
+            )
+            raise _err(
+                "submission_translation_version_mismatch",
+                "submission translation_version "
+                f"{submission_translation_version} does not match {subject}",
+            )
+
+    return current_version_ref
+
+
 def _validate_submitted(
     proj: Project,
     bundle: StatusBundle,
@@ -155,11 +200,12 @@ def _write_accepted(
     proj: Project,
     bundle: StatusBundle,
     submitted: list[SubmittedRecord],
+    *,
+    version_ref: str,
 ) -> tuple[str, str]:
     """Persist accepted records atomically and return timestamp plus version_ref."""
     source_by_id = bundle.index.source_by_id
     updated_at = utc_timestamp()
-    resolution = resolve_current_version(proj)
     store = load_translation_store(proj)
     store.source_sha256 = bundle.snapshot.source.source_sha256
     for item in submitted:
@@ -172,12 +218,12 @@ def _write_accepted(
         )
         upsert_translation_version(
             record,
-            resolution.version_ref,
+            version_ref,
             item.target,
             updated_at=updated_at,
         )
     write_translation_store(proj, store)
-    return updated_at, resolution.version_ref
+    return updated_at, version_ref
 
 
 def accept_translation_records(
@@ -186,6 +232,8 @@ def accept_translation_records(
     *,
     bundle: StatusBundle,
     task: TranslationTask | None = None,
+    submission_translation_version: str | None = None,
+    enforce_task_version: bool = False,
 ) -> AcceptResult:
     """Validate and atomically persist a batch of accepted records.
 
@@ -201,12 +249,22 @@ def accept_translation_records(
     if not submitted:
         raise _err("empty_submission", "no records to accept")
 
+    if enforce_task_version:
+        version_ref = _resolved_submission_version(
+            proj,
+            task=task,
+            submission_translation_version=submission_translation_version,
+        )
+    else:
+        version_ref = resolve_current_version(proj).version_ref
     findings = _validate_submitted(proj, bundle, submitted, task=task)
     errors = _error_findings(findings)
     if errors:
         raise SubmissionValidationError(errors)
 
-    _updated_at, version_ref = _write_accepted(proj, bundle, submitted)
+    _updated_at, version_ref = _write_accepted(
+        proj, bundle, submitted, version_ref=version_ref
+    )
 
     # Refresh to report post-accept progress for the first submitted record's
     # chapter. This mirrors the original two-pass behavior.
@@ -245,6 +303,8 @@ def accept_one_record(
     *,
     bundle: StatusBundle,
     task: TranslationTask | None = None,
+    submission_translation_version: str | None = None,
+    enforce_task_version: bool = False,
 ) -> AcceptResult:
     """Validate and persist a single accepted record.
 
@@ -255,5 +315,10 @@ def accept_one_record(
     if not target.strip():
         raise _err("empty_target", f"empty target for record {record_id}")
     return accept_translation_records(
-        proj, [SubmittedRecord(id=record_id, target=target)], bundle=bundle, task=task
+        proj,
+        [SubmittedRecord(id=record_id, target=target)],
+        bundle=bundle,
+        task=task,
+        submission_translation_version=submission_translation_version,
+        enforce_task_version=enforce_task_version,
     )

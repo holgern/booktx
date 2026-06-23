@@ -33,17 +33,19 @@ from booktx.acceptance import (
 )
 from booktx.build import BuildError, build_project
 from booktx.chapters import detect_chapters, load_chapter_map, write_chapter_map
-from booktx.chunking import spans_to_chunks
+from booktx.chunking import RECORD_ID_SCHEME, segmenter_metadata, spans_to_chunks
 from booktx.config import (
     BooktxError,
     find_source_file,
     identity_path,
     init_project,
+    load_manifest,
     load_identity,
     load_project,
     load_translation_store,
     load_translation_version_ledger,
     load_translation_task,
+    protected_terms_sha256,
     project_source_sha256,
     translation_store_path,
     translation_ingest_block_path,
@@ -56,6 +58,7 @@ from booktx.config import (
 from booktx.context import (
     GlossaryEntry,
     apply_answer_to_context,
+    context_path,
     context_markdown_path,
     default_context,
     load_context,
@@ -104,6 +107,7 @@ from booktx.validate import (
 )
 from booktx.versioning import resolve_current_version
 from booktx.versioning import (
+    canonical_json_sha256,
     default_identity,
     fork_current_context,
     lookup_version,
@@ -128,6 +132,7 @@ translate_app = typer.Typer(help="Command-based translation workflow.")
 actor_app = typer.Typer(help="Manage translation actor defaults.")
 harness_app = typer.Typer(help="Manage translation harness defaults.")
 model_app = typer.Typer(help="Manage translation model defaults.")
+identity_app = typer.Typer(help="Inspect resolved translation identity and project state.")
 version_app = typer.Typer(help="Inspect and manage translation version tracks.")
 app.add_typer(context_app, name="context")
 app.add_typer(translate_app, name="translate")
@@ -135,6 +140,7 @@ app.add_typer(translate_app, name="translation")
 app.add_typer(actor_app, name="actor")
 app.add_typer(harness_app, name="harness")
 app.add_typer(model_app, name="model")
+app.add_typer(identity_app, name="identity")
 app.add_typer(version_app, name="version")
 
 
@@ -178,14 +184,202 @@ def _handle_booktx_error(exc: BooktxError) -> None:
     _die(str(exc))
 
 
+def _resolve_project_value_args(
+    arg1: str,
+    arg2: str | None,
+    *,
+    value_name: str,
+    project_dir: Path | None = None,
+) -> tuple[Path, str]:
+    """Accept VALUE, VALUE PROJECT_DIR, or PROJECT_DIR VALUE."""
+    if project_dir is not None:
+        if arg2 is not None:
+            _die(
+                f"--project cannot be combined with a second positional {value_name}"
+            )
+        return project_dir.expanduser(), arg1
+
+    if arg2 is None:
+        return Path("."), arg1
+
+    p1 = Path(arg1).expanduser()
+    p2 = Path(arg2).expanduser()
+    p1_is_project = (p1 / ".booktx" / "config.toml").is_file()
+    p2_is_project = (p2 / ".booktx" / "config.toml").is_file()
+
+    if p1_is_project and not p2_is_project:
+        return p1, arg2
+    if p2_is_project and not p1_is_project:
+        return p2, arg1
+    return p1, arg2
+
+
+def _context_identity_payload(proj) -> dict[str, Any]:
+    path = context_path(proj)
+    rel_path = ".booktx/context.json"
+    if not path.is_file():
+        return {
+            "path": rel_path,
+            "exists": False,
+            "ready": None,
+            "sha256": None,
+            "status": "missing",
+        }
+    try:
+        context = load_context(proj)
+    except Exception:
+        return {
+            "path": rel_path,
+            "exists": True,
+            "ready": None,
+            "sha256": None,
+            "status": "invalid",
+        }
+    if context is None:  # pragma: no cover - guarded by is_file() above
+        return {
+            "path": rel_path,
+            "exists": False,
+            "ready": None,
+            "sha256": None,
+            "status": "missing",
+        }
+    return {
+        "path": rel_path,
+        "exists": True,
+        "ready": context.ready,
+        "sha256": canonical_json_sha256(
+            context.model_dump(mode="json", by_alias=True)
+        ),
+        "status": "ready" if context.ready else "not_ready",
+    }
+
+
+def _store_identity_payload(proj) -> dict[str, Any]:
+    path = translation_store_path(proj)
+    if not path.is_file():
+        return {
+            "exists": False,
+            "version": None,
+            "record_count": None,
+            "status": "missing",
+        }
+    try:
+        store = load_translation_store(proj)
+    except Exception:
+        version = None
+        try:
+            raw = json.loads(path.read_text("utf-8"))
+        except Exception:  # noqa: BLE001
+            raw = {}
+        if isinstance(raw, dict) and isinstance(raw.get("version"), int):
+            version = raw["version"]
+        return {
+            "exists": True,
+            "version": version,
+            "record_count": None,
+            "status": "invalid",
+        }
+    return {
+        "exists": True,
+        "version": store.version,
+        "record_count": len(store.records),
+        "status": "ok",
+    }
+
+
+def _identity_payload(proj) -> dict[str, Any]:
+    identity = resolve_identity(proj)
+    active_version = None
+    try:
+        active_version = load_translation_version_ledger(proj).active_version
+    except Exception:  # noqa: BLE001
+        active_version = None
+
+    try:
+        source_sha256 = project_source_sha256(proj)
+    except Exception:  # noqa: BLE001
+        source_sha256 = None
+
+    return {
+        "project_dir": str(proj.root),
+        "actor": identity.actor,
+        "harness": identity.harness,
+        "model": identity.model,
+        "active_version": active_version,
+        "context": _context_identity_payload(proj),
+        "source_sha256": source_sha256,
+        "store": _store_identity_payload(proj),
+    }
+
+
+def _render_identity_human(payload: dict[str, Any]) -> None:
+    context_payload = payload["context"]
+    store_payload = payload["store"]
+    context_state = {
+        "ready": "READY",
+        "not_ready": "NOT_READY",
+        "missing": "MISSING",
+        "invalid": "INVALID",
+    }[str(context_payload["status"])]
+    rows = [
+        ("actor", payload["actor"]),
+        ("harness", payload["harness"]),
+        ("model", payload["model"]),
+        ("active_version", payload["active_version"] or "none"),
+        ("context", f"{context_state} {context_payload['path']}"),
+        ("context_sha256", context_payload["sha256"] or "none"),
+        ("source_sha256", payload["source_sha256"] or "none"),
+        ("store_version", store_payload["version"] if store_payload["version"] is not None else "none"),
+        ("store_records", store_payload["record_count"] if store_payload["record_count"] is not None else "none"),
+    ]
+    width = max(len(label) for label, _ in rows)
+    console.print(f"booktx identity: {payload['project_dir']}", soft_wrap=True)
+    for label, value in rows:
+        console.print(f"{label + ':':<{width + 2}} {value}", soft_wrap=True)
+
+
+def _print_identity(project_dir: Path, *, as_json: bool) -> None:
+    proj = _load_project_or_exit(project_dir)
+    payload = _identity_payload(proj)
+    if as_json:
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
+    _render_identity_human(payload)
+
+
 # --- version -----------------------------------------------------------------
 
 
 @version_app.callback(invoke_without_command=True)
 def version_root(ctx: typer.Context) -> None:
-    """Print the package version or dispatch to version subcommands."""
+    """Translation-version command group."""
     if ctx.invoked_subcommand is None:
-        console.print(__version__)
+        console.print(
+            "[red]error:[/red] `booktx version` is a translation-version command "
+            "group. Use `booktx --version` for the CLI package version, or "
+            "`booktx version current PROJECT_DIR` for the active translation "
+            "version.",
+            soft_wrap=True,
+        )
+        raise typer.Exit(code=2)
+
+
+@app.command(name="whoami")
+def whoami(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    """Show resolved translation identity and project status."""
+    _print_identity(project_dir, as_json=as_json)
+
+
+@identity_app.command(name="whoami")
+def identity_whoami(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    """Alias for the top-level whoami command."""
+    _print_identity(project_dir, as_json=as_json)
 
 
 @actor_app.command(name="whoami")
@@ -197,10 +391,18 @@ def actor_whoami(project_dir: Path = typer.Argument(..., help="Project directory
 
 @actor_app.command(name="set")
 def actor_set(
-    project_dir: Path = typer.Argument(..., help="Project directory."),
-    actor: str = typer.Argument(..., help="Actor identifier, for example user:nahrstaedt."),
+    arg1: str = typer.Argument(
+        ..., help="Actor value, or project directory when using the legacy order."
+    ),
+    arg2: str | None = typer.Argument(
+        None, help="Optional project directory or actor value."
+    ),
+    project: Path | None = typer.Option(None, "--project", help="Project directory."),
 ) -> None:
     """Persist the actor default used for new version tracks."""
+    project_dir, actor = _resolve_project_value_args(
+        arg1, arg2, value_name="actor", project_dir=project
+    )
     proj = _load_project_or_exit(project_dir)
     identity = _write_identity_defaults(proj, actor=actor)
     console.print(identity.actor)
@@ -214,12 +416,29 @@ def actor_clear(project_dir: Path = typer.Argument(..., help="Project directory.
     console.print(identity.actor)
 
 
+@harness_app.command(name="whoami")
+def harness_whoami(
+    project_dir: Path = typer.Argument(..., help="Project directory.")
+) -> None:
+    """Show the resolved harness default for translation versioning."""
+    proj = _load_project_or_exit(project_dir)
+    console.print(_resolved_identity(proj).harness)
+
+
 @harness_app.command(name="set")
 def harness_set(
-    project_dir: Path = typer.Argument(..., help="Project directory."),
-    harness: str = typer.Argument(..., help="Harness identifier, for example pi."),
+    arg1: str = typer.Argument(
+        ..., help="Harness value, or project directory when using the legacy order."
+    ),
+    arg2: str | None = typer.Argument(
+        None, help="Optional project directory or harness value."
+    ),
+    project: Path | None = typer.Option(None, "--project", help="Project directory."),
 ) -> None:
     """Persist the harness default used for new version tracks."""
+    project_dir, harness = _resolve_project_value_args(
+        arg1, arg2, value_name="harness", project_dir=project
+    )
     proj = _load_project_or_exit(project_dir)
     identity = _write_identity_defaults(proj, harness=harness)
     console.print(identity.harness)
@@ -233,12 +452,27 @@ def harness_clear(project_dir: Path = typer.Argument(..., help="Project director
     console.print(identity.harness)
 
 
+@model_app.command(name="whoami")
+def model_whoami(project_dir: Path = typer.Argument(..., help="Project directory.")) -> None:
+    """Show the resolved model default for translation versioning."""
+    proj = _load_project_or_exit(project_dir)
+    console.print(_resolved_identity(proj).model)
+
+
 @model_app.command(name="set")
 def model_set(
-    project_dir: Path = typer.Argument(..., help="Project directory."),
-    model: str = typer.Argument(..., help="Model identifier, for example human."),
+    arg1: str = typer.Argument(
+        ..., help="Model value, or project directory when using the legacy order."
+    ),
+    arg2: str | None = typer.Argument(
+        None, help="Optional project directory or model value."
+    ),
+    project: Path | None = typer.Option(None, "--project", help="Project directory."),
 ) -> None:
     """Persist the model default used for new version tracks."""
+    project_dir, model = _resolve_project_value_args(
+        arg1, arg2, value_name="model", project_dir=project
+    )
     proj = _load_project_or_exit(project_dir)
     identity = _write_identity_defaults(proj, model=model)
     console.print(identity.model)
@@ -796,12 +1030,109 @@ def _count_records(
     return len(records), details
 
 
+def _chunk_json_texts(chunks) -> dict[str, str]:
+    return {
+        f"{chunk.chunk_id}.json": chunk.model_dump_json(indent=2) + "\n"
+        for chunk in chunks
+    }
+
+
+def _has_accepted_store_records(proj) -> bool:
+    path = translation_store_path(proj)
+    if not path.is_file():
+        return False
+    store = load_translation_store(proj)
+    return any(
+        any(candidate.status == "accepted" for candidate in record.versions)
+        for record in store.records.values()
+    )
+
+
+def _same_extract_settings(
+    manifest,
+    *,
+    chunk_size: int,
+    source_language: str,
+    names_sha256: str,
+) -> bool:
+    return (
+        manifest.chunk_size == chunk_size
+        and manifest.record_id_scheme == RECORD_ID_SCHEME
+        and manifest.segmenter == segmenter_metadata(source_language)
+        and manifest.names_sha256 == names_sha256
+    )
+
+
+def _guard_extract_repeatability_and_rechunk(
+    proj,
+    *,
+    current_source_sha256: str,
+    chunk_texts: dict[str, str],
+    names_sha256: str,
+    force_rechunk: bool,
+) -> str | None:
+    previous_manifest = load_manifest(proj)
+    if previous_manifest is None:
+        return None
+
+    previous_source_sha256 = previous_manifest.source.sha256
+    same_source = bool(previous_source_sha256) and (
+        previous_source_sha256 == current_source_sha256
+    )
+
+    if (
+        same_source
+        and previous_manifest.record_id_scheme == RECORD_ID_SCHEME
+        and previous_manifest.chunk_size != proj.config.chunk_size
+        and _has_accepted_store_records(proj)
+        and not force_rechunk
+    ):
+        _die(
+            "chunk_size changed from "
+            f"{previous_manifest.chunk_size} to {proj.config.chunk_size}, but this "
+            f"project uses record_id_scheme={RECORD_ID_SCHEME}.\n"
+            "Changing chunk_size would renumber record ids and orphan existing "
+            "translation-store entries.\n"
+            "Use the existing chunk_size, or run `booktx extract --force-rechunk` "
+            "after backing up or migrating translations."
+        )
+
+    if same_source and _same_extract_settings(
+        previous_manifest,
+        chunk_size=proj.config.chunk_size,
+        source_language=proj.config.source_language,
+        names_sha256=names_sha256,
+    ):
+        existing_chunks = {
+            path.name: path.read_text("utf-8")
+            for path in sorted(proj.chunks(), key=lambda path: path.name)
+        }
+        if existing_chunks and existing_chunks != chunk_texts:
+            _die(
+                "repeatability violated: the same source and extraction settings "
+                "did not reproduce byte-identical chunk files; refusing to replace "
+                "the existing chunks."
+            )
+
+    if previous_source_sha256 and previous_source_sha256 != current_source_sha256:
+        return (
+            "source file changed since the previous extraction; validation may "
+            "report stale translations."
+        )
+    return None
+
+
 # --- extract -----------------------------------------------------------------
 
 
 @app.command()
 def extract(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    force_rechunk: bool = typer.Option(
+        False,
+        "--force-rechunk",
+        help="Allow a risky chunk-size rechunk when chunk-local ids would be renumbered.",
+    ),
 ) -> None:
     """Extract translatable chunks into ``.booktx/chunks/``.
 
@@ -841,18 +1172,27 @@ def extract(
     # .booktx/chunks/.
     import tempfile
 
+    from booktx.config import sha256_path as _sha256
     from booktx.io_utils import write_text_atomic
+
+    current_source_sha256 = extraction.source_sha256 if fmt == "epub" else _sha256(source)
+    names_sha256 = protected_terms_sha256(names)
+    chunk_texts = _chunk_json_texts(chunks)
+    warning_message = _guard_extract_repeatability_and_rechunk(
+        proj,
+        current_source_sha256=current_source_sha256,
+        chunk_texts=chunk_texts,
+        names_sha256=names_sha256,
+        force_rechunk=force_rechunk,
+    )
 
     proj.booktx_dir.mkdir(parents=True, exist_ok=True)
     tmp_chunks = Path(
         tempfile.mkdtemp(prefix=".chunks.", dir=proj.booktx_dir)
     )
     try:
-        for chunk in chunks:
-            write_text_atomic(
-                tmp_chunks / f"{chunk.chunk_id}.json",
-                chunk.model_dump_json(indent=2) + "\n",
-            )
+        for filename, text in chunk_texts.items():
+            write_text_atomic(tmp_chunks / filename, text)
         # Remove the previous chunks dir and move the temp one into place.
         if proj.chunks_dir.exists():
             shutil.rmtree(proj.chunks_dir)
@@ -865,7 +1205,6 @@ def extract(
     if fmt == "epub":
         _save_epub_manifest(proj, source, extraction, len(chunks), record_count)
     elif fmt == "markdown":
-        from booktx.config import sha256_path as _sha256
         from booktx.config import write_manifest
         from booktx.models import Manifest, ManifestSource
 
@@ -878,16 +1217,22 @@ def extract(
                     format="markdown",
                     source_language=proj.config.source_language,
                     target_language=proj.config.target_language,
-                    sha256=_sha256(source),
+                    sha256=current_source_sha256,
                 ),
                 chunk_count=len(chunks),
                 record_count=record_count,
+                chunk_size=proj.config.chunk_size,
+                record_id_scheme=RECORD_ID_SCHEME,
+                segmenter=segmenter_metadata(proj.config.source_language),
+                names_sha256=names_sha256,
             ),
         )
     console.print(
         f"[green]Extracted[/green] {len(chunks)} chunk(s), "
         f"{record_count} record(s) into {proj.chunks_dir}"
     )
+    if warning_message:
+        console.print(f"[yellow]warning:[/yellow] {warning_message}", soft_wrap=True)
 
 
 def _assert_epub_records_are_clean(chunks) -> None:
@@ -927,6 +1272,10 @@ def _save_epub_manifest(
         ),
         chunk_count=chunk_count,
         record_count=record_count,
+        chunk_size=proj.config.chunk_size,
+        record_id_scheme=RECORD_ID_SCHEME,
+        segmenter=segmenter_metadata(proj.config.source_language),
+        names_sha256=protected_terms_sha256(_load_names_list(proj)),
         template=template.model_dump(mode="json"),
     )
     write_manifest(proj, manifest)
@@ -1430,7 +1779,12 @@ def translate_insert(
     summary = _project_status_snapshot(proj)
     try:
         result = accept_translation_records(
-            proj, submitted_records, bundle=summary, task=task
+            proj,
+            submitted_records,
+            bundle=summary,
+            task=task,
+            submission_translation_version=parsed.translation_version,
+            enforce_task_version=True,
         )
     except SubmissionValidationError as exc:
         _render_submission_failures(exc.findings)
@@ -1674,7 +2028,13 @@ def translate_export(
                         continue
                     version_map.setdefault(candidate.version_ref, {}).setdefault(
                         chunk.chunk_id, []
-                    ).append(TranslatedRecord(id=record.id, target=candidate.target))
+                    ).append(
+                        TranslatedRecord(
+                            id=record.id,
+                            version=candidate.version_ref,
+                            target=candidate.target,
+                        )
+                    )
         for ref, chunks in version_map.items():
             export_dir = proj.translated_dir / ref
             export_dir.mkdir(parents=True, exist_ok=True)
@@ -1698,7 +2058,13 @@ def translate_export(
             if candidate is None:
                 translated_records = []
                 break
-            translated_records.append(TranslatedRecord(id=record.id, target=candidate.target))
+            translated_records.append(
+                TranslatedRecord(
+                    id=record.id,
+                    version=candidate.version_ref,
+                    target=candidate.target,
+                )
+            )
         if not translated_records:
             continue
         translated_chunk = TranslatedChunk(chunk_id=chunk.chunk_id, records=translated_records)

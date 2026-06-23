@@ -81,12 +81,15 @@ submissions can be checked against an explicit task id.
 ## `.booktx/ingest/`
 
 Durable user/agent-authored translation submissions. `booktx translate next` creates `.booktx/ingest/TASK.block.txt` for durable block-text submissions and keeps `.booktx/ingest/TASK.json` for compatibility tooling. Prefer direct `booktx translate insert --stdin --format block` submissions for normal agent work; use the durable `.block.txt` file when you want the submission payload version-controlled. The directory is intended to be kept in version control so unfinished or failed translation attempts are not lost.
+New task artifacts carry `translation_version`, `context_sha256`, and `source_sha256`
+metadata so stale task submissions can be rejected safely.
 
 ## `.booktx/translated/`
 
 Compatibility/export output. `booktx extract` leaves this directory untouched,
 valid legacy files still count as progress, and `booktx translate export`
-materializes full translated chunks here.
+materializes full translated chunks here. Do not edit these files directly;
+regenerate them through `booktx translate export`.
 
 ## `.booktx/context.json`
 
@@ -100,7 +103,10 @@ Rendered context for agents. This file is generated from `context.json`; do not 
 
 Stores source metadata and rebuild metadata.
 
-For EPUB, this includes the `text2epub` extraction manifest and span references needed for safe rebuild.
+For Markdown and EPUB, the manifest records the extracted source SHA, `chunk_size`,
+`record_id_scheme`, segmenter metadata, and a deterministic protected-name hash.
+For EPUB, it also includes the `text2epub` extraction manifest and span references
+needed for safe rebuild.
 
 ## `.booktx/chapter-map.json`
 

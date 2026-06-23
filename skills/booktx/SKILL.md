@@ -27,7 +27,10 @@ A source chunk looks like this:
 
 ```json
 {
+  "schema_version": 2,
   "chunk_id": "0001",
+  "chunk_size": 50,
+  "record_id_scheme": "chunk-local:v1",
   "source_language": "en",
   "target_language": "de",
   "records": [
@@ -52,6 +55,7 @@ Compatibility translated chunk files still look like this when exported:
   "records": [
     {
       "id": "0001-000001",
+      "version": "1.1",
       "target": "__NAME_001__ sah __NAME_002__ an."
     }
   ]
@@ -70,6 +74,8 @@ Compatibility translated chunk files still look like this when exported:
 - Do not replace a `__NAME_NNN__` token with the visible original name. Build restores names later.
 - Do not translate inline code, URLs, tag fragments, or protected names hidden behind placeholders.
 - Keep each `target` non-empty.
+- Never edit `.booktx/chunks/*.json` directly.
+- Never edit `.booktx/translation-store.json` directly.
 
 ## Required context gate
 
@@ -94,6 +100,7 @@ From a project root:
 
 ```bash
 booktx extract .
+booktx whoami .
 booktx context status .
 booktx status .
 booktx translate next . --unit batch --max-words 500 --format block
@@ -118,6 +125,11 @@ booktx translate set-record . --task-id TASK --record-id RECORD_ID --stdin
 ```
 
 Keep `.booktx/ingest/TASK.json` and `--json-file` for compatibility tooling. Use a stdin heredoc only for very small manual fixes. Never use `/tmp`; Termux and some restricted environments do not provide it. Do not request `--unit chapter --json` for normal translation, do not write Python helper scripts to create translation submissions, and do not edit `.booktx/translated/*.json` directly.
+
+If `booktx translate insert . --task-id TASK ...` reports a stale translation
+task, stop using that task file. Run `booktx translate next . ...` again, fill
+the fresh `.booktx/ingest/` file, and resubmit under the current translation
+version.
 
 After writing translations:
 
@@ -159,6 +171,12 @@ for s, t in zip(src["records"], tgt["records"], strict=True):
 
 Prefer `booktx validate` as the authoritative check.
 
+## Identity and version inspection
+
+- Use `booktx --version` for the CLI package version.
+- Treat `booktx version` as the translation-version command group; use subcommands such as `current`, `list`, `show`, `select`, `fork-context`, and `set-label`.
+- Use `booktx whoami .`, `booktx actor whoami .`, `booktx harness whoami .`, and `booktx model whoami .` to inspect the resolved identity and active version state.
+
 ## Package maintenance map
 
 - `booktx/models.py`: Pydantic models for source and translated JSON contracts.
@@ -179,6 +197,8 @@ Prefer `booktx validate` as the authoritative check.
 - Do not add automatic translation API calls to core.
 - Do not change chunk IDs, record IDs, or JSON field names without migration and tests.
 - Keep `booktx extract` idempotent: it may rebuild `.booktx/chunks`, but must not delete `.booktx/translated`.
+- Stop and resolve extraction drift, chunk-size drift, or record-id drift before translating further.
+- Use `booktx extract --force-rechunk` only for an explicit risky rechunk after backing up or migrating accepted translations.
 - Keep build/rebuild structure-preserving for Markdown and EPUB.
 - Add tests before refactoring extractor internals.
 - Treat `booktx validate` as the gate before build.

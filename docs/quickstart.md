@@ -56,7 +56,10 @@ demo/.booktx/chunks/0002.json
 ```
 
 Extraction is idempotent: rerunning it rebuilds `chunks/` but leaves the
-translation store and compatibility `translated/` files intact.
+translation store and compatibility `translated/` files intact. If you change
+`chunk_size` under `record_id_scheme=chunk-local:v1` while accepted translations
+exist, rerun with `booktx extract ./demo --force-rechunk` only after intentionally
+backing up or migrating that work.
 
 ## Build translation context
 
@@ -108,7 +111,10 @@ The record contract is still:
 
 ```json
 {
+  "schema_version": 2,
   "chunk_id": "0001",
+  "chunk_size": 50,
+  "record_id_scheme": "chunk-local:v1",
   "source_language": "en",
   "target_language": "de",
   "records": [
@@ -132,6 +138,7 @@ Compatibility translated chunk shape:
   "records": [
     {
       "id": "0001-000001",
+      "version": "1.1",
       "target": "__NAME_001__ sah die Stadt an."
     }
   ]

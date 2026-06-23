@@ -15,23 +15,39 @@ booktx version set-label PROJECT_DIR 1 "gpt-5.5 low"
 booktx version fork-context PROJECT_DIR --note "manual split"
 ```
 
-`booktx version` with no subcommand prints the installed package version.
-The subcommands inspect and manage the project-wide translation-version ledger.
+``booktx --version` prints the installed package version. `booktx version` with
+no subcommand exits non-zero and points you at `booktx --version` plus the
+translation-version subcommands. The subcommands inspect and manage the
+project-wide translation-version ledger.
 
 ## Identity defaults
 
 ```bash
+booktx whoami PROJECT_DIR
+booktx whoami PROJECT_DIR --json
+booktx identity whoami PROJECT_DIR
 booktx actor whoami PROJECT_DIR
+booktx harness whoami PROJECT_DIR
+booktx model whoami PROJECT_DIR
 booktx actor set PROJECT_DIR user:nahrstaedt
+booktx actor set user:nahrstaedt PROJECT_DIR
+booktx actor set --project PROJECT_DIR user:nahrstaedt
 booktx actor clear PROJECT_DIR
 booktx harness set PROJECT_DIR pi
+booktx harness set pi PROJECT_DIR
+booktx harness set --project PROJECT_DIR pi
 booktx harness clear PROJECT_DIR
 booktx model set PROJECT_DIR codex-openai/gpt-5.5@low
+booktx model set codex-openai/gpt-5.5@low PROJECT_DIR
+booktx model set --project PROJECT_DIR codex-openai/gpt-5.5@low
 booktx model clear PROJECT_DIR
 ```
 
 These commands manage `.booktx/identity.json`, which supplies default actor,
-harness, and model values for new major tracks in the version ledger.
+harness, and model values for new major tracks in the version ledger. `booktx whoami`
+shows the resolved actor/harness/model plus active translation version, context
+status and hash, source hash, and translation-store summary without failing
+solely because optional state is missing.
 
 ## Initialize a project
 
@@ -72,6 +88,7 @@ Shows:
 
 ```bash
 booktx extract PROJECT_DIR
+booktx extract PROJECT_DIR --force-rechunk
 ```
 
 Writes `.booktx/chunks/*.json`.
@@ -83,6 +100,11 @@ Extraction is idempotent:
 - `translated/` is preserved as compatibility output.
 - EPUB extraction writes manifest v2 metadata.
 - Fresh EPUB chunks are rejected if they contain `__TAG_` or `__SPANTX_` tokens.
+
+When the source SHA and extraction settings match the previous manifest,
+re-extract must reproduce byte-identical chunk files. If `chunk_size` changes
+under `record_id_scheme=chunk-local:v1` while accepted translations exist,
+extract refuses by default and requires `--force-rechunk`.
 
 ## Context commands
 
@@ -170,7 +192,7 @@ booktx translate next PROJECT_DIR --format block --show-sources
 booktx translate next PROJECT_DIR --format tsv
 ```
 
-Returns the next pending work unit, persists a task id, and prints a concise summary with the source file, the durable block file, and a submit command. By default `--format block` does NOT print the source text or heredoc body; add `--show-sources` or `--show-template` to print them inline. It writes `.booktx/tasks/TASK.source.block.txt` (source text), `.booktx/ingest/TASK.block.txt` (editable durable target file with metadata headers), and `.booktx/ingest/TASK.json` for JSON compatibility.
+Returns the next pending work unit, persists a task id, and prints a concise summary with the source file, the durable block file, and a submit command. By default `--format block` does NOT print the source text or heredoc body; add `--show-sources` or `--show-template` to print them inline. It writes `.booktx/tasks/TASK.source.block.txt` (source text), `.booktx/ingest/TASK.block.txt` (editable durable target file with metadata headers, including `translation_version`), and `.booktx/ingest/TASK.json` for JSON compatibility (`schema_version: 2` plus `translation_version`).
 
 ### Insert translated records
 
@@ -183,7 +205,7 @@ booktx translate insert PROJECT_DIR --stdin --format tsv
 booktx translate insert PROJECT_DIR --json-file .booktx/ingest/TASK.json
 ```
 
-Prefer submitting the generated `.booktx/ingest/TASK.block.txt` durable file for normal agent work; use a stdin heredoc only for very small manual fixes. `translate insert` validates submitted records before writing `.booktx/translation-store.json`. Invalid submissions are rejected atomically.
+Prefer submitting the generated `.booktx/ingest/TASK.block.txt` durable file for normal agent work; use a stdin heredoc only for very small manual fixes. `translate insert` validates submitted records before writing `.booktx/translation-store.json`. Invalid submissions are rejected atomically. If the task was created under translation version `1.1` and the current resolved version is now `1.2`, `translate insert --task-id TASK ...` rejects the stale task and tells you to request a fresh one.
 Accepted writes print the resolved dotted version ref, for example `version: 1.2`.
 
 ### Task status
@@ -223,7 +245,8 @@ the nested record-level store. `migrate-store` inspects or rewrites a legacy v1
 flat store into the v2 nested shape. `export` materializes compatibility chunk
 files from the active accepted candidates by default, can target one exact
 version ref, can export the latest accepted subversion for one track, and can
-write every accepted version into `translated/<version-ref>/`.
+write every accepted version into `translated/<version-ref>/`. Exported records
+may include per-record accepted translation `version` metadata such as `1.1`.
 
 ### Record inspection and review
 
@@ -280,7 +303,7 @@ booktx validate PROJECT_DIR
 booktx validate PROJECT_DIR --all-versions-strict
 ```
 
-Checks translated chunks against the contract and context rules, writes `.booktx/reports/validation-report.json`, and exits non-zero on errors.
+Checks translated chunks against the contract and context rules, writes `.booktx/reports/validation-report.json`, and exits non-zero on errors. Validation also warns on manifest-vs-config `chunk_size` drift, errors on unsupported `record_id_scheme`, and errors when chunk metadata no longer matches the manifest.
 
 ## Build
 

@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING
 
 from booktx.acceptance import SubmittedRecord
 from booktx.config import _err
+from booktx.models import TranslatedRecord
+from booktx.record_refs import parse_version_ref
 
 if TYPE_CHECKING:
     pass
@@ -40,15 +42,17 @@ _BLOCK_HEADER_RE = re.compile(r"^>>>\s+(?P<id>\S+)\s*$")
 class ParsedSubmission:
     """A parsed submission payload: optional task id + validated records."""
 
-    __slots__ = ("task_id", "records")
+    __slots__ = ("task_id", "records", "translation_version")
 
     def __init__(
         self,
         records: list[SubmittedRecord],
         task_id: str | None = None,
+        translation_version: str | None = None,
     ) -> None:
         self.records = records
         self.task_id = task_id
+        self.translation_version = translation_version
 
 
 def _trim_blank_edge_lines(lines: list[str]) -> str:
@@ -72,6 +76,28 @@ def parse_json_submission(text: str) -> ParsedSubmission:
         ) from None
     if not isinstance(payload, dict):
         raise _err("invalid_json_submission", "JSON submission must be an object")
+    schema_version = payload.get("schema_version")
+    if schema_version is not None and not isinstance(schema_version, int):
+        raise _err(
+            "invalid_json_submission", "JSON submission field 'schema_version' must be an integer"
+        )
+    legacy_version = payload.get("version")
+    if legacy_version is not None and not isinstance(legacy_version, int):
+        raise _err(
+            "invalid_json_submission", "JSON submission field 'version' must be an integer"
+        )
+    translation_version_raw = payload.get("translation_version")
+    translation_version = None
+    if translation_version_raw is not None:
+        if not isinstance(translation_version_raw, str):
+            raise _err(
+                "invalid_json_submission",
+                "JSON submission field 'translation_version' must be a string",
+            )
+        try:
+            translation_version = parse_version_ref(translation_version_raw).version_ref
+        except ValueError as exc:
+            raise _err("invalid_json_submission", str(exc)) from None
     records = payload.get("records")
     if not isinstance(records, list):
         raise _err(
@@ -83,16 +109,24 @@ def parse_json_submission(text: str) -> ParsedSubmission:
             raise _err(
                 "invalid_json_submission", "each submitted record must be an object"
             )
-        record_id = str(item.get("id", "")).strip()
-        target = item.get("target")
-        if not record_id or not isinstance(target, str):
+        try:
+            record = TranslatedRecord.model_validate(item)
+        except Exception as exc:  # noqa: BLE001
+            raise _err(
+                "invalid_json_submission", f"invalid submitted record: {exc}"
+            ) from None
+        if not record.id or not isinstance(record.target, str):
             raise _err(
                 "invalid_json_submission",
                 "each submitted record must contain string fields 'id' and 'target'",
             )
-        parsed.append(SubmittedRecord(id=record_id, target=target))
+        parsed.append(SubmittedRecord(id=record.id.strip(), target=record.target))
     task_id = payload.get("task_id")
-    return ParsedSubmission(parsed, str(task_id).strip() if task_id else None)
+    return ParsedSubmission(
+        parsed,
+        str(task_id).strip() if task_id else None,
+        translation_version=translation_version,
+    )
 
 
 def parse_tsv_submission(text: str) -> ParsedSubmission:
