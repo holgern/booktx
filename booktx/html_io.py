@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from bs4 import BeautifulSoup, NavigableString, Tag
+from bs4 import BeautifulSoup, NavigableString, Tag  # type: ignore[attr-defined]
 from bs4.formatter import XMLFormatter
 
 from booktx.chunking import ProseSpan
@@ -97,7 +97,7 @@ class _RawTextFormatter(XMLFormatter):
     """Don't HTML-escape placeholder underscores or quotes we just wrote."""
 
     def __init__(self) -> None:
-        super().__init__(language=None, entity_substitution=None)
+        super().__init__(entity_substitution=None)
 
 
 @dataclass(slots=True)
@@ -157,6 +157,7 @@ def _extract_block_span(
     """
     parts: list[str] = []
     placeholders: list[Placeholder] = []
+    idx_local = tag_start
 
     def walk(node: Tag) -> int:
         nonlocal idx_local
@@ -198,7 +199,6 @@ def _extract_block_span(
                 )
         return idx_local
 
-    idx_local = tag_start
     walk(block)
     return "".join(parts), placeholders, idx_local
 
@@ -331,7 +331,7 @@ def build_xhtml(template: str, span_replacements: list[str]) -> str:
     # SPANTX markers live as text nodes inside their blocks. Find them in
     # document order.
     marker_nodes = []
-    for node in soup.find_all(string=_SPANTX_RE.search):
+    for node in soup.find_all(string=lambda s: bool(s and _SPANTX_RE.search(s))):
         marker_nodes.append(node)
 
     for i, replacement in enumerate(span_replacements, start=1):

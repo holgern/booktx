@@ -129,7 +129,7 @@ class TranslatedRecord(BaseModel):
 
     @model_serializer(mode="wrap")
     def _omit_none_version(self, handler: Any) -> dict[str, Any]:
-        payload = handler(self)
+        payload: dict[str, Any] = handler(self)
         if payload.get("version") is None:
             payload.pop("version", None)
         return payload

@@ -520,16 +520,16 @@ def build_status_snapshot(
                     track.active_records += 1
 
         if ledger is not None:
-            for track_id, track in ledger.tracks.items():
-                coverage = track_counts.setdefault(
+            for track_id, ledger_track in ledger.tracks.items():
+                track_coverage = track_counts.setdefault(
                     int(track_id),
-                    TrackCoverage(version=track.version),
+                    TrackCoverage(version=ledger_track.version),
                 )
-                coverage.label = track.label
-                if track.subversions:
-                    coverage.latest_subversion = max(
+                track_coverage.label = ledger_track.label
+                if ledger_track.subversions:
+                    track_coverage.latest_subversion = max(
                         subversion.subversion
-                        for subversion in track.subversions.values()
+                        for subversion in ledger_track.subversions.values()
                     )
         snapshot.version_coverage = [
             version_counts[key]
@@ -602,7 +602,9 @@ def build_profiles_overview(project: Project) -> ProfilesOverview:
                 # The live identity lives in translations/<profile>/identity.json;
                 # the value embedded in config.toml is only the initial default.
                 model=resolve_identity(profile_project).model,
-                path=str(profile_project.profile_dir.relative_to(project.root)),
+                path=str(
+                    profile_project.profile_dir.relative_to(project.root)
+                ) if profile_project.profile_dir is not None else "",
                 translated_records=translated_records,
                 total_records=shared_total_records,
                 active=profile_name == active_profile,

@@ -43,8 +43,8 @@ def extract_epub(
     path: str, *, protected_terms: list[str] | None = None
 ) -> EpubExtraction:
     """Extract translatable EPUB spans through epub2text structured blocks."""
-    from epub2text import extract_epub_structure
-    from epub2text.structured import ExtractionPolicy
+    from epub2text import extract_epub_structure  # type: ignore[import-not-found]
+    from epub2text.structured import ExtractionPolicy  # type: ignore[import-not-found]
 
     structured = extract_epub_structure(
         path,
@@ -83,7 +83,11 @@ def build_epub(
     span_replacements: list[str],
 ) -> str:
     """Rebuild an EPUB via text2epub using one replacement per extracted span."""
-    from text2epub import Replacement, ReplacementPlan, rebuild_epub
+    from text2epub import (  # type: ignore[import-not-found]
+        Replacement,
+        ReplacementPlan,
+        rebuild_epub,
+    )
 
     if len(span_replacements) != len(extraction.span_refs):
         raise ValueError(

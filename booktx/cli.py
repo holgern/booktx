@@ -73,6 +73,7 @@ from booktx.config import (
 from booktx.context import (
     ChapterContext,
     ContextMarkdownDrift,
+    ContextQuestion,
     GlossaryEntry,
     TranslationContext,
     analyze_context_markdown_drift,
@@ -90,12 +91,13 @@ from booktx.context import (
     write_context,
     write_context_markdown,
 )
-from booktx.epub_io import extract_epub
+from booktx.epub_io import EpubExtraction, extract_epub
 from booktx.epub_manifest import EPUB2TEXT_SCHEMA, EPUB_TEMPLATE_PIPELINE
 from booktx.html_io import build_xhtml  # noqa: F401  (kept for downstream use)
 from booktx.identity import identity_payload
 from booktx.markdown_io import extract_markdown
 from booktx.models import (
+    Chunk,
     Manifest,
     NamesFile,
     StoredTranslationRecordV2,
@@ -592,18 +594,18 @@ def version_show(
             "forced": sub.forced,
         }
     else:
-        track = ledger.tracks.get(str(int(selector)))
-        if track is None:
+        track_entry = ledger.tracks.get(str(int(selector)))
+        if track_entry is None:
             _die(f"track {selector} not found")
             return
         payload = {
-            "version": track.version,
-            "actor": track.actor,
-            "harness": track.harness,
-            "model": track.model,
-            "label": track.label,
+            "version": track_entry.version,
+            "actor": track_entry.actor,
+            "harness": track_entry.harness,
+            "model": track_entry.model,
+            "label": track_entry.label,
             "subversions": [
-                sub.model_dump(mode="json") for sub in track.subversions.values()
+                sub.model_dump(mode="json") for sub in track_entry.subversions.values()
             ],
         }
     if as_json:
@@ -885,9 +887,10 @@ def profile_migrate_current_cmd(
         console.print(
             f"dry-run: would migrate legacy project to profile {profile_name}"
         )
-        for move in payload["moves"]:
-            move_dict = move
-            console.print(f"{move_dict['source']} -> {move_dict['destination']}")
+        moves = payload.get("moves", [])
+        if isinstance(moves, list):
+            for move in moves:
+                console.print(f"{move}")
         return
     console.print(f"migrated profile: {payload['profile']}")
     if "migration_manifest" in payload:
@@ -926,6 +929,7 @@ def _load_context_or_exit(proj: Project) -> TranslationContext:
         raise typer.Exit(code=1) from exc
     if ctx is None:
         _die("translation context is missing. Run: booktx context init .")
+        raise typer.Exit(code=1)
     return ctx
 
 
@@ -955,7 +959,7 @@ def _guard_md_safe_or_die(proj: Project, ctx: TranslationContext, *, allow_disca
         )
 
 
-def _open_required_questions(ctx: TranslationContext) -> list[GlossaryEntry]:
+def _open_required_questions(ctx: TranslationContext) -> list[ContextQuestion]:
     return [q for q in ctx.questions if q.required and q.status == "open"]
 
 
@@ -1566,11 +1570,12 @@ def _count_records(
     elif fmt == "epub":
         extraction = extract_epub(str(source), protected_terms=names)
         spans = extraction.spans
-        entries = extraction.text2epub_manifest.get("entries", [])
-        block_entries = [entry for entry in entries if entry.get("blocks")]
+        entries_raw = extraction.text2epub_manifest.get("entries", [])
+        entries = entries_raw if isinstance(entries_raw, list) else []
+        block_entries = [entry for entry in entries if isinstance(entry, dict) and entry.get("blocks")]
         details = f"{len(block_entries)} spine document(s) with text blocks"
     else:  # pragma: no cover - config validation already guards this
-        raise BooktxError(f"Unsupported format {fmt!r}")
+        raise BooktxError("unsupported_format", f"Unsupported format {fmt!r}")
 
     from booktx.chunking import segment_spans
 
@@ -1578,7 +1583,7 @@ def _count_records(
     return len(records), details
 
 
-def _chunk_json_texts(chunks: list[TranslatedChunk]) -> dict[str, str]:
+def _chunk_json_texts(chunks: list[Chunk] | list[TranslatedChunk]) -> dict[str, str]:
     return {
         f"{chunk.chunk_id}.json": chunk.model_dump_json(indent=2) + "\n"
         for chunk in chunks
@@ -1720,7 +1725,7 @@ def extract(
     # .booktx/chunks/.
     import tempfile
 
-    from booktx.config import sha256_path as _sha256
+    from booktx.epub_manifest import sha256_path as _sha256
     from booktx.io_utils import write_text_atomic
 
     current_source_sha256 = (
@@ -1783,18 +1788,19 @@ def extract(
         console.print(f"[yellow]warning:[/yellow] {warning_message}", soft_wrap=True)
 
 
-def _assert_epub_records_are_clean(chunks: list[TranslatedChunk]) -> None:
+def _assert_epub_records_are_clean(chunks: list[Chunk]) -> None:
     for chunk in chunks:
         for record in chunk.records:
             if "__TAG_" in record.source or "__SPANTX_" in record.source:
                 raise BooktxError(
+                    "epub_placeholders_leaked",
                     "new EPUB extraction produced TAG/SPANTX placeholders; "
                     "this is forbidden"
                 )
 
 
 def _save_epub_manifest(
-    proj: Project, source: Path, extraction: object, chunk_count: int, record_count: int
+    proj: Project, source: Path, extraction: EpubExtraction, chunk_count: int, record_count: int
 ) -> None:
     """Record EPUB v2 extraction metadata in manifest.json."""
     import json
@@ -2025,6 +2031,7 @@ def _load_translation_task_or_exit(proj: Project, task_id: str) -> TranslationTa
     task = load_translation_task(proj, task_id)
     if task is None:
         _die(f"unknown task id: {task_id} ({translation_task_path(proj, task_id)})")
+        raise typer.Exit(code=1)
     return task
 
 
@@ -2409,6 +2416,8 @@ def translate_import_legacy(
     imported_chunks = 0
     source_chunks = {chunk.chunk_id: chunk for chunk in load_source_chunks(proj)}
     for chunk_id, source_chunk in source_chunks.items():
+        if proj.translated_dir is None:
+            continue
         path = proj.translated_dir / f"{chunk_id}.json"
         if not path.is_file():
             continue
@@ -2630,6 +2639,8 @@ def translate_export(  # noqa: C901
                         )
                     )
         for ref, chunks in version_map.items():
+            if proj.translated_dir is None:
+                continue
             export_dir = proj.translated_dir / ref
             export_dir.mkdir(parents=True, exist_ok=True)
             for chunk_id, records in chunks.items():
@@ -2648,15 +2659,15 @@ def translate_export(  # noqa: C901
             if stored is None:
                 translated_records = []
                 break
-            candidate = _pick_candidate(stored)
-            if candidate is None:
+            picked = _pick_candidate(stored)
+            if picked is None:
                 translated_records = []
                 break
             translated_records.append(
                 TranslatedRecord(
                     id=record.id,
-                    version=candidate.version_ref,
-                    target=candidate.target,
+                    version=picked.version_ref,
+                    target=picked.target,
                 )
             )
         if not translated_records:
@@ -2674,6 +2685,8 @@ def translate_export(  # noqa: C901
                 )
             )
         if any(finding.severity == Severity.ERROR for finding in findings):
+            continue
+        if proj.translated_dir is None:
             continue
         write_json_model_atomic(
             proj.translated_dir / f"{chunk.chunk_id}.json", translated_chunk
@@ -2909,7 +2922,8 @@ def translation_list(
         }
         stored = store.records.get(record.record_id)
         if stored is not None:
-            item["active_version"] = stored.active_version
+            if stored.active_version is not None:
+                item["active_version"] = stored.active_version
             candidate = (
                 find_candidate(stored, version)
                 if version is not None

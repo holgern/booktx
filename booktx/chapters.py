@@ -111,9 +111,9 @@ def detect_chapters(project: Project) -> ChapterMap:
         from booktx.markdown_io import extract_markdown, split_front_matter
 
         text = source.read_text("utf-8")
-        extraction = extract_markdown(text, protected_terms=names)
+        md_extraction = extract_markdown(text, protected_terms=names)
         boundaries = _markdown_boundaries(split_front_matter(text)[1])
-        spans = extraction.spans
+        spans = md_extraction.spans
     elif project.config.format == "epub":
         manifest = load_manifest(project)
         if manifest is not None:
@@ -127,16 +127,16 @@ def detect_chapters(project: Project) -> ChapterMap:
                     template.spans, template.navigation
                 )
             else:
-                extraction = extract_epub(str(source), protected_terms=names)
-                spans = extraction.spans
+                epub_extraction = extract_epub(str(source), protected_terms=names)
+                spans = epub_extraction.spans
                 boundaries = _epub_boundaries_from_refs(
-                    extraction.span_refs, extraction.navigation
+                    epub_extraction.span_refs, epub_extraction.navigation
                 )
         else:
-            extraction = extract_epub(str(source), protected_terms=names)
-            spans = extraction.spans
+            epub_extraction = extract_epub(str(source), protected_terms=names)
+            spans = epub_extraction.spans
             boundaries = _epub_boundaries_from_refs(
-                extraction.span_refs, extraction.navigation
+                epub_extraction.span_refs, epub_extraction.navigation
             )
     else:  # pragma: no cover - config validation guards this
         spans = []
@@ -269,7 +269,9 @@ _HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 _prose_span_from_ref = prose_span_from_epub_ref  # backward-compatible alias
 
 
-def _epub_boundaries_from_refs(span_refs, navigation_refs) -> list[_Boundary]:
+def _epub_boundaries_from_refs(
+    span_refs: list[EpubSpanRef], navigation_refs: list[EpubNavigationRef]
+) -> list[_Boundary]:
     boundaries = _navigation_boundaries(span_refs, navigation_refs)
     if boundaries:
         return boundaries
@@ -282,7 +284,9 @@ def _epub_boundaries_from_refs(span_refs, navigation_refs) -> list[_Boundary]:
     return heading_boundaries
 
 
-def _navigation_boundaries(span_refs: list[EpubSpanRef], navigation_refs: list[EpubNavigationRef]) -> list[_Boundary]:
+def _navigation_boundaries(
+    span_refs: list[EpubSpanRef], navigation_refs: list[EpubNavigationRef]
+) -> list[_Boundary]:
     boundaries: list[_Boundary] = []
     for entry in sorted(navigation_refs, key=lambda item: (item.order, item.level)):
         if not entry.title.strip():
@@ -294,7 +298,9 @@ def _navigation_boundaries(span_refs: list[EpubSpanRef], navigation_refs: list[E
     return boundaries
 
 
-def _navigation_span_index(entry: EpubNavigationRef, span_refs: list[EpubSpanRef]) -> int | None:
+def _navigation_span_index(
+    entry: EpubNavigationRef, span_refs: list[EpubSpanRef]
+) -> int | None:
     matches = [
         span_ref
         for span_ref in span_refs

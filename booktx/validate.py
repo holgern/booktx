@@ -44,7 +44,7 @@ from booktx.context import (
     render_context_markdown,
 )
 from booktx.epub_manifest import load_epub_template_from_manifest
-from booktx.models import Chunk, Placeholder, TranslatedChunk, TranslatedRecord
+from booktx.models import Chunk, Placeholder, Record, TranslatedChunk, TranslatedRecord
 from booktx.placeholders import TOKEN_RE, collect_tokens
 from booktx.progress import source_record_sha256
 from booktx.translation_store import active_candidate
@@ -244,7 +244,7 @@ def strict_load_translated(path: Path) -> tuple[TranslatedChunk | None, str | No
 
 
 def _check_placeholders_preserved(
-    source_rec, target_rec, chunk_id: str
+    source_rec: Record, target_rec: TranslatedRecord, chunk_id: str
 ) -> list[Finding]:
     """Ensure every placeholder token in the source appears unchanged in target."""
     findings: list[Finding] = []
@@ -281,7 +281,7 @@ def _check_placeholders_preserved(
 
 
 def _check_protected_names_preserved(
-    source_rec: TranslatedRecord, target_rec: TranslatedRecord, chunk_id: str
+    source_rec: Record, target_rec: TranslatedRecord, chunk_id: str
 ) -> list[Finding]:
     """Ensure each protected name (NAME placeholder) survives verbatim.
 
@@ -320,7 +320,7 @@ def _check_protected_names_preserved(
 
 
 def validate_record_pair(
-    source_rec: TranslatedRecord,
+    source_rec: Record,
     target_rec: TranslatedRecord,
     chunk_id: str,
     context: TranslationContext | None = None,
@@ -350,8 +350,8 @@ def _contains_term(text: str, term: str, *, case_sensitive: bool) -> bool:
 
 
 def _check_forbidden_terms(
-    source_rec,
-    target_rec,
+    source_rec: Record,
+    target_rec: TranslatedRecord,
     chunk_id: str,
     context: TranslationContext | None,
 ) -> list[Finding]:
@@ -495,6 +495,8 @@ def validate_chunk_pair(
             )
         )
         return findings
+    if translated is None:
+        return findings
     return _validate_translated_chunk(source, translated, context)
 
 
@@ -534,6 +536,8 @@ def load_effective_translated_chunks(  # noqa: C901
                     message=err,
                 )
             )
+            continue
+        if translated is None:
             continue
         chunk_findings = _validate_translated_chunk(source, translated, context)
         findings.extend(chunk_findings)
@@ -593,8 +597,8 @@ def load_effective_translated_chunks(  # noqa: C901
     if store is not None:
         for record_id, stored in store.records.items():
             chunk_id = f"{stored.chunk_id:04d}"
-            source = source_chunks.get(chunk_id)
-            if source is None:
+            source_chunk = source_chunks.get(chunk_id)
+            if source_chunk is None:
                 findings.append(
                     Finding(
                         chunk_id=chunk_id,
@@ -608,7 +612,10 @@ def load_effective_translated_chunks(  # noqa: C901
                     )
                 )
                 continue
-            if chunk_id != source.chunk_id or chunk_id != record_id.split("-", 1)[0]:
+            if (
+                chunk_id != source_chunk.chunk_id
+                or chunk_id != record_id.split("-", 1)[0]
+            ):
                 findings.append(
                     Finding(
                         chunk_id=chunk_id,
@@ -623,7 +630,7 @@ def load_effective_translated_chunks(  # noqa: C901
                 )
                 continue
 
-            source_records = {record.id: record for record in source.records}
+            source_records = {record.id: record for record in source_chunk.records}
             source_rec = source_records.get(record_id)
             if source_rec is None:
                 findings.append(
@@ -998,6 +1005,8 @@ def write_report(project: Project, report: ValidationReport) -> Path:
     """Persist the validation report to ``.booktx/reports/`` and return it."""
     from booktx.io_utils import write_json_text_atomic
 
+    if project.reports_dir is None:
+        raise ValueError("Reports directory is not configured.")
     project.reports_dir.mkdir(parents=True, exist_ok=True)
     out = project.reports_dir / "validation-report.json"
     write_json_text_atomic(
@@ -1007,5 +1016,5 @@ def write_report(project: Project, report: ValidationReport) -> Path:
 
 
 # Keep TOKEN_RE referenced for callers that want the raw regex.
-_ = TOKEN_RE
-_ = Placeholder  # re-export surface stability
+_token_re = TOKEN_RE
+_placeholder_cls = Placeholder  # re-export surface stability

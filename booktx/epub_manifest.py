@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from html.parser import HTMLParser
 from pathlib import Path
+from typing import Any
 
 from booktx.chunking import ProseSpan
 from booktx.models import EpubNavigationRef, EpubSpanRef, EpubTemplateData, Manifest
@@ -117,7 +118,7 @@ class _RawBlockParser(HTMLParser):
             parts.append(f"{name}[{counts[name]}]")
         return "/" + "/".join(parts)
 
-    def handle_starttag(self, tag: str, attrs) -> None:  # type: ignore[override]
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
         start = self._offset()
         raw = self.get_starttag_text() or self.raw_text[start:start]
@@ -134,7 +135,7 @@ class _RawBlockParser(HTMLParser):
         if tag not in _VOID_TAGS:
             self.stack.append((tag, start))
 
-    def handle_startendtag(self, tag: str, attrs) -> None:  # type: ignore[override]
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
         if self._skipped() or tag not in self.block_tags:
             return
@@ -199,9 +200,9 @@ def prose_span_from_epub_ref(span_ref: EpubSpanRef) -> ProseSpan:
     )
 
 
-def build_raw_block_index(structured) -> dict[str, _RawBlock]:
+def build_raw_block_index(structured: Any) -> dict[str, _RawBlock]:
     """Map epub2text block ids to raw archive offsets and fragments."""
-    blocks_by_document_id: dict[str, list] = {}
+    blocks_by_document_id: dict[str, list[Any]] = {}
     for block in structured.blocks:
         blocks_by_document_id.setdefault(block.document_id, []).append(block)
 
@@ -256,7 +257,7 @@ def build_raw_block_index(structured) -> dict[str, _RawBlock]:
 
 
 def structured_to_text2epub_manifest(
-    structured, *, raw_block_index: dict[str, _RawBlock] | None = None
+    structured: Any, *, raw_block_index: dict[str, _RawBlock] | None = None
 ) -> dict[str, object]:
     """Convert an epub2text structured extraction to a text2epub manifest."""
     raw_block_index = raw_block_index or build_raw_block_index(structured)
@@ -306,7 +307,7 @@ def structured_to_text2epub_manifest(
 
 
 def structured_to_span_refs(
-    structured,
+    structured: Any,
     *,
     protected_terms: list[str],
     raw_block_index: dict[str, _RawBlock] | None = None,
@@ -351,7 +352,7 @@ def structured_to_span_refs(
     return spans, span_refs
 
 
-def structured_to_navigation_refs(structured) -> list[EpubNavigationRef]:
+def structured_to_navigation_refs(structured: Any) -> list[EpubNavigationRef]:
     """Convert epub2text navigation entries into stored manifest refs."""
     refs: list[EpubNavigationRef] = []
     for entry in structured.navigation:

@@ -147,9 +147,18 @@ def _build_markdown(project: Project, *, require_complete: bool = False) -> Buil
 
 
 def _build_epub(project: Project, *, require_complete: bool = False) -> BuildResult:
-    from text2epub import Replacement, ReplacementPlan, rebuild_epub
-    from text2epub.errors import ReplacementError, ValidationError
-    from text2epub.validation import scan_epub_for_unresolved_tokens
+    from text2epub import (  # type: ignore[import-not-found]
+        Replacement,
+        ReplacementPlan,
+        rebuild_epub,
+    )
+    from text2epub.errors import (  # type: ignore[import-not-found]
+        ReplacementError,
+        ValidationError,
+    )
+    from text2epub.validation import (  # type: ignore[import-not-found]
+        scan_epub_for_unresolved_tokens,
+    )
 
     source = find_source_file(project)
     manifest = load_manifest(project)
@@ -254,9 +263,13 @@ def _load_names(project: Project) -> list[str]:
 
 def _output_path(project: Project, source: Path, *, suffix: str) -> Path:
     if project.config.output_filename:
+        if project.output_dir is None:
+            raise BuildError("Output directory is not configured.")
         return project.output_dir / project.config.output_filename
     stem = source.stem
     target = project.config.target_language
+    if project.output_dir is None:
+        raise BuildError("Output directory is not configured.")
     return project.output_dir / f"{stem}.{target}{suffix}"
 
 
