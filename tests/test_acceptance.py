@@ -20,7 +20,9 @@ from booktx.acceptance import (
     accept_translation_records,
 )
 from booktx.cli import app
-from booktx.config import BooktxError, load_project
+from booktx.config import BooktxError, load_project, write_identity
+from booktx.context import load_context, write_context
+from booktx.models import TranslationIdentity
 from booktx.status import build_status_snapshot
 
 runner = CliRunner()
@@ -62,6 +64,12 @@ def _first_record_id(project_dir: Path) -> str:
     return chunk["records"][0]["id"]
 
 
+def _record_ids(project_dir: Path) -> list[str]:
+    chunks = sorted((project_dir / ".booktx" / "chunks").glob("*.json"))
+    chunk = json.loads(chunks[0].read_text("utf-8"))
+    return [record["id"] for record in chunk["records"]]
+
+
 def test_accept_one_record_persists_and_reports_chapter(tmp_path: Path):
     project_dir = _make_project(tmp_path)
     proj = load_project(project_dir)
@@ -73,12 +81,14 @@ def test_accept_one_record_persists_and_reports_chapter(tmp_path: Path):
     assert isinstance(result, AcceptResult)
     assert result.accepted_records == 1
     assert result.target_words >= 1
+    assert result.version_ref == "1.1"
     assert result.chapter_id  # mapped to a chapter
 
     store = json.loads(
         (project_dir / ".booktx" / "translation-store.json").read_text("utf-8")
     )
-    assert store["records"][rid]["target"] == "Alice traf Bob."
+    assert store["records"][rid]["active_version"] == "1.1"
+    assert store["records"][rid]["versions"][0]["target"] == "Alice traf Bob."
 
 
 def test_batch_and_single_record_share_implementation(tmp_path: Path):
@@ -93,6 +103,103 @@ def test_batch_and_single_record_share_implementation(tmp_path: Path):
     # target_words count must match the single-record path for the same text.
     single = accept_one_record(proj, rid, "Alice traf Bob.", bundle=bundle)
     assert batch.target_words == single.target_words
+
+
+def test_same_version_reaccept_updates_existing_candidate_and_preserves_created_at(
+    tmp_path: Path,
+):
+    project_dir = _make_project(tmp_path)
+    proj = load_project(project_dir)
+    write_identity(
+        proj,
+        TranslationIdentity(
+            actor="user:nahrstaedt",
+            harness="pi",
+            model="codex-openai/gpt-5.5@low",
+        ),
+    )
+    rid = _first_record_id(project_dir)
+    bundle = build_status_snapshot(proj, context_exists=True, context_ready=True)
+
+    first = accept_one_record(proj, rid, "Alice traf Bob.", bundle=bundle)
+    before = json.loads(
+        (project_dir / ".booktx" / "translation-store.json").read_text("utf-8")
+    )
+    second = accept_one_record(proj, rid, "Alice begegnete Bob.", bundle=bundle)
+    after = json.loads(
+        (project_dir / ".booktx" / "translation-store.json").read_text("utf-8")
+    )
+    before_version = before["records"][rid]["versions"][0]
+    after_version = after["records"][rid]["versions"][0]
+
+    assert first.version_ref == "1.1"
+    assert second.version_ref == "1.1"
+    assert len(after["records"][rid]["versions"]) == 1
+    assert after_version["target"] == "Alice begegnete Bob."
+    assert after_version["created_at"] == before_version["created_at"]
+
+
+def test_changed_context_creates_next_subversion_without_auto_switching_active(
+    tmp_path: Path,
+):
+    project_dir = _make_project(tmp_path)
+    proj = load_project(project_dir)
+    write_identity(
+        proj,
+        TranslationIdentity(
+            actor="user:nahrstaedt",
+            harness="pi",
+            model="codex-openai/gpt-5.5@low",
+        ),
+    )
+    rid = _first_record_id(project_dir)
+    bundle = build_status_snapshot(proj, context_exists=True, context_ready=True)
+
+    first = accept_one_record(proj, rid, "Alice traf Bob.", bundle=bundle)
+    ctx = load_context(proj)
+    assert ctx is not None
+    ctx.global_rules.append("Prefer shorter German clauses.")
+    write_context(proj, ctx)
+    second = accept_one_record(proj, rid, "Alice begegnete Bob.", bundle=bundle)
+    store = json.loads(
+        (project_dir / ".booktx" / "translation-store.json").read_text("utf-8")
+    )
+    record = store["records"][rid]
+    version_refs = [candidate["version_ref"] for candidate in record["versions"]]
+
+    assert first.version_ref == "1.1"
+    assert second.version_ref == "1.2"
+    assert version_refs == ["1.1", "1.2"]
+    assert record["active_version"] == "1.1"
+
+
+def test_changed_model_creates_next_major_track(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    proj = load_project(project_dir)
+    write_identity(
+        proj,
+        TranslationIdentity(
+            actor="user:nahrstaedt",
+            harness="pi",
+            model="codex-openai/gpt-5.5@low",
+        ),
+    )
+    first_id, second_id = _record_ids(project_dir)[:2]
+    bundle = build_status_snapshot(proj, context_exists=True, context_ready=True)
+
+    first = accept_one_record(proj, first_id, "Alice traf Bob.", bundle=bundle)
+    write_identity(
+        proj,
+        TranslationIdentity(
+            actor="user:nahrstaedt",
+            harness="pi",
+            model="codex-openai/gpt-5.4-mini@low",
+        ),
+    )
+    second = accept_one_record(proj, second_id, "Sie waren froh.", bundle=bundle)
+
+    assert first.version_ref == "1.1"
+    assert second.version_ref == "2.1"
 
 
 def test_unknown_record_id_raises_booktx_error(tmp_path: Path):

@@ -37,15 +37,20 @@ from booktx.chunking import spans_to_chunks
 from booktx.config import (
     BooktxError,
     find_source_file,
+    identity_path,
     init_project,
+    load_identity,
     load_project,
     load_translation_store,
+    load_translation_version_ledger,
     load_translation_task,
     project_source_sha256,
+    translation_store_path,
     translation_ingest_block_path,
     translation_ingest_path,
     translation_task_path,
     translation_task_source_block_path,
+    write_identity,
     write_translation_store,
 )
 from booktx.context import (
@@ -63,21 +68,32 @@ from booktx.html_io import build_xhtml  # noqa: F401  (kept for downstream use)
 from booktx.markdown_io import extract_markdown
 from booktx.models import (
     NamesFile,
-    StoredTranslationRecord,
+    TranslationIdentity,
+    TranslationStore,
     TranslatedChunk,
     TranslatedRecord,
     TranslationTask,
 )
 from booktx.progress import (
     load_source_chunks,
+    load_source_records,
     source_record_sha256,
 )
+from booktx.record_refs import parse_record_ref, resolve_record_range
 from booktx.status import (
     ChapterProgress,
     StatusBundle,
+    build_status_snapshot,
 )
 from booktx.submissions import resolve_submission
 from booktx.tasks import create_translation_task
+from booktx.translation_store import (
+    active_candidate,
+    ensure_store_record,
+    find_candidate,
+    migrate_legacy_store,
+    upsert_translation_version,
+)
 from booktx.validate import (
     Severity,
     strict_load_translated,
@@ -85,6 +101,15 @@ from booktx.validate import (
     validate_project,
     validate_record_pair,
     write_report,
+)
+from booktx.versioning import resolve_current_version
+from booktx.versioning import (
+    default_identity,
+    fork_current_context,
+    lookup_version,
+    resolve_identity,
+    select_active_version,
+    set_track_label,
 )
 
 app = typer.Typer(
@@ -100,8 +125,17 @@ app = typer.Typer(
 console = Console()
 context_app = typer.Typer(help="Build, inspect, and render translation context.")
 translate_app = typer.Typer(help="Command-based translation workflow.")
+actor_app = typer.Typer(help="Manage translation actor defaults.")
+harness_app = typer.Typer(help="Manage translation harness defaults.")
+model_app = typer.Typer(help="Manage translation model defaults.")
+version_app = typer.Typer(help="Inspect and manage translation version tracks.")
 app.add_typer(context_app, name="context")
 app.add_typer(translate_app, name="translate")
+app.add_typer(translate_app, name="translation")
+app.add_typer(actor_app, name="actor")
+app.add_typer(harness_app, name="harness")
+app.add_typer(model_app, name="model")
+app.add_typer(version_app, name="version")
 
 
 def _die(message: str, code: int = 1) -> None:
@@ -147,10 +181,191 @@ def _handle_booktx_error(exc: BooktxError) -> None:
 # --- version -----------------------------------------------------------------
 
 
-@app.command()
-def version() -> None:
-    """Print the booktx version."""
-    console.print(__version__)
+@version_app.callback(invoke_without_command=True)
+def version_root(ctx: typer.Context) -> None:
+    """Print the package version or dispatch to version subcommands."""
+    if ctx.invoked_subcommand is None:
+        console.print(__version__)
+
+
+@actor_app.command(name="whoami")
+def actor_whoami(project_dir: Path = typer.Argument(..., help="Project directory.")) -> None:
+    """Show the resolved actor default for translation versioning."""
+    proj = _load_project_or_exit(project_dir)
+    console.print(_resolved_identity(proj).actor)
+
+
+@actor_app.command(name="set")
+def actor_set(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    actor: str = typer.Argument(..., help="Actor identifier, for example user:nahrstaedt."),
+) -> None:
+    """Persist the actor default used for new version tracks."""
+    proj = _load_project_or_exit(project_dir)
+    identity = _write_identity_defaults(proj, actor=actor)
+    console.print(identity.actor)
+
+
+@actor_app.command(name="clear")
+def actor_clear(project_dir: Path = typer.Argument(..., help="Project directory.")) -> None:
+    """Clear the stored actor default back to the local fallback."""
+    proj = _load_project_or_exit(project_dir)
+    identity = _clear_identity_field(proj, "actor")
+    console.print(identity.actor)
+
+
+@harness_app.command(name="set")
+def harness_set(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    harness: str = typer.Argument(..., help="Harness identifier, for example pi."),
+) -> None:
+    """Persist the harness default used for new version tracks."""
+    proj = _load_project_or_exit(project_dir)
+    identity = _write_identity_defaults(proj, harness=harness)
+    console.print(identity.harness)
+
+
+@harness_app.command(name="clear")
+def harness_clear(project_dir: Path = typer.Argument(..., help="Project directory.")) -> None:
+    """Clear the stored harness default back to the local fallback."""
+    proj = _load_project_or_exit(project_dir)
+    identity = _clear_identity_field(proj, "harness")
+    console.print(identity.harness)
+
+
+@model_app.command(name="set")
+def model_set(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    model: str = typer.Argument(..., help="Model identifier, for example human."),
+) -> None:
+    """Persist the model default used for new version tracks."""
+    proj = _load_project_or_exit(project_dir)
+    identity = _write_identity_defaults(proj, model=model)
+    console.print(identity.model)
+
+
+@model_app.command(name="clear")
+def model_clear(project_dir: Path = typer.Argument(..., help="Project directory.")) -> None:
+    """Clear the stored model default back to the local fallback."""
+    proj = _load_project_or_exit(project_dir)
+    identity = _clear_identity_field(proj, "model")
+    console.print(identity.model)
+
+
+@version_app.command(name="current")
+def version_current(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    """Show the current ledger-wide active version."""
+    proj = _load_project_or_exit(project_dir)
+    ledger = load_translation_version_ledger(proj)
+    payload = {"active_version": ledger.active_version, "track_count": len(ledger.tracks)}
+    if as_json:
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
+    console.print(ledger.active_version or "none")
+
+
+@version_app.command(name="list")
+def version_list(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+) -> None:
+    """List all known major tracks and subversions."""
+    proj = _load_project_or_exit(project_dir)
+    ledger = load_translation_version_ledger(proj)
+    if not ledger.tracks:
+        console.print("no versions")
+        return
+    for track_id in sorted(ledger.tracks, key=int):
+        track = ledger.tracks[track_id]
+        active_marker = "*" if ledger.active_version and ledger.active_version.startswith(f"{track.version}.") else " "
+        console.print(
+            f"{active_marker} track {track.version}: {track.actor} / {track.harness} / "
+            f"{track.model}{f' [{track.label}]' if track.label else ''}"
+        )
+        for sub_id in sorted(track.subversions, key=int):
+            sub = track.subversions[sub_id]
+            current_marker = " (active)" if ledger.active_version == sub.version_ref else ""
+            console.print(
+                f"    {sub.version_ref}  {sub.context_sha256}{current_marker}"
+            )
+
+
+@version_app.command(name="select")
+def version_select(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    version_ref: str = typer.Argument(..., help="Version ref such as 1.2."),
+) -> None:
+    """Select the ledger-wide active version."""
+    proj = _load_project_or_exit(project_dir)
+    ledger = select_active_version(proj, version_ref)
+    console.print(ledger.active_version or "none")
+
+
+@version_app.command(name="set-label")
+def version_set_label(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    major_version: int = typer.Argument(..., help="Major track number."),
+    label: str = typer.Argument(..., help="Human label for the track."),
+) -> None:
+    """Set the label for one major version track."""
+    proj = _load_project_or_exit(project_dir)
+    ledger = set_track_label(proj, major_version, label)
+    console.print(ledger.tracks[str(major_version)].label or "")
+
+
+@version_app.command(name="fork-context")
+def version_fork_context(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    note: str | None = typer.Option(None, "--note", help="Reason for the forced fork."),
+) -> None:
+    """Force a new subversion for the current track even when context hash matches."""
+    proj = _load_project_or_exit(project_dir)
+    resolution = fork_current_context(proj, note=note)
+    console.print(resolution.version_ref)
+
+
+@version_app.command(name="show")
+def version_show(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    selector: str = typer.Argument(..., help="Track number or dotted version ref."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    """Show one major track or one specific dotted version entry."""
+    proj = _load_project_or_exit(project_dir)
+    ledger = load_translation_version_ledger(proj)
+    if "." in selector:
+        track, sub = lookup_version(ledger, selector)
+        payload = {
+            "version_ref": sub.version_ref,
+            "version": track.version,
+            "subversion": sub.subversion,
+            "actor": track.actor,
+            "harness": track.harness,
+            "model": track.model,
+            "label": track.label,
+            "context_sha256": sub.context_sha256,
+            "context_label": sub.context_label,
+            "forced": sub.forced,
+        }
+    else:
+        track = ledger.tracks.get(str(int(selector)))
+        if track is None:
+            _die(f"track {selector} not found")
+            return
+        payload = {
+            "version": track.version,
+            "actor": track.actor,
+            "harness": track.harness,
+            "model": track.model,
+            "label": track.label,
+            "subversions": [sub.model_dump(mode="json") for sub in track.subversions.values()],
+        }
+    if as_json:
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
+    console.print_json(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
 # --- context -----------------------------------------------------------------
@@ -177,6 +392,102 @@ def _load_context_or_exit(proj):
 
 def _open_required_questions(ctx) -> list:
     return [q for q in ctx.questions if q.required and q.status == "open"]
+
+
+def _resolved_identity(proj) -> TranslationIdentity:
+    return resolve_identity(proj)
+
+
+def _write_identity_defaults(
+    proj,
+    *,
+    actor: str | None = None,
+    harness: str | None = None,
+    model: str | None = None,
+) -> TranslationIdentity:
+    identity = resolve_identity(proj, actor=actor, harness=harness, model=model)
+    write_identity(proj, identity)
+    return identity
+
+
+def _clear_identity_field(proj, field_name: str) -> TranslationIdentity:
+    current = load_identity(proj)
+    fallback = default_identity()
+    identity = TranslationIdentity(
+        actor=current.actor if current is not None else fallback.actor,
+        harness=current.harness if current is not None else fallback.harness,
+        model=current.model if current is not None else fallback.model,
+    )
+    setattr(identity, field_name, getattr(fallback, field_name))
+    if identity == fallback and identity_path(proj).is_file():
+        identity_path(proj).unlink()
+        return fallback
+    write_identity(proj, identity)
+    return identity
+
+
+def _ordered_source_records(proj):
+    return load_source_records(proj)
+
+
+def _ledger_metadata_for_version(proj, version_ref: str | None) -> dict[str, Any] | None:
+    if not version_ref:
+        return None
+    ledger = load_translation_version_ledger(proj)
+    try:
+        track, subversion = lookup_version(ledger, version_ref)
+    except BooktxError:
+        return None
+    return {
+        "version_ref": subversion.version_ref,
+        "version": track.version,
+        "subversion": subversion.subversion,
+        "actor": track.actor,
+        "harness": track.harness,
+        "model": track.model,
+        "label": track.label,
+        "context_sha256": subversion.context_sha256,
+        "context_label": subversion.context_label,
+        "forced": subversion.forced,
+    }
+
+
+def _store_record_payload(proj, record_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    ordered = _ordered_source_records(proj)
+    by_id = {record.record_id: record for record in ordered}
+    canonical_id = parse_record_ref(record_id).canonical_id
+    source_record = by_id.get(canonical_id)
+    if source_record is None:
+        raise _err("unknown_record_id", f"unknown source record id: {record_id}")
+    store = load_translation_store(proj)
+    stored = store.records.get(canonical_id)
+    versions: list[dict[str, Any]] = []
+    active_version = None
+    if stored is not None:
+        active_version = stored.active_version
+        for candidate in stored.versions:
+            versions.append(
+                {
+                    "version": candidate.version,
+                    "subversion": candidate.subversion,
+                    "version_ref": candidate.version_ref,
+                    "target": candidate.target,
+                    "status": candidate.status,
+                    "created_at": candidate.created_at,
+                    "updated_at": candidate.updated_at,
+                    "reviewed_at": candidate.reviewed_at,
+                    "reviewed_by": candidate.reviewed_by,
+                    "review_note": candidate.review_note,
+                }
+            )
+    selected = {
+        "id": canonical_id,
+        "chunk_id": source_record.chunk_id,
+        "source": source_record.source,
+        "source_sha256": source_record.source_sha256,
+        "active_version": active_version,
+    }
+    return selected, {"versions": versions, "store": store, "ordered": ordered}
 
 
 @context_app.command(name="init")
@@ -1131,6 +1442,8 @@ def translate_insert(
         f"accepted: {result.accepted_records} record(s), "
         f"{result.target_words} target word(s)"
     )
+    if result.version_ref:
+        console.print(f"version: {result.version_ref}")
     if result.chapter_id:
         console.print(f"chapter: {result.chapter_id} {result.chapter_title}".rstrip())
         console.print(
@@ -1156,6 +1469,10 @@ def translate_import_legacy(
         return
     _require_chunks(proj)
     store = load_translation_store(proj)
+    resolution = resolve_current_version(
+        proj,
+        note="Imported valid legacy translated chunks into nested translation store.",
+    )
     imported_records = 0
     imported_chunks = 0
     source_chunks = {chunk.chunk_id: chunk for chunk in load_source_chunks(proj)}
@@ -1172,13 +1489,19 @@ def translate_import_legacy(
         imported_chunks += 1
         source_records = {record.id: record for record in source_chunk.records}
         for record in translated_chunk.records:
-            if record.id in store.records:
-                continue
             source_record = source_records[record.id]
-            store.records[record.id] = StoredTranslationRecord(
-                chunk_id=chunk_id,
+            stored = ensure_store_record(
+                store,
+                record.id,
+                source=source_record.source,
                 source_sha256=source_record_sha256(source_record.source),
-                target=record.target,
+            )
+            if active_candidate(stored) is not None:
+                continue
+            upsert_translation_version(
+                stored,
+                resolution.version_ref,
+                record.target,
                 updated_at=datetime.now(timezone.utc)
                 .replace(microsecond=0)
                 .isoformat()
@@ -1192,9 +1515,116 @@ def translate_import_legacy(
     )
 
 
+@translate_app.command(name="migrate-store")
+def translate_migrate_store(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    write: bool = typer.Option(False, "--write", help="Rewrite the store as v2."),
+    actor: str | None = typer.Option(None, "--actor", help="Actor for migrated ledger."),
+    harness: str | None = typer.Option(
+        None, "--harness", help="Harness for migrated ledger."
+    ),
+    model: str | None = typer.Option(None, "--model", help="Model for migrated ledger."),
+    context_label: str | None = typer.Option(
+        None, "--context-label", help="Optional label stored on the migrated subversion."
+    ),
+    allow_missing_source: bool = typer.Option(
+        False,
+        "--allow-missing-source",
+        help="Write migrated records even when some legacy ids no longer exist in source chunks.",
+    ),
+) -> None:
+    """Inspect or rewrite a legacy translation-store.json into the v2 schema."""
+    try:
+        proj = load_project(project_dir)
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
+        return
+    path = translation_store_path(proj)
+    if not path.is_file():
+        _die("translation-store.json is missing")
+
+    try:
+        raw = json.loads(path.read_text("utf-8"))
+        if isinstance(raw, dict) and raw.get("version") == 2:
+            console.print("translation-store.json is already v2")
+            return
+        legacy = TranslationStore.model_validate(raw)
+    except Exception as exc:  # noqa: BLE001
+        _die(f"translation-store.json is invalid: {exc}")
+        return
+
+    source_records = {record.record_id: record for record in load_source_records(proj)}
+    migration = migrate_legacy_store(legacy, source_records=source_records)
+
+    if not write:
+        console.print(f"dry-run: would migrate {migration.migrated_records} record(s)")
+        if migration.missing_source_ids:
+            console.print(
+                "missing source records: " + ", ".join(migration.missing_source_ids)
+            )
+        return
+
+    if actor is not None or harness is not None or model is not None:
+        write_identity(
+            proj,
+            TranslationIdentity(
+                actor=actor or "user:unknown",
+                harness=harness or "booktx",
+                model=model or "human",
+            ),
+        )
+
+    resolution = resolve_current_version(
+        proj,
+        actor=actor,
+        harness=harness,
+        model=model,
+        context_label=context_label,
+        note="Migrated legacy v1 translation store to v2 nested store.",
+    )
+    migration = migrate_legacy_store(
+        legacy,
+        source_records=source_records,
+        version_ref=resolution.version_ref,
+    )
+    if migration.missing_source_ids and not allow_missing_source:
+        _die(
+            "cannot migrate store with missing source records: "
+            + ", ".join(migration.missing_source_ids)
+        )
+    write_translation_store(proj, migration.store)
+    console.print(
+        f"migrated: {migration.migrated_records} record(s) to store v2 at "
+        f"{_project_relative(path, proj.root)}"
+    )
+    console.print(f"version: {resolution.version_ref}")
+    console.print(
+        "ledger: "
+        + _project_relative(proj.booktx_dir / "translation-version-ledger.json", proj.root)
+    )
+    if actor is not None or harness is not None or model is not None:
+        console.print(f"identity: {_project_relative(identity_path(proj), proj.root)}")
+
+
 @translate_app.command(name="export")
 def translate_export(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    version_ref: str | None = typer.Option(
+        None, "--version", help="Export one exact version ref such as 1.2."
+    ),
+    track: int | None = typer.Option(
+        None, "--track", help="Export one major track, optionally with --latest-subversion."
+    ),
+    latest_subversion: bool = typer.Option(
+        False,
+        "--latest-subversion",
+        help="When exporting a track, choose the latest accepted subversion per record.",
+    ),
+    all_versions: bool = typer.Option(
+        False,
+        "--all-versions",
+        help="Export all accepted versions into translated/<version-ref>/ chunk files.",
+    ),
 ) -> None:
     """Export fully accepted store-backed chunks into translated/*.json."""
     try:
@@ -1204,17 +1634,74 @@ def translate_export(
         return
     _require_chunks(proj)
     store = load_translation_store(proj)
+    if all_versions and (version_ref is not None or track is not None):
+        _die("--all-versions cannot be combined with --version or --track")
+        return
+    if track is not None and not latest_subversion:
+        _die("--track currently requires --latest-subversion")
+        return
+
+    from booktx.io_utils import write_json_model_atomic
+
+    def _pick_candidate(stored):
+        if all_versions:
+            return None
+        if version_ref is not None:
+            candidate = find_candidate(stored, version_ref)
+            return candidate if candidate is not None and candidate.status == "accepted" else None
+        if track is not None:
+            matches = [
+                candidate
+                for candidate in stored.versions
+                if candidate.version == track and candidate.status == "accepted"
+            ]
+            if not matches:
+                return None
+            return max(matches, key=lambda item: item.subversion)
+        candidate = active_candidate(stored)
+        return candidate if candidate is not None and candidate.status == "accepted" else None
+
     exported = 0
+    if all_versions:
+        version_map: dict[str, dict[str, list[TranslatedRecord]]] = {}
+        for chunk in load_source_chunks(proj):
+            for record in chunk.records:
+                stored = store.records.get(record.id)
+                if stored is None:
+                    continue
+                for candidate in stored.versions:
+                    if candidate.status != "accepted":
+                        continue
+                    version_map.setdefault(candidate.version_ref, {}).setdefault(
+                        chunk.chunk_id, []
+                    ).append(TranslatedRecord(id=record.id, target=candidate.target))
+        for ref, chunks in version_map.items():
+            export_dir = proj.translated_dir / ref
+            export_dir.mkdir(parents=True, exist_ok=True)
+            for chunk_id, records in chunks.items():
+                write_json_model_atomic(
+                    export_dir / f"{chunk_id}.json",
+                    TranslatedChunk(chunk_id=chunk_id, records=records),
+                )
+                exported += 1
+        console.print(f"exported: {exported} chunk file(s) to {proj.translated_dir}")
+        return
+
     for chunk in load_source_chunks(proj):
-        if not all(record.id in store.records for record in chunk.records):
+        translated_records: list[TranslatedRecord] = []
+        for record in chunk.records:
+            stored = store.records.get(record.id)
+            if stored is None:
+                translated_records = []
+                break
+            candidate = _pick_candidate(stored)
+            if candidate is None:
+                translated_records = []
+                break
+            translated_records.append(TranslatedRecord(id=record.id, target=candidate.target))
+        if not translated_records:
             continue
-        translated_chunk = TranslatedChunk(
-            chunk_id=chunk.chunk_id,
-            records=[
-                TranslatedRecord(id=record.id, target=store.records[record.id].target)
-                for record in chunk.records
-            ],
-        )
+        translated_chunk = TranslatedChunk(chunk_id=chunk.chunk_id, records=translated_records)
         findings = []
         for source_record, translated_record in zip(
             chunk.records, translated_chunk.records, strict=True
@@ -1226,8 +1713,6 @@ def translate_export(
             )
         if any(finding.severity == Severity.ERROR for finding in findings):
             continue
-        from booktx.io_utils import write_json_model_atomic
-
         write_json_model_atomic(
             proj.translated_dir / f"{chunk.chunk_id}.json", translated_chunk
         )
@@ -1266,6 +1751,10 @@ def translate_task_status(
         expected_sha = source_record_sha256(record.source)
         if stored.source_sha256 and stored.source_sha256 != expected_sha:
             stale_ids.append(record.id)
+            continue
+        candidate = active_candidate(stored)
+        if candidate is None or candidate.status != "accepted":
+            missing_ids.append(record.id)
             continue
         accepted_ids.append(record.id)
 
@@ -1325,6 +1814,237 @@ def translate_task_status(
     console.print(f"ingest file: {block_ingest_display}", soft_wrap=True)
     console.print(f"submit: {submit_hint}", soft_wrap=True)
     raise typer.Exit(code=0 if complete else 1)
+
+
+@translate_app.command(name="get-record")
+def translation_get_record(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    record_ref: str = typer.Argument(..., help="Record ref such as 74@38."),
+    before: int = typer.Option(0, "--before", min=0, help="Neighbor records before."),
+    after: int = typer.Option(0, "--after", min=0, help="Neighbor records after."),
+    version: str | None = typer.Option(None, "--version", help="Show one specific version."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    """Inspect one source record with nearby context and available versions."""
+    proj = _load_project_or_exit(project_dir)
+    selected, details = _store_record_payload(proj, record_ref)
+    ordered = details["ordered"]
+    ordered_ids = [record.record_id for record in ordered]
+    selected_id = selected["id"]
+    try:
+        index = ordered_ids.index(selected_id)
+    except ValueError:
+        _die(f"unknown source record id: {selected_id}")
+        return
+
+    store = details["store"]
+
+    def _record_payload(source_record) -> dict[str, Any]:
+        payload = {
+            "id": source_record.record_id,
+            "chunk_id": source_record.chunk_id,
+            "source": source_record.source,
+        }
+        stored = store.records.get(source_record.record_id)
+        if stored is not None:
+            payload["active_version"] = stored.active_version
+            candidate = (
+                find_candidate(stored, version)
+                if version is not None
+                else active_candidate(stored)
+            )
+            if candidate is not None:
+                payload["target"] = candidate.target
+                payload["status"] = candidate.status
+                payload["version_ref"] = candidate.version_ref
+        return payload
+
+    before_records = [
+        _record_payload(record)
+        for record in ordered[max(0, index - before) : index]
+    ]
+    selected_payload = _record_payload(ordered[index])
+    selected_payload["available_targets"] = details["versions"]
+    selected_payload["ledger_metadata"] = _ledger_metadata_for_version(
+        proj, version or selected_payload.get("active_version")
+    )
+    after_records = [
+        _record_payload(record)
+        for record in ordered[index + 1 : index + 1 + after]
+    ]
+    payload = {
+        "selected_record_ref": selected_id,
+        "before": before_records,
+        "selected": selected_payload,
+        "after": after_records,
+        "available_targets": details["versions"],
+        "active_version": selected_payload.get("active_version"),
+        "ledger_metadata": selected_payload["ledger_metadata"],
+    }
+    if as_json:
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
+    for item in before_records:
+        console.print(f"   {item['id']}  {item['source']}")
+    console.print(f">> {selected_id}  {selected_payload['source']}")
+    for candidate in details["versions"]:
+        console.print(
+            f"   {candidate['version_ref']} [{candidate['status']}] {candidate['target']}"
+        )
+    for item in after_records:
+        console.print(f"   {item['id']}  {item['source']}")
+
+
+@translate_app.command(name="list")
+def translation_list(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    range_spec: str | None = typer.Option(
+        None, "--range", help="Range spec such as 74@38..74@42."
+    ),
+    chapter: int | None = typer.Option(None, "--chapter", help="Chapter number."),
+    version: str | None = typer.Option(None, "--version", help="Show a specific version."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    """List records for a range or chapter in source reading order."""
+    proj = _load_project_or_exit(project_dir)
+    if (range_spec is None) == (chapter is None):
+        _die("use exactly one of --range or --chapter")
+        return
+    ordered = _ordered_source_records(proj)
+    ordered_ids = [record.record_id for record in ordered]
+    ctx = load_context(proj)
+    bundle = build_status_snapshot(
+        proj,
+        context_exists=ctx is not None,
+        context_ready=bool(ctx and ctx.ready),
+    )
+    spec = range_spec if range_spec is not None else f"chapter:{chapter}"
+    try:
+        selected_ids = resolve_record_range(
+            spec,
+            ordered_record_ids=ordered_ids,
+            chapter_record_ids=bundle.index.record_ids_by_chapter,
+        )
+    except ValueError as exc:
+        _die(str(exc))
+        return
+    store = load_translation_store(proj)
+    payload: list[dict[str, Any]] = []
+    for record in ordered:
+        if record.record_id not in selected_ids:
+            continue
+        item = {
+            "id": record.record_id,
+            "chunk_id": record.chunk_id,
+            "source": record.source,
+        }
+        stored = store.records.get(record.record_id)
+        if stored is not None:
+            item["active_version"] = stored.active_version
+            candidate = (
+                find_candidate(stored, version)
+                if version is not None
+                else active_candidate(stored)
+            )
+            if candidate is not None:
+                item["target"] = candidate.target
+                item["status"] = candidate.status
+                item["version_ref"] = candidate.version_ref
+        payload.append(item)
+    if as_json:
+        console.print_json(json.dumps({"records": payload}, ensure_ascii=False))
+        return
+    for item in payload:
+        suffix = f" [{item['version_ref']}]" if "version_ref" in item else ""
+        console.print(f"{item['id']}{suffix}  {item['source']}")
+
+
+@translate_app.command(name="compare")
+def translation_compare(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    record_ref: str = typer.Argument(..., help="Record ref such as 74@38."),
+    versions: str = typer.Option(..., "--versions", help="Comma-separated version refs."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    """Compare multiple stored version candidates for one record."""
+    proj = _load_project_or_exit(project_dir)
+    selected, details = _store_record_payload(proj, record_ref)
+    store = details["store"]
+    stored = store.records.get(selected["id"])
+    if stored is None:
+        _die(f"record {selected['id']} has no stored translations")
+        return
+    requested = [item.strip() for item in versions.split(",") if item.strip()]
+    payload = {"record_ref": selected["id"], "comparisons": []}
+    for version_ref in requested:
+        candidate = find_candidate(stored, version_ref)
+        payload["comparisons"].append(
+            {
+                "version_ref": version_ref,
+                "target": candidate.target if candidate is not None else None,
+                "status": candidate.status if candidate is not None else None,
+            }
+        )
+    if as_json:
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
+    for item in payload["comparisons"]:
+        console.print(f"{item['version_ref']}: {item['target'] or '<missing>'}")
+
+
+@translate_app.command(name="activate")
+def translation_activate(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    record_ref: str = typer.Argument(..., help="Record ref such as 74@38."),
+    version_ref: str = typer.Argument(..., help="Version ref to activate."),
+) -> None:
+    """Activate one stored candidate version for a single record."""
+    proj = _load_project_or_exit(project_dir)
+    store = load_translation_store(proj)
+    record_id = parse_record_ref(record_ref).canonical_id
+    stored = store.records.get(record_id)
+    if stored is None:
+        _die(f"record {record_id} has no stored translations")
+        return
+    candidate = find_candidate(stored, version_ref)
+    if candidate is None:
+        _die(f"record {record_id} has no version {version_ref}")
+        return
+    stored.active_version = candidate.version_ref
+    write_translation_store(proj, store)
+    console.print(f"{record_id} -> {candidate.version_ref}")
+
+
+@translate_app.command(name="review")
+def translation_review(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    record_ref: str = typer.Argument(..., help="Record ref such as 74@38."),
+    activate: str | None = typer.Option(None, "--activate", help="Optionally activate a version."),
+    note: str | None = typer.Option(None, "--note", help="Review note."),
+) -> None:
+    """Review one stored candidate and optionally activate it."""
+    proj = _load_project_or_exit(project_dir)
+    store = load_translation_store(proj)
+    record_id = parse_record_ref(record_ref).canonical_id
+    stored = store.records.get(record_id)
+    if stored is None:
+        _die(f"record {record_id} has no stored translations")
+        return
+    candidate = (
+        find_candidate(stored, activate) if activate is not None else active_candidate(stored)
+    )
+    if candidate is None:
+        _die(f"record {record_id} has no matching review target")
+        return
+    if activate is not None:
+        stored.active_version = candidate.version_ref
+    candidate.reviewed_at = (
+        datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    )
+    candidate.reviewed_by = _resolved_identity(proj).actor
+    candidate.review_note = note
+    write_translation_store(proj, store)
+    console.print(f"{record_id} reviewed {candidate.version_ref}")
 
 
 @translate_app.command(name="set-record")
@@ -1401,6 +2121,11 @@ def translate_set_record(
 @app.command()
 def validate(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    all_versions_strict: bool = typer.Option(
+        False,
+        "--all-versions-strict",
+        help="Treat inactive-version validation errors as fatal.",
+    ),
 ) -> None:
     """Validate translated chunks against the translation contract."""
     try:
@@ -1409,7 +2134,7 @@ def validate(
         _handle_booktx_error(exc)
         return
 
-    report = validate_project(proj)
+    report = validate_project(proj, all_versions_strict=all_versions_strict)
     out = write_report(proj, report)
 
     if report.findings:

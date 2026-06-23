@@ -39,10 +39,13 @@ from booktx.config import (
     extracted_source_sha256,
     find_source_file,
     load_manifest,
+    load_translation_store,
+    load_translation_version_ledger,
     project_source_sha256,
 )
 from booktx.models import Chunk, TranslatedRecord
 from booktx.progress import SourceRecordView, load_source_chunks, load_source_records
+from booktx.translation_store import active_candidate
 from booktx.validate import (
     Severity,
     load_effective_translated_chunks,
@@ -59,6 +62,8 @@ __all__ = [
     "SourceStatus",
     "ContextStatus",
     "StatusTotals",
+    "VersionCoverage",
+    "TrackCoverage",
     "StatusSnapshot",
     "StatusRuntimeIndex",
     "StatusBundle",
@@ -161,6 +166,26 @@ class StatusTotals(BaseModel):
     stale_translation_files: int = 0
 
 
+class VersionCoverage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version_ref: str
+    version: int
+    subversion: int
+    records_with_candidate: int = 0
+    active_records: int = 0
+
+
+class TrackCoverage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: int
+    label: str | None = None
+    records_with_candidate: int = 0
+    active_records: int = 0
+    latest_subversion: int | None = None
+
+
 class StatusSnapshot(BaseModel):
     """Typed project status. Serializes to the ``status --json`` v1 payload."""
 
@@ -173,6 +198,8 @@ class StatusSnapshot(BaseModel):
     totals: StatusTotals
     next: ChapterProgress | None = None
     chapters: list[ChapterProgress] = Field(default_factory=list)
+    version_coverage: list[VersionCoverage] = Field(default_factory=list)
+    track_coverage: list[TrackCoverage] = Field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -430,6 +457,62 @@ def build_status_snapshot(
         next=next_chapter,
         chapters=[],
     )
+
+    try:
+        store = load_translation_store(proj)
+        ledger = load_translation_version_ledger(proj)
+    except Exception:
+        store = None
+        ledger = None
+
+    if store is not None:
+        version_counts: dict[str, VersionCoverage] = {}
+        track_counts: dict[int, TrackCoverage] = {}
+        for stored in store.records.values():
+            seen_track_versions: set[int] = set()
+            for candidate in stored.versions:
+                coverage = version_counts.setdefault(
+                    candidate.version_ref,
+                    VersionCoverage(
+                        version_ref=candidate.version_ref,
+                        version=candidate.version,
+                        subversion=candidate.subversion,
+                    ),
+                )
+                coverage.records_with_candidate += 1
+                if stored.active_version == candidate.version_ref:
+                    coverage.active_records += 1
+
+                track = track_counts.setdefault(
+                    candidate.version,
+                    TrackCoverage(version=candidate.version),
+                )
+                track.latest_subversion = max(
+                    track.latest_subversion or 0, candidate.subversion
+                )
+                if candidate.version not in seen_track_versions:
+                    track.records_with_candidate += 1
+                    seen_track_versions.add(candidate.version)
+                if stored.active_version == candidate.version_ref:
+                    track.active_records += 1
+
+        if ledger is not None:
+            for track_id, track in ledger.tracks.items():
+                coverage = track_counts.setdefault(
+                    int(track_id),
+                    TrackCoverage(version=track.version),
+                )
+                coverage.label = track.label
+                if track.subversions:
+                    coverage.latest_subversion = max(
+                        subversion.subversion for subversion in track.subversions.values()
+                    )
+        snapshot.version_coverage = [
+            version_counts[key] for key in sorted(version_counts, key=lambda item: tuple(int(part) for part in item.split(".")))
+        ]
+        snapshot.track_coverage = [
+            track_counts[key] for key in sorted(track_counts)
+        ]
 
     index = StatusRuntimeIndex(
         source_chunks=source_chunks,

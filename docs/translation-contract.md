@@ -6,6 +6,25 @@ booktx writes source chunks and accepts translated records through CLI commands.
 Validation checks that accepted records and compatibility translated chunks
 preserve the structure and all required tokens.
 
+## Primary nested store and ledger
+
+`booktx` now treats `.booktx/translation-store.json` as the primary record-level
+state and `.booktx/translation-version-ledger.json` as the project-wide version
+ledger.
+
+- Canonical record keys remain padded ids such as `0074-000038`.
+- The CLI accepts `74@38` as shorthand and normalizes it to the canonical key.
+- Each stored candidate carries integer `version`, integer `subversion`, and
+  string `version_ref` such as `1.2`.
+- Actor, harness, and model live on the major ledger track, not on each
+  candidate.
+- Context SHA lives on the ledger subversion, not on each candidate.
+- Each source record keeps its own `active_version`.
+
+That means `1.1` and `1.2` may share actor/harness/model metadata while
+differing only by context SHA, and a model change allocates a new major track
+such as `2.1`.
+
 ## Source chunk shape
 
 ```json
@@ -107,6 +126,19 @@ source text for missing translated records unless `booktx build --require-comple
 is used.
 
 For production translation, treat missing chunks as incomplete work even if the validator can still inspect the project.
+
+## Ledger-backed structural validation
+
+For nested store data, validation treats these as structural problems:
+
+- an invalid canonical record key
+- an invalid or missing `active_version`
+- a `version_ref` that does not match its integer tuple fields
+- duplicate `version_ref` values within one record
+- a store candidate whose version ref is missing from the ledger
+- an active version whose candidate is not `accepted`
+- a stored source text or source SHA that no longer matches the extracted source
+- a stale `context.md` render that no longer matches `context.json` (warning)
 
 ## Stale translations
 

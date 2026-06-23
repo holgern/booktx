@@ -46,9 +46,11 @@ book/
     names.json     # manually protected verbatim terms (names, brands, places)
     context.json   # authoritative style/glossary/questions context
     context.md     # rendered context that agents must read before translating
+    identity.json  # optional actor/harness/model defaults for new version tracks
+    translation-version-ledger.json # project-wide major-track/subversion metadata
     chapter-map.json # detected chapter -> chunk ranges (additive metadata)
     chunks/        # 0001.json, 0002.json ... (booktx writes these)
-    translation-store.json # primary record-level translation state
+    translation-store.json # primary nested record/version translation state
     tasks/         # persisted work items created by booktx translate next
     translated/    # compatibility/export chunk JSON managed by booktx
     reports/       # validation-report.json
@@ -73,8 +75,18 @@ booktx translate next ./book --unit batch --max-words 500 --format block
 booktx translate insert ./book --task-id TASK --file .booktx/ingest/TASK.block.txt --format block
 booktx translate task-status ./book --task-id TASK
 booktx translate set-record ./book --task-id TASK --record-id RECORD_ID --stdin
+booktx translation get-record ./book 74@38 --before 2 --after 2
+booktx translation compare ./book 74@38 --versions 1.1,1.2
+booktx translation activate ./book 74@38 1.2
+booktx actor set ./book user:nahrstaedt
+booktx harness set ./book pi
+booktx model set ./book codex-openai/gpt-5.5@low
+booktx version current ./book
+booktx version list ./book
+booktx version fork-context ./book --note "manual context split"
 booktx translate import-legacy ./book          # import valid translated/*.json
-booktx translate export ./book                 # export full translated chunks
+booktx translate export ./book                 # export active accepted chunks
+booktx translate export ./book --version 1.2  # export one exact version
 booktx next ./book                             # legacy next-chunk summary
 booktx next ./book --unit chapter              # legacy next-chapter summary
 booktx next-chapter ./book                     # chapter workflow shortcut
@@ -88,9 +100,11 @@ exists and has `ready: true`. Use `--allow-missing-context` only for legacy
 workflows and tests that deliberately bypass the context gate.
 
 `booktx status` reports record-, chunk-, chapter-, and word-level progress.
+It also reports active coverage plus per-version and per-track coverage in JSON mode.
 `booktx translate next` returns the next paragraph, batch, chunk, or chapter
 task together with a task id and submit hint. `booktx translate insert`
-validates each submitted record before writing `translation-store.json`.
+validates each submitted record before writing `translation-store.json` and prints
+the resolved ledger version ref.
 
 `booktx next --unit chapter` and `booktx next-chapter` remain available as
 legacy summaries, but they now point agents at `booktx translate next` and
@@ -107,6 +121,19 @@ leaves both `translation-store.json` and compatibility `translated/` files
 untouched, so re-extracting after editing the source never destroys work in
 progress. Stale `translated/*.json` files whose chunk no longer exists are kept
 and reported as warnings.
+
+## Nested version store
+
+Accepted translations are now stored per source record as nested candidates.
+
+- Canonical store keys stay padded, for example `0074-000038`.
+- `74@38` is a CLI shorthand only; booktx normalizes it to the padded key.
+- Each candidate stores `version`, `subversion`, and string `version_ref` such as `1.2`.
+- Major version tracks store actor, harness, and model once in `translation-version-ledger.json`.
+- Subversions store context SHA once in the ledger.
+- Each source record keeps its own `active_version`, so build and default export use the currently active accepted target for that record.
+
+That means `1.1` and `1.2` can share the same model track while differing only by context SHA, and a model change creates a new major track such as `2.1`.
 
 ## The translation contract
 
@@ -129,8 +156,9 @@ and reported as warnings.
 ```
 
 `booktx translate next --format block` prints a concise summary (task id, chapter, unit, record count, source words, and the source/durable-file/submit-command paths) instead of dumping source text. It writes `.booktx/tasks/TASK.source.block.txt` with the source text, an editable `.booktx/ingest/TASK.block.txt` durable target file with metadata headers, and `.booktx/ingest/TASK.json` for JSON compatibility. Prefer filling and submitting the durable `.block.txt` file for normal agent work (it is resumable and version-control friendly); use a stdin heredoc only for tiny manual fixes. `booktx translate task-status` diagnoses interrupted runs, `booktx translate set-record` commits one record at a time, and `booktx translate insert --json-file .booktx/ingest/TASK.json` remains available for JSON-based tooling. Never use `/tmp`; missing submission files produce a concise error, not a traceback. When you need compatibility chunk files,
-`booktx translate export` materializes `.booktx/translated/NNNN.json` from the
-accepted store entries:
+`booktx translate export` materializes compatibility `.booktx/translated/NNNN.json`
+from active accepted store entries by default, or from an exact ledger version
+when you pass `--version`:
 
 ```json
 {

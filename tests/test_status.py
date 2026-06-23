@@ -14,7 +14,16 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from booktx.cli import app
-from booktx.config import load_project
+from booktx.config import load_project, write_translation_store, write_translation_version_ledger
+from booktx.models import (
+    StoredTranslationRecordV2,
+    TranslationCandidate,
+    TranslationStoreV2,
+    TranslationSubversionLedgerEntry,
+    TranslationTrackLedgerEntry,
+    TranslationVersionLedger,
+)
+from booktx.progress import source_record_sha256
 from booktx.status import (
     ChapterProgress,
     RecordRange,
@@ -63,6 +72,79 @@ def _make_project(tmp_path: Path) -> Path:
     return project_dir
 
 
+def _write_versioned_store(project_dir: Path) -> None:
+    proj = load_project(project_dir)
+    chunk = json.loads(sorted((proj.chunks_dir).glob("*.json"))[0].read_text("utf-8"))
+    first_record = chunk["records"][0]
+    write_translation_store(
+        proj,
+        TranslationStoreV2(
+            records={
+                first_record["id"]: StoredTranslationRecordV2(
+                    chunk_id=1,
+                    part_id=1,
+                    source_sha256=source_record_sha256(first_record["source"]),
+                    source=first_record["source"],
+                    active_version="1.1",
+                    versions=[
+                        TranslationCandidate(
+                            version=1,
+                            subversion=1,
+                            version_ref="1.1",
+                            target=first_record["source"],
+                            created_at="2026-06-22T12:00:00Z",
+                            updated_at="2026-06-22T12:00:00Z",
+                        ),
+                        TranslationCandidate(
+                            version=1,
+                            subversion=2,
+                            version_ref="1.2",
+                            target="Andere Fassung",
+                            created_at="2026-06-22T12:10:00Z",
+                            updated_at="2026-06-22T12:10:00Z",
+                        ),
+                    ],
+                )
+            }
+        ),
+    )
+    write_translation_version_ledger(
+        proj,
+        TranslationVersionLedger(
+            active_version="1.2",
+            tracks={
+                "1": TranslationTrackLedgerEntry(
+                    version=1,
+                    actor="user:nahrstaedt",
+                    harness="pi",
+                    model="codex-openai/gpt-5.5@low",
+                    label="gpt-5.5 low",
+                    created_at="2026-06-22T12:00:00Z",
+                    updated_at="2026-06-22T12:10:00Z",
+                    subversions={
+                        "1": TranslationSubversionLedgerEntry(
+                            version=1,
+                            subversion=1,
+                            version_ref="1.1",
+                            context_sha256="a" * 64,
+                            created_at="2026-06-22T12:00:00Z",
+                            updated_at="2026-06-22T12:00:00Z",
+                        ),
+                        "2": TranslationSubversionLedgerEntry(
+                            version=1,
+                            subversion=2,
+                            version_ref="1.2",
+                            context_sha256="b" * 64,
+                            created_at="2026-06-22T12:10:00Z",
+                            updated_at="2026-06-22T12:10:00Z",
+                        ),
+                    },
+                )
+            },
+        ),
+    )
+
+
 def test_coverage_status_labels():
     assert coverage_status(total=3, translated=0, has_error=False) == "pending"
     assert coverage_status(total=3, translated=2, has_error=False) == "in_progress"
@@ -106,6 +188,8 @@ def test_snapshot_serializes_to_v1_shape_without_private_keys(tmp_path: Path):
         "totals",
         "next",
         "chapters",
+        "version_coverage",
+        "track_coverage",
     }
     # Chapters use the nested record_range shape (v1 contract).
     nxt = dumped["next"]
@@ -117,6 +201,19 @@ def test_snapshot_serializes_to_v1_shape_without_private_keys(tmp_path: Path):
     cli_dumped = json.loads(res.output)
     assert cli_dumped["totals"] == dumped["totals"]
     assert cli_dumped["source"] == dumped["source"]
+
+
+def test_status_json_includes_version_and_track_coverage(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    _write_versioned_store(project_dir)
+    proj = load_project(project_dir)
+
+    bundle = build_status_snapshot(proj, context_exists=True, context_ready=True)
+
+    assert [item.version_ref for item in bundle.snapshot.version_coverage] == ["1.1", "1.2"]
+    assert bundle.snapshot.version_coverage[0].active_records == 1
+    assert bundle.snapshot.track_coverage[0].label == "gpt-5.5 low"
+    assert bundle.snapshot.track_coverage[0].latest_subversion == 2
 
 
 def test_selected_chapter_returns_next_for_none(tmp_path: Path):

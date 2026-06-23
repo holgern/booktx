@@ -39,8 +39,11 @@ from booktx.models import (
     Manifest,
     NamesFile,
     ProjectConfig,
-    TranslationStore,
+    TranslationIdentity,
     TranslationTask,
+    TranslationStore,
+    TranslationStoreV2,
+    TranslationVersionLedger,
 )
 
 __all__ = [
@@ -55,8 +58,14 @@ __all__ = [
     "load_names",
     "project_source_sha256",
     "translation_store_path",
+    "translation_version_ledger_path",
+    "identity_path",
     "load_translation_store",
+    "load_translation_version_ledger",
+    "load_identity",
     "write_translation_store",
+    "write_translation_version_ledger",
+    "write_identity",
     "translation_task_dir",
     "translation_task_path",
     "translation_ingest_dir",
@@ -310,19 +319,69 @@ def translation_store_path(project: Project) -> Path:
     return project.booktx_dir / "translation-store.json"
 
 
-def load_translation_store(project: Project) -> TranslationStore:
-    """Load the translation store, or return an empty store when absent."""
+def translation_version_ledger_path(project: Project) -> Path:
+    """Path to the project-wide translation version ledger."""
+    return project.booktx_dir / "translation-version-ledger.json"
+
+
+def identity_path(project: Project) -> Path:
+    """Path to optional translation identity defaults."""
+    return project.booktx_dir / "identity.json"
+
+
+def load_translation_store(project: Project) -> TranslationStoreV2:
+    """Load the translation store, coercing legacy v1 payloads into v2."""
     path = translation_store_path(project)
     if not path.is_file():
-        return TranslationStore()
-    return TranslationStore.model_validate_json(path.read_text("utf-8"))
+        return TranslationStoreV2()
+    raw = json.loads(path.read_text("utf-8"))
+    if raw.get("version") == 2:
+        return TranslationStoreV2.model_validate(raw)
+    legacy = TranslationStore.model_validate(raw)
+    from booktx.progress import load_source_records
+    from booktx.translation_store import legacy_store_to_v2
+
+    source_records = {record.record_id: record for record in load_source_records(project)}
+    return legacy_store_to_v2(legacy, source_records=source_records)
 
 
-def write_translation_store(project: Project, store: TranslationStore) -> None:
+def load_translation_version_ledger(project: Project) -> TranslationVersionLedger:
+    """Load the version ledger, or return an empty ledger when absent."""
+    path = translation_version_ledger_path(project)
+    if not path.is_file():
+        return TranslationVersionLedger()
+    return TranslationVersionLedger.model_validate_json(path.read_text("utf-8"))
+
+
+def load_identity(project: Project) -> TranslationIdentity | None:
+    """Load optional identity defaults, or return ``None`` when absent."""
+    path = identity_path(project)
+    if not path.is_file():
+        return None
+    return TranslationIdentity.model_validate_json(path.read_text("utf-8"))
+
+
+def write_translation_store(project: Project, store: TranslationStoreV2) -> None:
     """Persist the translation store atomically."""
     from booktx.io_utils import write_json_model_atomic
 
     write_json_model_atomic(translation_store_path(project), store)
+
+
+def write_translation_version_ledger(
+    project: Project, ledger: TranslationVersionLedger
+) -> None:
+    """Persist the translation version ledger atomically."""
+    from booktx.io_utils import write_json_model_atomic
+
+    write_json_model_atomic(translation_version_ledger_path(project), ledger)
+
+
+def write_identity(project: Project, identity: TranslationIdentity) -> None:
+    """Persist translation identity defaults atomically."""
+    from booktx.io_utils import write_json_model_atomic
+
+    write_json_model_atomic(identity_path(project), identity)
 
 
 def translation_task_dir(project: Project) -> Path:

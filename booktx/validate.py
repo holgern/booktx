@@ -27,12 +27,26 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from booktx.config import Project, load_manifest, load_translation_store
-from booktx.context import GlossaryEntry, TranslationContext, load_context
+from booktx.config import (
+    Project,
+    load_manifest,
+    load_translation_store,
+    load_translation_version_ledger,
+    translation_store_path,
+)
+from booktx.context import (
+    GlossaryEntry,
+    TranslationContext,
+    context_markdown_path,
+    load_context,
+    render_context_markdown,
+)
 from booktx.epub_manifest import load_epub_template_from_manifest
 from booktx.models import Chunk, Placeholder, TranslatedChunk, TranslatedRecord
 from booktx.placeholders import TOKEN_RE, collect_tokens
 from booktx.progress import source_record_sha256
+from booktx.translation_store import active_candidate, find_candidate
+from booktx.versioning import lookup_version
 
 __all__ = [
     "Severity",
@@ -426,6 +440,7 @@ def load_effective_translated_chunks(
     *,
     source_chunks: dict[str, Chunk] | None = None,
     context: TranslationContext | None = None,
+    all_versions_strict: bool = False,
 ) -> EffectiveTranslations:
     """Merge valid legacy chunk files and accepted store records."""
     if source_chunks is None:
@@ -473,6 +488,16 @@ def load_effective_translated_chunks(
             )
         )
 
+    raw_store_version = None
+    store_path = translation_store_path(project)
+    if store_path.is_file():
+        try:
+            raw_store = json.loads(store_path.read_text("utf-8"))
+            if isinstance(raw_store, dict):
+                raw_store_version = raw_store.get("version")
+        except Exception:  # noqa: BLE001
+            raw_store_version = None
+
     try:
         store = load_translation_store(project)
     except Exception as exc:  # noqa: BLE001 - surface invalid store structure
@@ -486,9 +511,22 @@ def load_effective_translated_chunks(
         )
         store = None
 
+    try:
+        ledger = load_translation_version_ledger(project)
+    except Exception as exc:  # noqa: BLE001
+        findings.append(
+            Finding(
+                chunk_id="ledger",
+                severity=Severity.ERROR,
+                rule="invalid_translation_version_ledger",
+                message=f"translation-version-ledger.json is invalid: {exc}",
+            )
+        )
+        ledger = None
+
     if store is not None:
         for record_id, stored in store.records.items():
-            chunk_id = stored.chunk_id
+            chunk_id = f"{stored.chunk_id:04d}"
             source = source_chunks.get(chunk_id)
             if source is None:
                 findings.append(
@@ -550,8 +588,69 @@ def load_effective_translated_chunks(
                     )
                 )
                 continue
+            if stored.source and stored.source != source_rec.source:
+                findings.append(
+                    Finding(
+                        chunk_id=chunk_id,
+                        severity=Severity.ERROR,
+                        rule="source_text_mismatch",
+                        message=(
+                            f"store record {record_id} no longer matches the current "
+                            "source text"
+                        ),
+                        record_id=record_id,
+                    )
+                )
+                continue
 
-            translated_rec = TranslatedRecord(id=record_id, target=stored.target)
+            candidate = active_candidate(stored)
+            if candidate is None:
+                findings.append(
+                    Finding(
+                        chunk_id=chunk_id,
+                        severity=Severity.ERROR,
+                        rule="invalid_active_version",
+                        message=(
+                            f"store record {record_id} has no active version pointing "
+                            "to an available candidate"
+                        ),
+                        record_id=record_id,
+                    )
+                )
+                continue
+            if ledger is not None and (raw_store_version == 2 or ledger.tracks):
+                try:
+                    lookup_version(ledger, candidate.version_ref)
+                except Exception:
+                    findings.append(
+                        Finding(
+                            chunk_id=chunk_id,
+                            severity=Severity.ERROR,
+                            rule="missing_ledger_version",
+                            message=(
+                                f"store record {record_id} references version "
+                                f"{candidate.version_ref} missing from the ledger"
+                            ),
+                            record_id=record_id,
+                        )
+                    )
+                    continue
+            if candidate.status != "accepted":
+                findings.append(
+                    Finding(
+                        chunk_id=chunk_id,
+                        severity=Severity.ERROR,
+                        rule="active_version_not_accepted",
+                        message=(
+                            f"active version {candidate.version_ref} for record "
+                            f"{record_id} is not accepted"
+                        ),
+                        record_id=record_id,
+                    )
+                )
+                continue
+
+            translated_rec = TranslatedRecord(id=record_id, target=candidate.target)
             record_findings = validate_record_pair(
                 source_rec, translated_rec, chunk_id, context
             )
@@ -559,6 +658,37 @@ def load_effective_translated_chunks(
             if any(f.severity == Severity.ERROR for f in record_findings):
                 continue
             store_records.setdefault(chunk_id, {})[record_id] = translated_rec
+
+            for inactive in stored.versions:
+                if inactive.version_ref == candidate.version_ref:
+                    continue
+                if ledger is not None and (raw_store_version == 2 or ledger.tracks):
+                    try:
+                        lookup_version(ledger, inactive.version_ref)
+                    except Exception:
+                        findings.append(
+                            Finding(
+                                chunk_id=chunk_id,
+                                severity=Severity.ERROR
+                                if all_versions_strict
+                                else Severity.WARN,
+                                rule="missing_ledger_version",
+                                message=(
+                                    f"store record {record_id} references version "
+                                    f"{inactive.version_ref} missing from the ledger"
+                                ),
+                                record_id=record_id,
+                            )
+                        )
+                        continue
+                inactive_rec = TranslatedRecord(id=record_id, target=inactive.target)
+                inactive_findings = validate_record_pair(
+                    source_rec, inactive_rec, chunk_id, context
+                )
+                for finding in inactive_findings:
+                    if finding.severity == Severity.ERROR and not all_versions_strict:
+                        finding.severity = Severity.WARN
+                findings.extend(inactive_findings)
 
     merged: dict[str, TranslatedChunk] = {}
     for chunk_id, source in source_chunks.items():
@@ -579,7 +709,9 @@ def load_effective_translated_chunks(
     return EffectiveTranslations(chunks=merged, findings=findings)
 
 
-def validate_project(project: Project) -> ValidationReport:
+def validate_project(
+    project: Project, *, all_versions_strict: bool = False
+) -> ValidationReport:
     """Validate every translated chunk in ``project``.
 
     Missing translations are *not* errors; only present-but-invalid translated
@@ -613,8 +745,25 @@ def validate_project(project: Project) -> ValidationReport:
         project,
         source_chunks=source_chunks,
         context=context,
+        all_versions_strict=all_versions_strict,
     )
     report.findings.extend(effective.findings)
+
+    if context is not None and context_markdown_path(project).is_file():
+        rendered = render_context_markdown(context)
+        current_markdown = context_markdown_path(project).read_text("utf-8")
+        if current_markdown != rendered:
+            report.findings.append(
+                Finding(
+                    chunk_id="context",
+                    severity=Severity.WARN,
+                    rule="context_render_drift",
+                    message=(
+                        "context.md differs from the current context.json render; "
+                        "run `booktx context render . --write`"
+                    ),
+                )
+            )
 
     for chunk_id in sorted(source_chunks):
         source = source_chunks[chunk_id]

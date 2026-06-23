@@ -10,7 +10,9 @@ from booktx.config import (
     load_project,
     write_manifest,
     write_translation_store,
+    write_translation_version_ledger,
 )
+from booktx.context import default_context, write_context
 from booktx.models import (
     Chunk,
     EpubTemplateData,
@@ -19,7 +21,13 @@ from booktx.models import (
     Placeholder,
     Record,
     StoredTranslationRecord,
+    StoredTranslationRecordV2,
     TranslationStore,
+    TranslationStoreV2,
+    TranslationCandidate,
+    TranslationSubversionLedgerEntry,
+    TranslationTrackLedgerEntry,
+    TranslationVersionLedger,
 )
 from booktx.progress import source_record_sha256
 from booktx.validate import (
@@ -103,21 +111,69 @@ def test_store_backed_translation_passes(tmp_path: Path):
     )
     write_translation_store(
         proj,
-        TranslationStore(
+        TranslationStoreV2(
             records={
-                "0001-000001": StoredTranslationRecord(
-                    chunk_id="0001",
+                "0001-000001": StoredTranslationRecordV2(
+                    chunk_id=1,
+                    part_id=1,
                     source_sha256=source_record_sha256(source.records[0].source),
-                    target="__NAME_001__ sah __NAME_002__ an.",
-                    updated_at="2026-06-22T12:00:00Z",
+                    source=source.records[0].source,
+                    active_version="1.1",
+                    versions=[
+                        TranslationCandidate(
+                            version=1,
+                            subversion=1,
+                            version_ref="1.1",
+                            target="__NAME_001__ sah __NAME_002__ an.",
+                            created_at="2026-06-22T12:00:00Z",
+                            updated_at="2026-06-22T12:00:00Z",
+                        )
+                    ],
                 ),
-                "0001-000002": StoredTranslationRecord(
-                    chunk_id="0001",
+                "0001-000002": StoredTranslationRecordV2(
+                    chunk_id=1,
+                    part_id=2,
                     source_sha256=source_record_sha256(source.records[1].source),
-                    target="Führe __TAG_001__ aus.",
-                    updated_at="2026-06-22T12:00:00Z",
+                    source=source.records[1].source,
+                    active_version="1.1",
+                    versions=[
+                        TranslationCandidate(
+                            version=1,
+                            subversion=1,
+                            version_ref="1.1",
+                            target="Führe __TAG_001__ aus.",
+                            created_at="2026-06-22T12:00:00Z",
+                            updated_at="2026-06-22T12:00:00Z",
+                        )
+                    ],
                 ),
             }
+        ),
+    )
+    write_translation_version_ledger(
+        proj,
+        TranslationVersionLedger(
+            active_version="1.1",
+            tracks={
+                "1": TranslationTrackLedgerEntry(
+                    version=1,
+                    actor="user:test",
+                    harness="pi",
+                    model="human",
+                    created_at="2026-06-22T12:00:00Z",
+                    updated_at="2026-06-22T12:00:00Z",
+                    subversions={
+                        "1": TranslationSubversionLedgerEntry(
+                            version=1,
+                            subversion=1,
+                            version_ref="1.1",
+                            context_sha256="a" * 64,
+                            created_at="2026-06-22T12:00:00Z",
+                            updated_at="2026-06-22T12:00:00Z",
+                        )
+                    },
+                )
+            },
         ),
     )
 
@@ -318,6 +374,56 @@ def test_stale_store_record_is_an_error(tmp_path: Path):
 
     assert not report.passed
     assert any(f.rule == "stale_store_record" for f in report.findings)
+
+
+def test_missing_ledger_version_is_an_error_for_v2_store(tmp_path: Path):
+    proj = init_project(tmp_path / "book", target_language="de")
+    proj.chunks_dir.mkdir(parents=True, exist_ok=True)
+    source = _src_chunk()
+    (proj.chunks_dir / "0001.json").write_text(source.model_dump_json(), encoding="utf-8")
+    write_translation_store(
+        proj,
+        TranslationStoreV2(
+            records={
+                "0001-000001": StoredTranslationRecordV2(
+                    chunk_id=1,
+                    part_id=1,
+                    source_sha256=source_record_sha256(source.records[0].source),
+                    source=source.records[0].source,
+                    active_version="1.1",
+                    versions=[
+                        TranslationCandidate(
+                            version=1,
+                            subversion=1,
+                            version_ref="1.1",
+                            target="__NAME_001__ sah __NAME_002__ an.",
+                            created_at="2026-06-22T12:00:00Z",
+                            updated_at="2026-06-22T12:00:00Z",
+                        )
+                    ],
+                )
+            }
+        ),
+    )
+
+    report = validate_project(load_project(proj.root))
+
+    assert not report.passed
+    assert any(f.rule == "missing_ledger_version" for f in report.findings)
+
+
+def test_context_render_drift_is_a_warning(tmp_path: Path):
+    proj = init_project(tmp_path / "book", target_language="de")
+    proj.chunks_dir.mkdir(parents=True, exist_ok=True)
+    (proj.chunks_dir / "0001.json").write_text(_src_chunk().model_dump_json(), encoding="utf-8")
+    ctx = default_context(proj)
+    ctx.ready = True
+    write_context(proj, ctx)
+    (proj.booktx_dir / "context.md").write_text("stale render\n", encoding="utf-8")
+
+    report = validate_project(proj)
+
+    assert any(f.rule == "context_render_drift" for f in report.findings)
 
 
 def test_write_report_creates_json(tmp_path: Path):

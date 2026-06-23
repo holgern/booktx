@@ -13,7 +13,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from booktx.record_refs import canonical_record_id, format_version_ref, parse_version_ref
 
 __all__ = [
     "Placeholder",
@@ -23,6 +25,13 @@ __all__ = [
     "TranslatedChunk",
     "StoredTranslationRecord",
     "TranslationStore",
+    "TranslationCandidate",
+    "StoredTranslationRecordV2",
+    "TranslationStoreV2",
+    "TranslationSubversionLedgerEntry",
+    "TranslationTrackLedgerEntry",
+    "TranslationVersionLedger",
+    "TranslationIdentity",
     "TranslationTaskRecord",
     "TranslationTask",
     "NamesFile",
@@ -137,6 +146,192 @@ class TranslationStore(BaseModel):
     version: int = Field(default=1)
     source_sha256: str = Field(default="", description="Current project source SHA256")
     records: dict[str, StoredTranslationRecord] = Field(default_factory=dict)
+
+
+class TranslationCandidate(BaseModel):
+    """One candidate translation stored under a record version."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: int
+    subversion: int
+    version_ref: str
+    target: str
+    status: str = "accepted"
+    created_at: str
+    updated_at: str
+    reviewed_at: str | None = None
+    reviewed_by: str | None = None
+    review_note: str | None = None
+
+    @field_validator("version_ref")
+    @classmethod
+    def _version_ref_shape(cls, value: str) -> str:
+        return parse_version_ref(value).version_ref
+
+    @model_validator(mode="after")
+    def _version_ref_matches_fields(self) -> "TranslationCandidate":
+        expected = format_version_ref(self.version, self.subversion)
+        if self.version_ref != expected:
+            raise ValueError(
+                f"version_ref {self.version_ref!r} must equal {expected!r}"
+            )
+        return self
+
+
+class StoredTranslationRecordV2(BaseModel):
+    """One source record with nested versioned translation candidates."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    chunk_id: int
+    part_id: int
+    source_sha256: str
+    source: str
+    active_version: str | None = None
+    versions: list[TranslationCandidate] = Field(default_factory=list)
+
+    @field_validator("active_version")
+    @classmethod
+    def _active_version_shape(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        return parse_version_ref(value).version_ref
+
+    @model_validator(mode="after")
+    def _validate_versions(self) -> "StoredTranslationRecordV2":
+        seen: set[str] = set()
+        for candidate in self.versions:
+            if candidate.version_ref in seen:
+                raise ValueError(
+                    f"duplicate version_ref {candidate.version_ref!r} in record"
+                )
+            seen.add(candidate.version_ref)
+        if self.active_version is not None and self.active_version not in seen:
+            raise ValueError(
+                f"active_version {self.active_version!r} is not present in versions"
+            )
+        return self
+
+
+class TranslationStoreV2(BaseModel):
+    """Primary nested translation state for booktx."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal[2] = 2
+    source_sha256: str = ""
+    records: dict[str, StoredTranslationRecordV2] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_record_keys(self) -> "TranslationStoreV2":
+        for record_id, record in self.records.items():
+            expected = canonical_record_id(record.chunk_id, record.part_id)
+            if record_id != expected:
+                raise ValueError(
+                    f"record key {record_id!r} must equal canonical id {expected!r}"
+                )
+        return self
+
+
+class TranslationSubversionLedgerEntry(BaseModel):
+    """One context-scoped subversion entry inside a major track."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: int
+    subversion: int
+    version_ref: str
+    context_sha256: str
+    context_path: str = ".booktx/context.json"
+    context_label: str | None = None
+    created_at: str
+    updated_at: str
+    notes: str | None = None
+    forced: bool = False
+
+    @field_validator("version_ref")
+    @classmethod
+    def _subversion_version_ref_shape(cls, value: str) -> str:
+        return parse_version_ref(value).version_ref
+
+    @model_validator(mode="after")
+    def _validate_version_ref(self) -> "TranslationSubversionLedgerEntry":
+        expected = format_version_ref(self.version, self.subversion)
+        if self.version_ref != expected:
+            raise ValueError(
+                f"version_ref {self.version_ref!r} must equal {expected!r}"
+            )
+        if not self.context_sha256:
+            raise ValueError("context_sha256 must not be empty")
+        return self
+
+
+class TranslationTrackLedgerEntry(BaseModel):
+    """One major version track storing stable identity and subversions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: int
+    actor: str
+    harness: str
+    model: str
+    label: str | None = None
+    created_at: str
+    updated_at: str
+    subversions: dict[str, TranslationSubversionLedgerEntry] = Field(
+        default_factory=dict
+    )
+
+    @model_validator(mode="after")
+    def _validate_subversion_keys(self) -> "TranslationTrackLedgerEntry":
+        for subversion_id, entry in self.subversions.items():
+            if subversion_id != str(entry.subversion):
+                raise ValueError(
+                    f"subversion key {subversion_id!r} must equal {entry.subversion!r}"
+                )
+            if entry.version != self.version:
+                raise ValueError(
+                    f"subversion {entry.version_ref!r} does not match track {self.version}"
+                )
+        return self
+
+
+class TranslationVersionLedger(BaseModel):
+    """Project-wide ledger assigning meaning to translation versions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal[1] = 1
+    source_sha256: str = ""
+    active_version: str | None = None
+    tracks: dict[str, TranslationTrackLedgerEntry] = Field(default_factory=dict)
+
+    @field_validator("active_version")
+    @classmethod
+    def _ledger_active_version_shape(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        return parse_version_ref(value).version_ref
+
+    @model_validator(mode="after")
+    def _validate_track_keys(self) -> "TranslationVersionLedger":
+        for track_id, entry in self.tracks.items():
+            if track_id != str(entry.version):
+                raise ValueError(
+                    f"track key {track_id!r} must equal {entry.version!r}"
+                )
+        return self
+
+
+class TranslationIdentity(BaseModel):
+    """Stored defaults for new translation-version work."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    actor: str
+    harness: str
+    model: str
 
 
 class TranslationTaskRecord(BaseModel):

@@ -7,9 +7,31 @@ All commands take a project directory unless stated otherwise.
 ```bash
 booktx version
 booktx --version
+booktx version current PROJECT_DIR
+booktx version list PROJECT_DIR
+booktx version show PROJECT_DIR 1.2 --json
+booktx version select PROJECT_DIR 1.2
+booktx version set-label PROJECT_DIR 1 "gpt-5.5 low"
+booktx version fork-context PROJECT_DIR --note "manual split"
 ```
 
-Prints the installed package version.
+`booktx version` with no subcommand prints the installed package version.
+The subcommands inspect and manage the project-wide translation-version ledger.
+
+## Identity defaults
+
+```bash
+booktx actor whoami PROJECT_DIR
+booktx actor set PROJECT_DIR user:nahrstaedt
+booktx actor clear PROJECT_DIR
+booktx harness set PROJECT_DIR pi
+booktx harness clear PROJECT_DIR
+booktx model set PROJECT_DIR codex-openai/gpt-5.5@low
+booktx model clear PROJECT_DIR
+```
+
+These commands manage `.booktx/identity.json`, which supplies default actor,
+harness, and model values for new major tracks in the version ledger.
 
 ## Initialize a project
 
@@ -132,6 +154,7 @@ booktx status PROJECT_DIR --chapter 0006
 ```
 
 Reports deterministic record-, chunk-, chapter-, and word-level progress.
+JSON output also includes `version_coverage` and `track_coverage`.
 
 ## Command workflow
 
@@ -161,6 +184,7 @@ booktx translate insert PROJECT_DIR --json-file .booktx/ingest/TASK.json
 ```
 
 Prefer submitting the generated `.booktx/ingest/TASK.block.txt` durable file for normal agent work; use a stdin heredoc only for very small manual fixes. `translate insert` validates submitted records before writing `.booktx/translation-store.json`. Invalid submissions are rejected atomically.
+Accepted writes print the resolved dotted version ref, for example `version: 1.2`.
 
 ### Task status
 
@@ -187,11 +211,34 @@ Missing or unreadable submission files (for `--file` / `--json-file`) produce a 
 ```bash
 booktx translate import-legacy PROJECT_DIR
 booktx translate export PROJECT_DIR
+booktx translate export PROJECT_DIR --version 1.2
+booktx translate export PROJECT_DIR --track 1 --latest-subversion
+booktx translate export PROJECT_DIR --all-versions
+booktx translate migrate-store PROJECT_DIR
+booktx translate migrate-store PROJECT_DIR --write --actor user:nahrstaedt --harness pi --model codex-openai/gpt-5.5@low
 ```
 
 `import-legacy` copies valid compatibility chunk files from `translated/` into
-the record-level store. `export` materializes full translated chunk files for
-chunks whose records are all accepted in the store.
+the nested record-level store. `migrate-store` inspects or rewrites a legacy v1
+flat store into the v2 nested shape. `export` materializes compatibility chunk
+files from the active accepted candidates by default, can target one exact
+version ref, can export the latest accepted subversion for one track, and can
+write every accepted version into `translated/<version-ref>/`.
+
+### Record inspection and review
+
+```bash
+booktx translation get-record PROJECT_DIR 74@38 --before 2 --after 2
+booktx translation get-record PROJECT_DIR 74@38 --json
+booktx translation list PROJECT_DIR --range 74@38..74@50 --json
+booktx translation list PROJECT_DIR --chapter 11 --version 1.2 --json
+booktx translation compare PROJECT_DIR 74@38 --versions 1.1,1.2
+booktx translation activate PROJECT_DIR 74@38 1.2
+booktx translation review PROJECT_DIR 74@38 --activate 1.2 --note "Better in context."
+```
+
+Canonical store keys remain padded ids such as `0074-000038`, but the CLI also
+accepts shorthand refs such as `74@38`.
 
 ## Legacy next summary
 
@@ -230,6 +277,7 @@ command.
 
 ```bash
 booktx validate PROJECT_DIR
+booktx validate PROJECT_DIR --all-versions-strict
 ```
 
 Checks translated chunks against the contract and context rules, writes `.booktx/reports/validation-report.json`, and exits non-zero on errors.

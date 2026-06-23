@@ -39,9 +39,11 @@ from booktx.config import (
 )
 from booktx.context import load_context
 from booktx.io_utils import utc_timestamp
-from booktx.models import StoredTranslationRecord, TranslatedRecord
+from booktx.models import TranslatedRecord
 from booktx.progress import count_words
+from booktx.translation_store import ensure_store_record, upsert_translation_version
 from booktx.validate import Severity, validate_record_pair
+from booktx.versioning import resolve_current_version
 
 if TYPE_CHECKING:
     from booktx.models import TranslationTask
@@ -76,6 +78,7 @@ class AcceptResult:
 
     accepted_records: int
     target_words: int
+    version_ref: str = ""
     chapter_id: str = ""
     chapter_title: str = ""
     records_translated: int = 0
@@ -152,22 +155,29 @@ def _write_accepted(
     proj: Project,
     bundle: StatusBundle,
     submitted: list[SubmittedRecord],
-) -> str:
-    """Persist accepted records atomically and return the shared timestamp."""
+) -> tuple[str, str]:
+    """Persist accepted records atomically and return timestamp plus version_ref."""
     source_by_id = bundle.index.source_by_id
     updated_at = utc_timestamp()
+    resolution = resolve_current_version(proj)
     store = load_translation_store(proj)
     store.source_sha256 = bundle.snapshot.source.source_sha256
     for item in submitted:
         source_view = source_by_id[item.id]
-        store.records[item.id] = StoredTranslationRecord(
-            chunk_id=source_view.chunk_id,
+        record = ensure_store_record(
+            store,
+            item.id,
+            source=source_view.source,
             source_sha256=source_view.source_sha256,
-            target=item.target,
+        )
+        upsert_translation_version(
+            record,
+            resolution.version_ref,
+            item.target,
             updated_at=updated_at,
         )
     write_translation_store(proj, store)
-    return updated_at
+    return updated_at, resolution.version_ref
 
 
 def accept_translation_records(
@@ -196,7 +206,7 @@ def accept_translation_records(
     if errors:
         raise SubmissionValidationError(errors)
 
-    _write_accepted(proj, bundle, submitted)
+    _updated_at, version_ref = _write_accepted(proj, bundle, submitted)
 
     # Refresh to report post-accept progress for the first submitted record's
     # chapter. This mirrors the original two-pass behavior.
@@ -212,11 +222,14 @@ def accept_translation_records(
     target_words = sum(count_words(item.target) for item in submitted)
     if chapter is None:
         return AcceptResult(
-            accepted_records=len(submitted), target_words=target_words
+            accepted_records=len(submitted),
+            target_words=target_words,
+            version_ref=version_ref,
         )
     return AcceptResult(
         accepted_records=len(submitted),
         target_words=target_words,
+        version_ref=version_ref,
         chapter_id=chapter.chapter_id,
         chapter_title=chapter.title,
         records_translated=chapter.records_translated,

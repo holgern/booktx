@@ -16,7 +16,8 @@ import textwrap
 def test_version_sourced_from_generated_file() -> None:
     import booktx
 
-    assert booktx.__version__ == "0.1.1.dev1+ge2a950b48"
+    assert booktx.__version__
+    assert booktx.__version__ != "0+unknown"
 
 
 def test_version_falls_back_when_version_file_missing() -> None:

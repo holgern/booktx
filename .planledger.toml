@@ -1,0 +1,10 @@
+[ledger]
+code = "pl"
+name = "planledger"
+
+[project]
+name = "booktx"
+uuid = "2d75f9be-d0d9-42d0-95d5-a5ec800984cd"
+
+[storage]
+planledger_dir = "../ledger/plan/booktx"

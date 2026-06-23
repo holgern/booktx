@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -11,20 +12,37 @@ from booktx.config import (
     detect_format,
     find_source_file,
     init_project,
+    load_identity,
     load_names,
     load_project,
     load_translation_store,
     load_translation_task,
+    load_translation_version_ledger,
     project_source_sha256,
+    translation_version_ledger_path,
+    identity_path,
     translation_ingest_block_path,
     translation_ingest_path,
     translation_store_path,
     translation_task_path,
     translation_task_source_block_path,
+    write_identity,
     write_translation_store,
+    write_translation_version_ledger,
     write_translation_task,
 )
-from booktx.models import StoredTranslationRecord, TranslationStore, TranslationTask
+from booktx.context import default_context, write_context
+from booktx.models import (
+    StoredTranslationRecordV2,
+    TranslationCandidate,
+    TranslationIdentity,
+    TranslationStoreV2,
+    TranslationTask,
+    TranslationTrackLedgerEntry,
+    TranslationSubversionLedgerEntry,
+    TranslationVersionLedger,
+)
+from booktx.versioning import canonical_json_sha256, resolve_current_version
 
 
 def test_detect_format():
@@ -128,14 +146,25 @@ def test_translation_store_helpers_roundtrip(tmp_path: Path):
     empty = load_translation_store(proj)
     assert empty.records == {}
 
-    store = TranslationStore(
+    store = TranslationStoreV2(
         source_sha256=project_source_sha256(proj),
         records={
-            "0001-000001": StoredTranslationRecord(
-                chunk_id="0001",
+            "0001-000001": StoredTranslationRecordV2(
+                chunk_id=1,
+                part_id=1,
                 source_sha256="abc123",
-                target="Hallo.",
-                updated_at="2026-06-22T12:00:00Z",
+                source="Hi",
+                active_version="1.1",
+                versions=[
+                    TranslationCandidate(
+                        version=1,
+                        subversion=1,
+                        version_ref="1.1",
+                        target="Hallo.",
+                        created_at="2026-06-22T12:00:00Z",
+                        updated_at="2026-06-22T12:00:00Z",
+                    )
+                ],
             )
         },
     )
@@ -143,6 +172,150 @@ def test_translation_store_helpers_roundtrip(tmp_path: Path):
 
     loaded = load_translation_store(proj)
     assert loaded == store
+
+
+def test_translation_version_ledger_helpers_roundtrip(tmp_path: Path):
+    proj = init_project(tmp_path / "book", target_language="de")
+
+    assert translation_version_ledger_path(proj).name == "translation-version-ledger.json"
+    empty = load_translation_version_ledger(proj)
+    assert empty.tracks == {}
+
+    ledger = TranslationVersionLedger(
+        source_sha256="abc123",
+        active_version="1.1",
+        tracks={
+            "1": TranslationTrackLedgerEntry(
+                version=1,
+                actor="user:nahrstaedt",
+                harness="pi",
+                model="codex-openai/gpt-5.5@low",
+                created_at="2026-06-22T12:00:00Z",
+                updated_at="2026-06-22T12:00:00Z",
+                subversions={
+                    "1": TranslationSubversionLedgerEntry(
+                        version=1,
+                        subversion=1,
+                        version_ref="1.1",
+                        context_sha256="a" * 64,
+                        created_at="2026-06-22T12:00:00Z",
+                        updated_at="2026-06-22T12:00:00Z",
+                    )
+                },
+            )
+        },
+    )
+    write_translation_version_ledger(proj, ledger)
+
+    assert load_translation_version_ledger(proj) == ledger
+
+
+def test_identity_helpers_roundtrip(tmp_path: Path):
+    proj = init_project(tmp_path / "book", target_language="de")
+
+    assert identity_path(proj).name == "identity.json"
+    assert load_identity(proj) is None
+
+    identity = TranslationIdentity(
+        actor="user:nahrstaedt",
+        harness="pi",
+        model="codex-openai/gpt-5.5@low",
+    )
+    write_identity(proj, identity)
+
+    assert load_identity(proj) == identity
+
+
+def test_canonical_context_sha_uses_canonical_json(tmp_path: Path):
+    proj = init_project(tmp_path / "book", target_language="de")
+    ctx = default_context(proj)
+    ctx.ready = True
+    write_context(proj, ctx)
+    payload = json.loads((proj.booktx_dir / "context.json").read_text("utf-8"))
+
+    expected = canonical_json_sha256(payload)
+    assert expected == canonical_json_sha256(ctx.model_dump(mode="json", by_alias=True))
+
+
+def _make_project_with_context(tmp_path: Path) -> Path:
+    src = tmp_path / "story.md"
+    src.write_text("# Hi\n\nHello there.\n", encoding="utf-8")
+    proj = init_project(tmp_path / "book", target_language="de", source_file=src)
+    ctx = default_context(proj)
+    ctx.ready = True
+    write_context(proj, ctx)
+    return proj.root
+
+
+def test_version_resolution_reuses_same_identity_and_context(tmp_path: Path):
+    proj = load_project(_make_project_with_context(tmp_path))
+    write_identity(
+        proj,
+        TranslationIdentity(
+            actor="user:nahrstaedt",
+            harness="pi",
+            model="codex-openai/gpt-5.5@low",
+        ),
+    )
+
+    first = resolve_current_version(proj)
+    second = resolve_current_version(proj)
+
+    assert first.version_ref == "1.1"
+    assert second.version_ref == "1.1"
+    assert second.created_track is False
+    assert second.created_subversion is False
+
+
+def test_version_resolution_creates_new_subversion_on_context_change(tmp_path: Path):
+    proj = load_project(_make_project_with_context(tmp_path))
+    write_identity(
+        proj,
+        TranslationIdentity(
+            actor="user:nahrstaedt",
+            harness="pi",
+            model="codex-openai/gpt-5.5@low",
+        ),
+    )
+
+    first = resolve_current_version(proj)
+    ctx = default_context(proj)
+    ctx.ready = True
+    ctx.global_rules.append("Prefer shorter German clauses.")
+    write_context(proj, ctx)
+
+    second = resolve_current_version(proj)
+
+    assert first.version_ref == "1.1"
+    assert second.version_ref == "1.2"
+    assert second.created_track is False
+    assert second.created_subversion is True
+
+
+def test_version_resolution_creates_new_major_track_on_model_change(tmp_path: Path):
+    proj = load_project(_make_project_with_context(tmp_path))
+    write_identity(
+        proj,
+        TranslationIdentity(
+            actor="user:nahrstaedt",
+            harness="pi",
+            model="codex-openai/gpt-5.5@low",
+        ),
+    )
+    first = resolve_current_version(proj)
+    write_identity(
+        proj,
+        TranslationIdentity(
+            actor="user:nahrstaedt",
+            harness="pi",
+            model="codex-openai/gpt-5.4-mini@low",
+        ),
+    )
+
+    second = resolve_current_version(proj)
+
+    assert first.version_ref == "1.1"
+    assert second.version_ref == "2.1"
 
 
 def test_translation_task_helpers_roundtrip(tmp_path: Path):
