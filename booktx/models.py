@@ -210,6 +210,13 @@ class TranslationCandidate(BaseModel):
     version: int
     subversion: int
     version_ref: str
+    baseline_ref: str | None = None
+    baseline_sha256: str | None = None
+    context_view_sha256: str | None = None
+    context_view_path: str | None = None
+    context_notes_scope: str | None = None
+    context_target_chapter_id: str | None = None
+    context_notes_through_chapter_id: str | None = None
     target: str
     status: str = "accepted"
     created_at: str
@@ -218,9 +225,11 @@ class TranslationCandidate(BaseModel):
     reviewed_by: str | None = None
     review_note: str | None = None
 
-    @field_validator("version_ref")
+    @field_validator("version_ref", "baseline_ref")
     @classmethod
-    def _version_ref_shape(cls, value: str) -> str:
+    def _version_ref_shape(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
         return parse_version_ref(value).version_ref
 
     @model_validator(mode="after")
@@ -298,6 +307,10 @@ class TranslationSubversionLedgerEntry(BaseModel):
     version_ref: str
     context_sha256: str
     context_path: str = ".booktx/context.json"
+    baseline_sha256: str | None = None
+    baseline_path: str | None = None
+    legacy_full_context_sha256: str | None = None
+    legacy_full_context_path: str | None = None
     context_label: str | None = None
     created_at: str
     updated_at: str
@@ -416,9 +429,37 @@ class TranslationTask(BaseModel):
         default=None,
         description="Active translation version ref when the task was created",
     )
+    baseline_ref: str | None = Field(
+        default=None,
+        description="Baseline version ref when the task was created",
+    )
+    baseline_sha256: str | None = Field(
+        default=None,
+        description="Baseline context hash when the task was created",
+    )
     context_sha256: str | None = Field(
         default=None,
         description="Context hash when the task was created",
+    )
+    context_view_sha256: str | None = Field(
+        default=None,
+        description="Task-scoped effective context view hash",
+    )
+    context_view_path: str | None = Field(
+        default=None,
+        description="Project-relative path to the immutable task context snapshot",
+    )
+    context_notes_scope: str | None = Field(
+        default=None,
+        description="How chapter notes were selected for this task context",
+    )
+    context_target_chapter_id: str | None = Field(
+        default=None,
+        description="Target chapter id used to compose the task context",
+    )
+    context_notes_through_chapter_id: str | None = Field(
+        default=None,
+        description="Highest prior chapter note included in the task context",
     )
     source_sha256: str | None = Field(
         default=None,
@@ -479,6 +520,8 @@ class TranslationTodo(BaseModel):
     max_run_words: int | None = None
     include_current: bool = True
     created_at: str
+    baseline_ref: str | None = None
+    baseline_sha256: str | None = None
     context_sha256: str | None = None
     source_sha256: str | None = None
     start_totals: StatusTotals

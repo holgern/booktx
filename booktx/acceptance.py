@@ -39,12 +39,11 @@ from booktx.config import (
     load_translation_store,
     write_translation_store,
 )
-from booktx.context import load_context
 from booktx.io_utils import utc_timestamp
 from booktx.models import TranslatedRecord
 from booktx.progress import count_words
 from booktx.translation_store import ensure_store_record, upsert_translation_version
-from booktx.validate import Severity, validate_record_pair
+from booktx.validate import Severity, load_validation_context, validate_record_pair
 from booktx.versioning import resolve_current_version
 
 if TYPE_CHECKING:
@@ -111,35 +110,19 @@ def _resolved_submission_version(
     task: TranslationTask | None,
     submission_translation_version: str | None,
 ) -> str:
-    """Resolve the version for this write and reject stale task metadata."""
-    resolution = resolve_current_version(proj)
-    current_version_ref = resolution.version_ref
-
-    if (
-        task is not None
-        and task.translation_version is not None
-        and task.translation_version != current_version_ref
-    ):
-        raise _err(
-            "stale_translation_task",
-            "stale translation task "
-            f"{task.task_id} was created for version {task.translation_version}, "
-            f"but the current active version is {current_version_ref}.\n"
-            "Run `booktx translate next .` to create a fresh task, or select the "
-            "old version explicitly before submitting.",
-        )
+    """Resolve the authoritative version for this write."""
+    version_ref = (
+        task.translation_version
+        if task is not None and task.translation_version is not None
+        else resolve_current_version(proj).version_ref
+    )
 
     if submission_translation_version is not None:
-        expected_version = (
-            task.translation_version
-            if task is not None and task.translation_version is not None
-            else current_version_ref
-        )
-        if submission_translation_version != expected_version:
+        if submission_translation_version != version_ref:
             subject = (
-                f"task {task.task_id} version {expected_version}"
+                f"task {task.task_id} version {version_ref}"
                 if task is not None and task.translation_version is not None
-                else f"current active version {expected_version}"
+                else f"current active version {version_ref}"
             )
             raise _err(
                 "submission_translation_version_mismatch",
@@ -147,7 +130,7 @@ def _resolved_submission_version(
                 f"{submission_translation_version} does not match {subject}",
             )
 
-    return current_version_ref
+    return version_ref
 
 
 def _validate_task_profile(
@@ -184,7 +167,26 @@ def _validate_submitted(
     source_chunks = bundle.index.source_chunks
     allowed_ids = {record.id for record in task.records} if task is not None else None
 
-    context = load_context(proj)
+    try:
+        context = load_validation_context(
+            proj,
+            context_view_path=(
+                task.context_view_path
+                if task is not None and task.context_view_path is not None
+                else None
+            ),
+        )
+    except FileNotFoundError as exc:
+        raise _err(
+            "missing_task_context_view",
+            "task context view is missing: "
+            f"{task.context_view_path}. Recreate the task or restore the snapshot.",
+        ) from exc
+    except ValueError as exc:
+        raise _err(
+            "invalid_task_context_view",
+            f"task context view is invalid: {exc}",
+        ) from exc
     findings: list[Finding] = []
     seen_ids: set[str] = set()
     for item in submitted:
@@ -222,6 +224,7 @@ def _write_accepted(
     submitted: list[SubmittedRecord],
     *,
     version_ref: str,
+    task: TranslationTask | None,
 ) -> tuple[str, str]:
     """Persist accepted records atomically and return timestamp plus version_ref."""
     source_by_id = bundle.index.source_by_id
@@ -241,6 +244,19 @@ def _write_accepted(
             version_ref,
             item.target,
             updated_at=updated_at,
+            baseline_ref=task.baseline_ref if task is not None else None,
+            baseline_sha256=task.baseline_sha256 if task is not None else None,
+            context_view_sha256=(
+                task.context_view_sha256 if task is not None else None
+            ),
+            context_view_path=task.context_view_path if task is not None else None,
+            context_notes_scope=task.context_notes_scope if task is not None else None,
+            context_target_chapter_id=(
+                task.context_target_chapter_id if task is not None else None
+            ),
+            context_notes_through_chapter_id=(
+                task.context_notes_through_chapter_id if task is not None else None
+            ),
         )
     write_translation_store(proj, store)
     return updated_at, version_ref
@@ -286,7 +302,7 @@ def accept_translation_records(
         raise SubmissionValidationError(errors)
 
     _updated_at, version_ref = _write_accepted(
-        proj, bundle, submitted, version_ref=version_ref
+        proj, bundle, submitted, version_ref=version_ref, task=task
     )
 
     # Refresh to report post-accept progress for the first submitted record's

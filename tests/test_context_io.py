@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from booktx.config import init_project, load_project
@@ -9,12 +10,17 @@ from booktx.context import (
     ChapterContext,
     TranslationContext,
     analyze_context_markdown_drift,
+    baseline_payload,
+    baseline_sha256,
     chapter_contexts_equivalent,
     chapter_map_path,
+    chapter_notes_before_target,
+    context_history_views_dir,
     context_markdown_path,
     context_path,
     default_context,
     ensure_context_markdown_safe_to_overwrite,
+    ensure_context_view_snapshot,
     hydrate_chapter_contexts_from_chapter_map,
     load_context,
     merge_chapter_contexts,
@@ -121,6 +127,22 @@ def test_context_files_round_trip(tmp_path: Path):
     sources = {g.source for g in loaded.glossary}
     # Default glossary is empty; only the custom entry persists.
     assert {"snapbow"} <= sources
+
+
+def test_baseline_payload_excludes_chapter_contexts(tmp_path: Path):
+    proj = _project(tmp_path)
+    ctx = default_context(proj)
+    ctx.chapter_contexts = [ChapterContext(chapter_id="0001", title="One")]
+    payload = baseline_payload(ctx)
+    assert "chapter_contexts" not in payload
+
+
+def test_baseline_sha256_ignores_chapter_note_only_change(tmp_path: Path):
+    proj = _project(tmp_path)
+    left = default_context(proj)
+    right = default_context(proj)
+    right.chapter_contexts = [ChapterContext(chapter_id="0001", title="One")]
+    assert baseline_sha256(left) == baseline_sha256(right)
 
 
 def test_seed_glossary_entries_are_open_with_forbidden(tmp_path: Path):
@@ -377,6 +399,96 @@ def test_hydrate_does_not_overwrite_existing_values(tmp_path: Path):
     note = ctx.chapter_contexts[0]
     assert note.title == "Kept"
     assert note.chunk_ids == ["0009"]
+
+
+def test_chapter_notes_before_target_uses_chapter_map_order(tmp_path: Path):
+    proj = _project(tmp_path)
+    chapter_map_path(proj).write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "source_sha256": "",
+                "chapters": [
+                    {"chapter_id": "0001", "title": "One", "chunk_ids": ["0001"]},
+                    {"chapter_id": "0002", "title": "Two", "chunk_ids": ["0002"]},
+                    {"chapter_id": "0003", "title": "Three", "chunk_ids": ["0003"]},
+                    {"chapter_id": "0004", "title": "Four", "chunk_ids": ["0004"]},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    notes = [
+        ChapterContext(chapter_id="0003", title="Three"),
+        ChapterContext(chapter_id="0001", title="One"),
+        ChapterContext(chapter_id="0002", title="Two"),
+    ]
+    from booktx.chapters import load_chapter_map
+
+    chapter_map = load_chapter_map(proj)
+    assert chapter_map is not None
+    selected = chapter_notes_before_target(chapter_map, notes, "0004")
+    assert [note.chapter_id for note in selected] == ["0001", "0002", "0003"]
+
+
+def test_context_view_snapshot_writes_and_reuses_same_sha(tmp_path: Path):
+    proj = _project(tmp_path)
+    chapter_map_path(proj).write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "source_sha256": "",
+                "chapters": [
+                    {"chapter_id": "0001", "title": "One", "chunk_ids": ["0001"]},
+                    {"chapter_id": "0002", "title": "Two", "chunk_ids": ["0002"]},
+                    {"chapter_id": "0003", "title": "Three", "chunk_ids": ["0003"]},
+                    {"chapter_id": "0004", "title": "Four", "chunk_ids": ["0004"]},
+                    {"chapter_id": "0005", "title": "Five", "chunk_ids": ["0005"]},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    ctx = default_context(proj)
+    ctx.ready = True
+    ctx.global_rules.append("Prefer short clauses.")
+    ctx.chapter_contexts = [
+        ChapterContext(chapter_id="0001", title="One", translation_summary="Done one."),
+        ChapterContext(chapter_id="0002", title="Two", translation_summary="Done two."),
+        ChapterContext(
+            chapter_id="0005", title="Five", translation_summary="Done five."
+        ),
+    ]
+    write_context(proj, ctx)
+
+    first = ensure_context_view_snapshot(
+        proj,
+        baseline_ref="1.1",
+        baseline_sha256=baseline_sha256(ctx),
+        target_chapter_id="0004",
+    )
+
+    snapshot_dir = context_history_views_dir(proj) / first.context_view_sha256
+    stored = json.loads((snapshot_dir / "context.json").read_text("utf-8"))
+    assert first.note_chapter_ids == ["0001", "0002"]
+    assert first.notes_through_chapter_id == "0002"
+    assert [note["chapter_id"] for note in stored["chapter_contexts"]] == [
+        "0001",
+        "0002",
+    ]
+
+    ctx.chapter_contexts.append(
+        ChapterContext(chapter_id="0005", title="Five", decisions_added=["later note"])
+    )
+    write_context(proj, ctx)
+
+    second = ensure_context_view_snapshot(
+        proj,
+        baseline_ref="1.1",
+        baseline_sha256=baseline_sha256(ctx),
+        target_chapter_id="0004",
+    )
+    assert second.context_view_sha256 == first.context_view_sha256
 
 
 # --- merge and upsert -------------------------------------------------------

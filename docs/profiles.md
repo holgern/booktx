@@ -92,8 +92,10 @@ they are unrelated.
 
 - A **model/actor/harness identity change** creates or selects a major track
   (e.g. `1`).
-- A **context change** (different `context_sha256`) creates or selects a
-  subversion inside that track (e.g. `1.2`).
+- A **baseline policy change** creates or selects a subversion inside that
+  track (e.g. `1.2`).
+- A **chapter-note append** changes the next task's composed context view but
+  does **not** create a new dotted version on its own.
 
 Use:
 

@@ -207,7 +207,13 @@ def test_translate_next_creates_ingest_file_and_insert_updates_store(tmp_path: P
     ingest_file = project_dir / task["ingest_path"]
 
     assert task["translation_version"] == "1.1"
+    assert task["baseline_ref"] == "1.1"
+    assert task["baseline_sha256"]
     assert task["context_sha256"]
+    assert task["context_view_sha256"] == task["context_sha256"]
+    assert task["context_view_path"].endswith("/context.json")
+    assert task["context_notes_scope"] == "before_target_chapter"
+    assert task["context_target_chapter_id"] == task["chapter_id"]
     assert task["source_sha256"]
     assert task["ingest_path"].startswith("translations/de_default/ingest/")
     assert f"--json-file {task['ingest_path']}" in task["submit_hint"]
@@ -262,6 +268,10 @@ def test_translate_next_block_template_includes_translation_version(tmp_path: Pa
 
     text = block_file.read_text("utf-8")
     assert "# translation_version: 1.1" in text
+    assert "# baseline: 1.1" in text
+    assert "# baseline_sha256: " in text
+    assert "# context_view_sha256: " in text
+    assert "# context_view_path: " in text
 
 
 def test_translate_insert_tsv_accepts_batch(tmp_path: Path):
@@ -396,7 +406,7 @@ def test_translate_insert_block_file_accepts_batch(tmp_path: Path):
     assert "accepted:" in insert_res.output
 
 
-def test_translate_insert_rejects_stale_task_version(tmp_path: Path):
+def test_translate_insert_accepts_task_after_live_baseline_change(tmp_path: Path):
     project_dir = _make_project(tmp_path)
 
     next_res = runner.invoke(
@@ -429,10 +439,14 @@ def test_translate_insert_rejects_stale_task_version(tmp_path: Path):
         ],
     )
 
-    assert insert_res.exit_code != 0
-    assert "stale translation task" in insert_res.output
-    assert "1.1" in insert_res.output
-    assert "1.2" in insert_res.output
+    assert insert_res.exit_code == 0, insert_res.output
+    assert "version: 1.1" in insert_res.output
+    store = json.loads(_store_path(project_dir).read_text("utf-8"))
+    candidate = store["records"][task["records"][0]["id"]]["versions"][0]
+    assert candidate["version_ref"] == "1.1"
+    assert candidate["baseline_ref"] == task["baseline_ref"]
+    assert candidate["baseline_sha256"] == task["baseline_sha256"]
+    assert candidate["context_view_sha256"] == task["context_view_sha256"]
 
 
 def test_translate_insert_legacy_task_without_translation_version_remains_accepted(

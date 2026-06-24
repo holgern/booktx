@@ -265,6 +265,8 @@ def test_ledger_roundtrip_and_validates_keys():
                         subversion=1,
                         version_ref="1.1",
                         context_sha256="a" * 64,
+                        baseline_sha256="a" * 64,
+                        baseline_path="translations/de/context.json",
                         created_at="2026-06-22T12:00:00Z",
                         updated_at="2026-06-22T12:00:00Z",
                     )
@@ -314,7 +316,14 @@ def test_translation_task_roundtrip():
         source_language="en",
         target_language="de",
         translation_version="1.1",
+        baseline_ref="1.1",
+        baseline_sha256="c" * 64,
         context_sha256="a" * 64,
+        context_view_sha256="a" * 64,
+        context_view_path="translations/de/context-history/views/aaaaaaaa/context.json",
+        context_notes_scope="before_target_chapter",
+        context_target_chapter_id="0006",
+        context_notes_through_chapter_id="0005",
         source_sha256="b" * 64,
         source_words=12,
         record_count=1,
@@ -335,7 +344,11 @@ def test_translation_task_roundtrip():
 
     assert dumped["task_id"] == "bt-task-1"
     assert dumped["translation_version"] == "1.1"
+    assert dumped["baseline_ref"] == "1.1"
+    assert dumped["baseline_sha256"] == "c" * 64
     assert dumped["context_sha256"] == "a" * 64
+    assert dumped["context_view_sha256"] == "a" * 64
+    assert dumped["context_notes_scope"] == "before_target_chapter"
     assert dumped["source_sha256"] == "b" * 64
     assert dumped["records"][0]["chunk_id"] == "0006"
     assert TranslationTask.model_validate_json(task.model_dump_json()) == task
@@ -352,7 +365,10 @@ def test_translation_task_legacy_without_metadata_is_valid():
         }
     )
     assert task.translation_version is None
+    assert task.baseline_ref is None
+    assert task.baseline_sha256 is None
     assert task.context_sha256 is None
+    assert task.context_view_sha256 is None
     assert task.source_sha256 is None
 
 

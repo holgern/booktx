@@ -102,6 +102,11 @@ booktx version set-label ./book --profile de_gpt5_5 1 "GPT 5.5"
 booktx version fork-context ./book --profile de_gpt5_5 --note "Manual context split"
 ```
 
+`version list` now reports baseline-scoped subversions. Routine chapter-note
+appends keep the same dotted version; baseline policy changes create or select
+the next subversion. `translate next` task output also includes baseline and
+context-view metadata for the immutable task snapshot it created.
+
 ## Validate and build
 
 ```bash

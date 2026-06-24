@@ -525,9 +525,12 @@ def version_list(
             current_marker = (
                 " (active)" if ledger.active_version == sub.version_ref else ""
             )
-            console.print(
-                f"    {sub.version_ref}  {sub.context_sha256}{current_marker}"
+            scope_label = (
+                f"baseline:{sub.baseline_sha256}"
+                if sub.baseline_sha256 is not None
+                else f"legacy-context:{sub.context_sha256}"
             )
+            console.print(f"    {sub.version_ref}  {scope_label}{current_marker}")
 
 
 @version_app.command(name="select")
@@ -596,6 +599,10 @@ def version_show(
             "model": track.model,
             "label": track.label,
             "context_sha256": sub.context_sha256,
+            "baseline_sha256": sub.baseline_sha256,
+            "baseline_path": sub.baseline_path,
+            "legacy_full_context_sha256": sub.legacy_full_context_sha256,
+            "legacy_full_context_path": sub.legacy_full_context_path,
             "context_label": sub.context_label,
             "forced": sub.forced,
         }
@@ -1026,6 +1033,8 @@ def _ledger_metadata_for_version(
         "model": track.model,
         "label": track.label,
         "context_sha256": subversion.context_sha256,
+        "baseline_sha256": subversion.baseline_sha256,
+        "legacy_full_context_sha256": subversion.legacy_full_context_sha256,
         "context_label": subversion.context_label,
         "forced": subversion.forced,
     }
@@ -2545,6 +2554,8 @@ def translate_todo_next(
             "max_run_words": todo.max_run_words,
             "include_current": todo.include_current,
             "created_at": todo.created_at,
+            "baseline_ref": todo.baseline_ref,
+            "baseline_sha256": todo.baseline_sha256,
             "context_sha256": todo.context_sha256,
             "source_sha256": todo.source_sha256,
             "chapters": [

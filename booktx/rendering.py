@@ -119,6 +119,127 @@ def print_status_human(bundle: StatusBundle, chapter: ChapterProgress | None) ->
     )
 
 
+def _print_task_header(
+    task: TranslationTask,
+    context_display_path: str | None,
+) -> None:
+    """Print shared task metadata header."""
+    console.print(f"task: {task.task_id}")
+    if task.todo_id:
+        console.print(f"todo: {task.todo_id}")
+    console.print(f"chapter: {task.chapter_id}  {task.chapter_title}".rstrip())
+    console.print(f"unit: {task.unit}")
+    console.print(f"records: {task.record_count}")
+    console.print(f"source words: {task.source_words}")
+    if task.translation_version:
+        console.print(f"translation version: {task.translation_version}")
+    if task.baseline_ref:
+        console.print(f"baseline: {task.baseline_ref}")
+    if task.baseline_sha256:
+        console.print(f"baseline sha256: {task.baseline_sha256}")
+    if task.context_view_sha256:
+        console.print(f"context view: {task.context_view_sha256}")
+    if task.context_notes_scope or task.context_notes_through_chapter_id:
+        console.print(
+            "context notes: "
+            f"{task.context_notes_scope or 'n/a'}, through "
+            f"{task.context_notes_through_chapter_id or 'none'}"
+        )
+    if context_display_path:
+        console.print(f"context file: {context_display_path}")
+
+
+def _render_json_output(payload: dict) -> None:
+    """Render task as JSON."""
+    console.print_json(json.dumps(payload, ensure_ascii=False))
+
+
+def _render_tsv_output(
+    task: TranslationTask,
+    display,
+    json_submit: str,
+) -> None:
+    """Render task as TSV."""
+    console.print(f"# task: {task.task_id}")
+    console.print(f"# chapter: {task.chapter_id}\t{task.chapter_title}".rstrip())
+    for record in task.records:
+        console.print(f"{record.id}\t{record.source}")
+    console.print(f"# write translation JSON to: {display.ingest_json}")
+    console.print(f"# submit: {json_submit}")
+
+
+def _render_block_output(
+    task: TranslationTask,
+    display,
+    block_submit: str,
+    view_sources: str,
+    block_stdin: str,
+    context_display_path: str | None,
+    show_template: bool,
+    show_sources: bool,
+) -> None:
+    """Render task in block (durable agent workflow) format."""
+    _print_task_header(task, context_display_path)
+    console.print()
+    console.print(
+        f"Source file: {display.source_block}",
+        soft_wrap=True,
+        markup=False,
+    )
+    console.print(
+        f"Durable block template: {display.ingest_block}",
+        soft_wrap=True,
+        markup=False,
+    )
+    console.print(
+        f"Submit durable file with: {block_submit}",
+        soft_wrap=True,
+        markup=False,
+    )
+    console.print(f"View sources: {view_sources}", soft_wrap=True, markup=False)
+    if show_template:
+        console.print()
+        console.print("Heredoc template (optional, for tiny manual fixes):")
+        console.print()
+        console.print(block_stdin, soft_wrap=True, markup=False)
+        for idx, record in enumerate(task.records):
+            console.print(f">>> {record.id}")
+            console.print("<target>")
+            if idx != len(task.records) - 1:
+                console.print()
+        console.print("BOOKTX")
+    if show_sources:
+        console.print()
+        console.print("Sources:")
+        console.print()
+        for idx, record in enumerate(task.records):
+            console.print(f">>> {record.id}")
+            console.print(record.source)
+            if idx != len(task.records) - 1:
+                console.print()
+
+
+def _render_default_output(
+    task: TranslationTask,
+    display,
+    json_submit: str,
+    context_display_path: str | None,
+) -> None:
+    """Render task in default human-readable format."""
+    _print_task_header(task, context_display_path)
+    console.print()
+    for idx, record in enumerate(task.records):
+        if idx:
+            console.print()
+        console.print(record.id)
+        console.print(record.source)
+    console.print()
+    console.print("Write translation JSON to:")
+    console.print(display.ingest_json)
+    console.print("Submit with:")
+    console.print(json_submit)
+
+
 def print_translate_task(
     task: TranslationTask,
     project: Project,
@@ -151,6 +272,11 @@ def print_translate_task(
     )
     block_stdin = paths.block_stdin_submit_hint(task.task_id)
     view_sources = f"cat {display.source_block}"
+    context_display_path = (
+        task.context_view_path.replace("context.json", "context.md")
+        if task.context_view_path
+        else None
+    )
 
     payload = {
         "version": 1,
@@ -161,7 +287,14 @@ def print_translate_task(
         "source_language": task.source_language,
         "target_language": task.target_language,
         "translation_version": task.translation_version,
+        "baseline_ref": task.baseline_ref,
+        "baseline_sha256": task.baseline_sha256,
         "context_sha256": task.context_sha256,
+        "context_view_sha256": task.context_view_sha256,
+        "context_view_path": task.context_view_path,
+        "context_notes_scope": task.context_notes_scope,
+        "context_target_chapter_id": task.context_target_chapter_id,
+        "context_notes_through_chapter_id": task.context_notes_through_chapter_id,
         "source_sha256": task.source_sha256,
         "source_words": task.source_words,
         "record_count": task.record_count,
@@ -176,81 +309,22 @@ def print_translate_task(
     }
 
     if as_json:
-        console.print_json(json.dumps(payload, ensure_ascii=False))
-        return
-    if output_format == "tsv":
-        console.print(f"# task: {task.task_id}")
-        console.print(f"# chapter: {task.chapter_id}\t{task.chapter_title}".rstrip())
-        for record in task.records:
-            console.print(f"{record.id}\t{record.source}")
-        console.print(f"# write translation JSON to: {display.ingest_json}")
-        console.print(f"# submit: {json_submit}")
-        return
-    if output_format == "block":
-        console.print(f"task: {task.task_id}")
-        if task.todo_id:
-            console.print(f"todo: {task.todo_id}")
-        console.print(f"chapter: {task.chapter_id}  {task.chapter_title}".rstrip())
-        console.print(f"unit: {task.unit}")
-        console.print(f"records: {task.record_count}")
-        console.print(f"source words: {task.source_words}")
-        console.print()
-        console.print(
-            f"Source file: {display.source_block}",
-            soft_wrap=True,
-            markup=False,
+        _render_json_output(payload)
+    elif output_format == "tsv":
+        _render_tsv_output(task, display, json_submit)
+    elif output_format == "block":
+        _render_block_output(
+            task,
+            display,
+            block_submit,
+            view_sources,
+            block_stdin,
+            context_display_path,
+            show_template,
+            show_sources,
         )
-        console.print(
-            f"Durable block template: {display.ingest_block}",
-            soft_wrap=True,
-            markup=False,
-        )
-        console.print(
-            f"Submit durable file with: {block_submit}",
-            soft_wrap=True,
-            markup=False,
-        )
-        console.print(f"View sources: {view_sources}", soft_wrap=True, markup=False)
-        if show_template:
-            console.print()
-            console.print("Heredoc template (optional, for tiny manual fixes):")
-            console.print()
-            console.print(block_stdin, soft_wrap=True, markup=False)
-            for idx, record in enumerate(task.records):
-                console.print(f">>> {record.id}")
-                console.print("<target>")
-                if idx != len(task.records) - 1:
-                    console.print()
-            console.print("BOOKTX")
-        if show_sources:
-            console.print()
-            console.print("Sources:")
-            console.print()
-            for idx, record in enumerate(task.records):
-                console.print(f">>> {record.id}")
-                console.print(record.source)
-                if idx != len(task.records) - 1:
-                    console.print()
-        return
-    # Default: human-readable list.
-    console.print(f"task: {task.task_id}")
-    if task.todo_id:
-        console.print(f"todo: {task.todo_id}")
-    console.print(f"chapter: {task.chapter_id}  {task.chapter_title}".rstrip())
-    console.print(f"unit: {task.unit}")
-    console.print(f"records: {task.record_count}")
-    console.print(f"source words: {task.source_words}")
-    console.print()
-    for idx, record in enumerate(task.records):
-        if idx:
-            console.print()
-        console.print(record.id)
-        console.print(record.source)
-    console.print()
-    console.print("Write translation JSON to:")
-    console.print(display.ingest_json)
-    console.print("Submit with:")
-    console.print(json_submit)
+    else:
+        _render_default_output(task, display, json_submit, context_display_path)
 
 
 def render_submission_failures(findings: list[Finding]) -> None:

@@ -15,6 +15,7 @@ from typer.testing import CliRunner
 
 from booktx.acceptance import (
     AcceptResult,
+    SubmissionValidationError,
     SubmittedRecord,
     accept_one_record,
     accept_translation_records,
@@ -23,10 +24,11 @@ from booktx.cli import app
 from booktx.config import (
     BooktxError,
     load_project,
+    load_translation_task,
     translation_store_path,
     write_identity,
 )
-from booktx.context import load_context, write_context
+from booktx.context import GlossaryEntry, default_context, load_context, write_context
 from booktx.models import TranslationIdentity
 from booktx.status import build_status_snapshot
 
@@ -73,6 +75,39 @@ def _record_ids(project_dir: Path) -> list[str]:
     chunks = sorted((project_dir / ".booktx" / "chunks").glob("*.json"))
     chunk = json.loads(chunks[0].read_text("utf-8"))
     return [record["id"] for record in chunk["records"]]
+
+
+def _make_glossary_project(tmp_path: Path) -> Path:
+    src = tmp_path / "glossary.md"
+    src.write_text("# Lowlands\n\nFar away.\n", encoding="utf-8")
+    project_dir = tmp_path / "glossary-book"
+    res = runner.invoke(
+        app,
+        [
+            "init",
+            str(project_dir),
+            "--target",
+            "de",
+            "--source-file",
+            str(src),
+            "--chunk-size",
+            "5",
+        ],
+    )
+    assert res.exit_code == 0, res.output
+    assert runner.invoke(app, ["extract", str(project_dir)]).exit_code == 0
+    proj = load_project(project_dir)
+    ctx = default_context(proj)
+    ctx.ready = True
+    ctx.glossary.append(
+        GlossaryEntry(
+            source="Lowlands",
+            forbidden_targets=["Niederlande"],
+            enforce="error",
+        )
+    )
+    write_context(proj, ctx)
+    return project_dir
 
 
 def test_accept_one_record_persists_and_reports_chapter(tmp_path: Path):
@@ -168,6 +203,123 @@ def test_changed_context_creates_next_subversion_without_auto_switching_active(
     assert second.version_ref == "1.2"
     assert version_refs == ["1.1", "1.2"]
     assert record["active_version"] == "1.1"
+
+
+def test_task_acceptance_uses_task_version_after_live_baseline_changes(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    next_res = runner.invoke(
+        app,
+        ["translate", "next", str(project_dir), "--unit", "paragraph", "--json"],
+    )
+    assert next_res.exit_code == 0, next_res.output
+    task_payload = json.loads(next_res.output)
+
+    proj = load_project(project_dir)
+    task = load_translation_task(proj, task_payload["task_id"])
+    assert task is not None
+    bundle = build_status_snapshot(proj, context_exists=True, context_ready=True)
+
+    ctx = load_context(proj)
+    assert ctx is not None
+    ctx.global_rules.append("Prefer shorter German clauses.")
+    write_context(proj, ctx)
+
+    result = accept_translation_records(
+        proj,
+        [
+            SubmittedRecord(
+                id=task.records[0].id,
+                target="Alice traf Bob.",
+            )
+        ],
+        bundle=bundle,
+        task=task,
+        submission_translation_version=task.translation_version,
+        enforce_task_version=True,
+    )
+
+    store = json.loads(translation_store_path(proj).read_text("utf-8"))
+    candidate = store["records"][task.records[0].id]["versions"][0]
+    assert result.version_ref == task.translation_version
+    assert candidate["version_ref"] == task.translation_version
+    assert candidate["baseline_ref"] == task.baseline_ref
+    assert candidate["baseline_sha256"] == task.baseline_sha256
+    assert candidate["context_view_sha256"] == task.context_view_sha256
+    assert candidate["context_view_path"] == task.context_view_path
+
+
+def test_task_validation_uses_task_context_view_before_live_context(tmp_path: Path):
+    project_dir = _make_glossary_project(tmp_path)
+    next_res = runner.invoke(
+        app,
+        ["translate", "next", str(project_dir), "--unit", "paragraph", "--json"],
+    )
+    assert next_res.exit_code == 0, next_res.output
+    task_payload = json.loads(next_res.output)
+
+    proj = load_project(project_dir)
+    task = load_translation_task(proj, task_payload["task_id"])
+    assert task is not None
+    bundle = build_status_snapshot(proj, context_exists=True, context_ready=True)
+
+    ctx = load_context(proj)
+    assert ctx is not None
+    ctx.glossary[0].enforce = "off"
+    ctx.glossary[0].forbidden_targets = []
+    write_context(proj, ctx)
+
+    try:
+        accept_translation_records(
+            proj,
+            [SubmittedRecord(id=task.records[0].id, target="Die Niederlande")],
+            bundle=bundle,
+            task=task,
+            submission_translation_version=task.translation_version,
+            enforce_task_version=True,
+        )
+    except SubmissionValidationError:
+        pass
+    else:  # pragma: no cover
+        raise AssertionError("expected submission validation failure from task view")
+
+
+def test_legacy_task_without_context_view_uses_live_context_fallback(tmp_path: Path):
+    project_dir = _make_glossary_project(tmp_path)
+    next_res = runner.invoke(
+        app,
+        ["translate", "next", str(project_dir), "--unit", "paragraph", "--json"],
+    )
+    assert next_res.exit_code == 0, next_res.output
+    task_payload = json.loads(next_res.output)
+
+    proj = load_project(project_dir)
+    task = load_translation_task(proj, task_payload["task_id"])
+    assert task is not None
+    bundle = build_status_snapshot(proj, context_exists=True, context_ready=True)
+
+    ctx = load_context(proj)
+    assert ctx is not None
+    ctx.glossary[0].enforce = "off"
+    ctx.glossary[0].forbidden_targets = []
+    write_context(proj, ctx)
+
+    legacy_task = task.model_copy(deep=True)
+    legacy_task.context_view_path = None
+    legacy_task.context_view_sha256 = None
+    legacy_task.context_notes_scope = None
+    legacy_task.context_target_chapter_id = None
+    legacy_task.context_notes_through_chapter_id = None
+
+    result = accept_translation_records(
+        proj,
+        [SubmittedRecord(id=task.records[0].id, target="Die Niederlande")],
+        bundle=bundle,
+        task=legacy_task,
+        submission_translation_version=legacy_task.translation_version,
+        enforce_task_version=True,
+    )
+
+    assert result.version_ref == legacy_task.translation_version
 
 
 def test_changed_model_creates_next_major_track(tmp_path: Path):

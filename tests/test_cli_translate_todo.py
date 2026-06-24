@@ -19,6 +19,12 @@ from typer.testing import CliRunner
 
 from booktx.cli import app
 from booktx.config import load_project, translation_store_path
+from booktx.context import (
+    ChapterContext,
+    load_context,
+    write_context,
+    write_context_markdown,
+)
 
 runner = CliRunner()
 
@@ -342,6 +348,8 @@ def test_todo_next_json_shape_is_stable(tmp_path: Path):
         "max_run_words",
         "include_current",
         "created_at",
+        "baseline_ref",
+        "baseline_sha256",
         "context_sha256",
         "source_sha256",
         "chapters",
@@ -653,6 +661,36 @@ def test_todo_status_latest_reports_partial_current_progress(tmp_path: Path):
         payload["chapters"][0]["records_remaining_now"]
         == payload["chapters"][0]["records_total"] - 1
     )
+
+
+def test_todo_status_does_not_block_on_chapter_note_only_change(tmp_path: Path):
+    project_dir = _make_three_chapter_project(tmp_path)
+    todo = _create_todo(project_dir, chapters=2, batch_words=777)
+    proj = _proj(project_dir)
+    ctx = load_context(proj)
+    assert ctx is not None
+    ctx.chapter_contexts.append(
+        ChapterContext(chapter_id="0001", title="One", translation_summary="Done one.")
+    )
+    write_context(proj, ctx)
+    write_context_markdown(proj, ctx)
+
+    res = runner.invoke(
+        app,
+        [
+            "translate",
+            "todo-status",
+            str(project_dir),
+            "--todo-id",
+            todo["todo_id"],
+            "--json",
+        ],
+    )
+
+    assert res.exit_code == 0, res.output
+    payload = json.loads(res.output)
+    assert payload["context_drifted"] is False
+    assert payload["state"] == "ready"
 
 
 def test_todo_resume_latest_pins_current_planned_chapter(tmp_path: Path):

@@ -179,6 +179,13 @@ def upsert_translation_version(
     updated_at: str,
     status: str = "accepted",
     activate: bool = False,
+    baseline_ref: str | None = None,
+    baseline_sha256: str | None = None,
+    context_view_sha256: str | None = None,
+    context_view_path: str | None = None,
+    context_notes_scope: str | None = None,
+    context_target_chapter_id: str | None = None,
+    context_notes_through_chapter_id: str | None = None,
 ) -> TranslationCandidate:
     """Insert or update a candidate version on one record."""
     parsed = parse_version_ref(version_ref)
@@ -188,6 +195,13 @@ def upsert_translation_version(
             version=parsed.version,
             subversion=parsed.subversion,
             version_ref=parsed.version_ref,
+            baseline_ref=baseline_ref,
+            baseline_sha256=baseline_sha256,
+            context_view_sha256=context_view_sha256,
+            context_view_path=context_view_path,
+            context_notes_scope=context_notes_scope,
+            context_target_chapter_id=context_target_chapter_id,
+            context_notes_through_chapter_id=context_notes_through_chapter_id,
             target=target,
             status=status,
             created_at=updated_at,
@@ -198,6 +212,20 @@ def upsert_translation_version(
         existing.target = target
         existing.status = status
         existing.updated_at = updated_at
+        if baseline_ref is not None:
+            existing.baseline_ref = baseline_ref
+        if baseline_sha256 is not None:
+            existing.baseline_sha256 = baseline_sha256
+        if context_view_sha256 is not None:
+            existing.context_view_sha256 = context_view_sha256
+        if context_view_path is not None:
+            existing.context_view_path = context_view_path
+        if context_notes_scope is not None:
+            existing.context_notes_scope = context_notes_scope
+        if context_target_chapter_id is not None:
+            existing.context_target_chapter_id = context_target_chapter_id
+        if context_notes_through_chapter_id is not None:
+            existing.context_notes_through_chapter_id = context_notes_through_chapter_id
         candidate = existing
     if record.active_version is None and candidate.status == "accepted":
         record.active_version = candidate.version_ref

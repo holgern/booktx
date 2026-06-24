@@ -160,13 +160,17 @@ def build_translation_todo(
         for c in selected
     ]
 
+    baseline_ref = None
+    baseline_sha256 = None
     context_sha256 = None
     source_sha256 = bundle.snapshot.source.source_sha256 or None
     if bundle.snapshot.context.exists and bundle.snapshot.context.ready:
         from booktx.versioning import resolve_current_version
 
         resolution = resolve_current_version(project)
-        context_sha256 = resolution.context_sha256
+        baseline_ref = resolution.version_ref
+        baseline_sha256 = resolution.baseline_sha256
+        context_sha256 = resolution.baseline_sha256
 
     todo_id = make_todo_id(
         project.profile or "",
@@ -195,6 +199,8 @@ def build_translation_todo(
         .replace(microsecond=0)
         .isoformat()
         .replace("+00:00", "Z"),
+        baseline_ref=baseline_ref,
+        baseline_sha256=baseline_sha256,
         context_sha256=context_sha256,
         source_sha256=source_sha256,
         start_totals=bundle.snapshot.totals,

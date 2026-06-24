@@ -99,6 +99,8 @@ class TodoStatusSnapshot:
             "target_language": self.todo.target_language,
             "target_locale": self.todo.target_locale,
             "created_at": self.todo.created_at,
+            "baseline_ref": self.todo.baseline_ref,
+            "baseline_sha256": self.todo.baseline_sha256,
             "chapters_requested": self.todo.chapters_requested,
             "batch_words": self.todo.batch_words,
             "max_run_words": self.todo.max_run_words,
@@ -157,7 +159,7 @@ def _current_context_sha256(project: Project, bundle: StatusBundle) -> str | Non
     if not bundle.snapshot.context.exists or not bundle.snapshot.context.ready:
         return None
     resolution = resolve_current_version(project)
-    return resolution.context_sha256
+    return resolution.baseline_sha256
 
 
 def _chapter_statuses(
@@ -220,8 +222,9 @@ def build_todo_status(
             source_drifted or bundle.snapshot.source.source_sha256 != todo.source_sha256
         )
     current_context_sha = _current_context_sha256(project, bundle)
+    expected_context_sha = todo.baseline_sha256 or todo.context_sha256
     context_drifted = (
-        todo.context_sha256 is not None and current_context_sha != todo.context_sha256
+        expected_context_sha is not None and current_context_sha != expected_context_sha
     )
     report = validation_report
     validation = TodoValidationStatus(

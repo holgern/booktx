@@ -17,13 +17,16 @@ the CLI on the user's behalf) must answer the required questions first.
 
 from __future__ import annotations
 
+import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
+    from booktx.chapters import ChapterMap
     from booktx.config import Project
 
 __all__ = [
@@ -39,6 +42,12 @@ __all__ = [
     "load_context",
     "write_context",
     "default_context",
+    "baseline_payload",
+    "baseline_sha256",
+    "chapter_notes_before_target",
+    "context_history_dir",
+    "context_history_views_dir",
+    "ensure_context_view_snapshot",
     "render_context_markdown",
     "write_context_markdown",
     "parse_context_markdown_chapter_notes",
@@ -143,6 +152,22 @@ class TranslationContext(BaseModel):
     chapter_contexts: list[ChapterContext] = Field(default_factory=list)
 
 
+@dataclass(frozen=True, slots=True)
+class ContextViewSnapshot:
+    """Immutable task-scoped context view metadata."""
+
+    context_view_sha256: str
+    baseline_ref: str
+    baseline_sha256: str
+    notes_scope: str
+    target_chapter_id: str
+    notes_through_chapter_id: str | None
+    note_chapter_ids: list[str]
+    context_path: str
+    context_md_path: str
+    created_at: str
+
+
 # --- paths ------------------------------------------------------------------
 
 
@@ -183,6 +208,165 @@ def write_context(project: Project, context: TranslationContext) -> None:
     write_json_text_atomic(
         context_path(project),
         context.model_dump_json(indent=2, by_alias=True),
+    )
+
+
+def baseline_payload(context: TranslationContext) -> dict[str, object]:
+    """Return the semantic baseline payload for version resolution."""
+    data = context.model_dump(mode="json", by_alias=True)
+    data.pop("chapter_contexts", None)
+    return data
+
+
+def baseline_sha256(context: TranslationContext) -> str:
+    """Return the baseline hash excluding chronological chapter notes."""
+    from booktx.versioning import canonical_json_sha256
+
+    return canonical_json_sha256(baseline_payload(context))
+
+
+def context_history_dir(project: Project) -> Path:
+    """Return the history directory adjacent to the live context files."""
+    return context_path(project).parent / "context-history"
+
+
+def context_history_views_dir(project: Project) -> Path:
+    """Return the directory containing immutable context view snapshots."""
+    return context_history_dir(project) / "views"
+
+
+def chapter_notes_before_target(
+    chapter_map: ChapterMap,
+    notes: list[ChapterContext],
+    target_chapter_id: str,
+) -> list[ChapterContext]:
+    """Return prior chapter notes in chapter-map order for one target chapter."""
+    ordered_ids = [chapter.chapter_id for chapter in chapter_map.chapters]
+    try:
+        target_index = ordered_ids.index(target_chapter_id)
+    except ValueError as exc:
+        raise ValueError(f"unknown target chapter id: {target_chapter_id}") from exc
+    notes_by_id = {note.chapter_id: note for note in notes}
+    return [
+        notes_by_id[chapter_id].model_copy(deep=True)
+        for chapter_id in ordered_ids[:target_index]
+        if chapter_id in notes_by_id
+    ]
+
+
+def ensure_context_view_snapshot(
+    project: Project,
+    *,
+    baseline_ref: str,
+    baseline_sha256: str,
+    target_chapter_id: str,
+    notes_scope: str = "before_target_chapter",
+) -> ContextViewSnapshot:
+    """Compose and persist an immutable task context view snapshot."""
+    from booktx.chapters import ensure_chapter_map, load_chapter_map
+    from booktx.io_utils import utc_timestamp, write_json_text_atomic, write_text_atomic
+    from booktx.versioning import canonical_json_sha256
+
+    context = load_context(project)
+    if context is None:
+        raise ValueError("translation context is missing")
+
+    chapter_map = load_chapter_map(project) or ensure_chapter_map(project)
+    selected_notes = chapter_notes_before_target(
+        chapter_map, context.chapter_contexts, target_chapter_id
+    )
+    view = context.model_copy(deep=True)
+    view.chapter_contexts = selected_notes
+    view_payload = view.model_dump(mode="json", by_alias=True)
+    view_sha256 = canonical_json_sha256(view_payload)
+    snapshot_dir = context_history_views_dir(project) / view_sha256
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+
+    context_json_path = snapshot_dir / "context.json"
+    context_md_path = snapshot_dir / "context.md"
+    manifest_path = snapshot_dir / "manifest.json"
+
+    context_json_text = json.dumps(view_payload, indent=2, ensure_ascii=False)
+    if not context_json_text.endswith("\n"):
+        context_json_text += "\n"
+    context_md_text = render_context_markdown(view)
+    context_rel = str(context_json_path.relative_to(project.root))
+    context_md_rel = str(context_md_path.relative_to(project.root))
+    note_ids = [note.chapter_id for note in selected_notes]
+    notes_through = note_ids[-1] if note_ids else None
+
+    expected_payload = {
+        "version": 1,
+        "context_view_sha256": view_sha256,
+        "baseline_ref": baseline_ref,
+        "baseline_sha256": baseline_sha256,
+        "notes_scope": notes_scope,
+        "target_chapter_id": target_chapter_id,
+        "notes_through_chapter_id": notes_through,
+        "note_chapter_ids": note_ids,
+        "context_path": context_rel,
+        "context_md_path": context_md_rel,
+    }
+
+    if context_json_path.is_file():
+        existing = context_json_path.read_text("utf-8")
+        if existing != context_json_text:
+            raise ValueError(
+                f"context snapshot collision for {view_sha256}: context.json differs"
+            )
+    else:
+        write_json_text_atomic(context_json_path, context_json_text)
+
+    if context_md_path.is_file():
+        existing = context_md_path.read_text("utf-8")
+        if existing != context_md_text:
+            raise ValueError(
+                f"context snapshot collision for {view_sha256}: context.md differs"
+            )
+    else:
+        write_text_atomic(context_md_path, context_md_text)
+
+    created_at = utc_timestamp()
+    if manifest_path.is_file():
+        existing_manifest = json.loads(manifest_path.read_text("utf-8"))
+        comparable_keys = (
+            "version",
+            "context_view_sha256",
+            "baseline_sha256",
+            "notes_scope",
+            "notes_through_chapter_id",
+            "note_chapter_ids",
+            "context_path",
+            "context_md_path",
+        )
+        comparable = {k: existing_manifest.get(k) for k in comparable_keys}
+        expected_comparable = {k: expected_payload[k] for k in comparable_keys}
+        if comparable != expected_comparable:
+            raise ValueError(
+                f"context snapshot collision for {view_sha256}: manifest differs"
+            )
+        created_at = str(existing_manifest.get("created_at") or created_at)
+    else:
+        manifest_payload = {
+            **expected_payload,
+            "created_at": created_at,
+        }
+        write_json_text_atomic(
+            manifest_path,
+            json.dumps(manifest_payload, indent=2, ensure_ascii=False),
+        )
+
+    return ContextViewSnapshot(
+        context_view_sha256=view_sha256,
+        baseline_ref=baseline_ref,
+        baseline_sha256=baseline_sha256,
+        notes_scope=notes_scope,
+        target_chapter_id=target_chapter_id,
+        notes_through_chapter_id=notes_through,
+        note_chapter_ids=note_ids,
+        context_path=context_rel,
+        context_md_path=context_md_rel,
+        created_at=created_at,
     )
 
 

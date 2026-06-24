@@ -139,9 +139,11 @@ booktx translate insert . \
   --format block
 ```
 
-If insertion reports a stale task version, request a fresh task with
-`booktx translate next` for the same profile. Do not force old task files into
-the current profile/version.
+When a task file exists, its recorded `translation_version` and context-view
+snapshot are authoritative for submission. A live baseline change alone should
+not make that task stale. Request a fresh task only when the existing task is
+missing, points at the wrong profile, or you intentionally want a new task
+under the updated baseline/context view.
 
 ## Validate and build
 
@@ -179,8 +181,10 @@ booktx translation compare . --profile PROFILE RECORD --versions 1.1,1.2
 booktx translation activate . --profile PROFILE RECORD 1.2
 ```
 
-A model/actor/harness change creates or selects a major track. A context change
-creates or selects a subversion inside the track.
+A model/actor/harness change creates or selects a major track. A baseline
+policy change creates or selects a subversion inside the track. A routine
+chapter-note append updates the next task's effective context view but does not
+create a new dotted version on its own.
 
 ## Guardrails
 

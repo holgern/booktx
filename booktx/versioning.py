@@ -10,13 +10,12 @@ from dataclasses import dataclass
 from booktx.config import (
     Project,
     _err,
-    identity_path,
     load_identity,
     load_translation_version_ledger,
     project_source_sha256,
     write_translation_version_ledger,
 )
-from booktx.context import load_context
+from booktx.context import baseline_sha256, context_path, load_context
 from booktx.io_utils import utc_timestamp
 from booktx.models import (
     TranslationIdentity,
@@ -29,6 +28,7 @@ from booktx.record_refs import format_version_ref, parse_version_ref
 __all__ = [
     "VersionResolution",
     "canonical_json_sha256",
+    "current_baseline_sha256",
     "current_context_sha256",
     "default_identity",
     "fork_current_context",
@@ -49,6 +49,7 @@ class VersionResolution:
     version_ref: str
     version: int
     subversion: int
+    baseline_sha256: str
     context_sha256: str
     created_track: bool
     created_subversion: bool
@@ -103,6 +104,17 @@ def current_context_sha256(project: Project) -> str:
     return canonical_json_sha256(context.model_dump(mode="json", by_alias=True))
 
 
+def current_baseline_sha256(project: Project) -> str:
+    """Return the semantic baseline hash for the current project context."""
+    context = load_context(project)
+    if context is None:
+        raise _err(
+            "missing_context",
+            "translation context is missing. Run: booktx context init .",
+        )
+    return baseline_sha256(context)
+
+
 def lookup_version(
     ledger: TranslationVersionLedger,
     version_ref: str,
@@ -131,7 +143,13 @@ def resolve_current_version(
     """Resolve and persist the current ledger version for a translation write."""
     ledger = load_translation_version_ledger(project)
     identity = resolve_identity(project, actor=actor, harness=harness, model=model)
-    context_sha256 = current_context_sha256(project)
+    context = load_context(project)
+    if context is None:
+        raise _err(
+            "missing_context",
+            "translation context is missing. Run: booktx context init .",
+        )
+    baseline_hash = baseline_sha256(context)
     now = utc_timestamp()
     created_track = False
     created_subversion = False
@@ -169,7 +187,13 @@ def resolve_current_version(
             (
                 entry
                 for entry in track.subversions.values()
-                if entry.context_sha256 == context_sha256
+                if (
+                    entry.baseline_sha256 == baseline_hash
+                    or (
+                        entry.baseline_sha256 is None
+                        and entry.context_sha256 == baseline_hash
+                    )
+                )
             ),
             None,
         )
@@ -183,12 +207,10 @@ def resolve_current_version(
             version=track.version,
             subversion=next_subversion,
             version_ref=version_ref,
-            context_sha256=context_sha256,
-            context_path=str(
-                identity_path(project)
-                .parent.joinpath("context.json")
-                .relative_to(project.root)
-            ),
+            context_sha256=baseline_hash,
+            context_path=str(context_path(project).relative_to(project.root)),
+            baseline_sha256=baseline_hash,
+            baseline_path=str(context_path(project).relative_to(project.root)),
             context_label=context_label,
             created_at=now,
             updated_at=now,
@@ -199,6 +221,12 @@ def resolve_current_version(
         created_subversion = True
     else:
         subversion.updated_at = now
+        if subversion.baseline_sha256 is None:
+            subversion.baseline_sha256 = baseline_hash
+        if subversion.baseline_path is None:
+            subversion.baseline_path = str(
+                context_path(project).relative_to(project.root)
+            )
         if context_label is not None:
             subversion.context_label = context_label
         if note is not None:
@@ -214,7 +242,8 @@ def resolve_current_version(
         version_ref=version_ref,
         version=track.version,
         subversion=subversion.subversion,
-        context_sha256=context_sha256,
+        baseline_sha256=baseline_hash,
+        context_sha256=baseline_hash,
         created_track=created_track,
         created_subversion=created_subversion,
     )
@@ -250,7 +279,7 @@ def fork_current_context(
     note: str | None = None,
     context_label: str | None = None,
 ) -> VersionResolution:
-    """Force a new subversion even when the current context hash is unchanged."""
+    """Force a new subversion even when the current baseline hash is unchanged."""
     return resolve_current_version(
         project,
         force_new_context=True,

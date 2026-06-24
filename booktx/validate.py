@@ -55,6 +55,7 @@ __all__ = [
     "Finding",
     "ValidationReport",
     "EffectiveTranslations",
+    "load_validation_context",
     "strict_load_translated",
     "validate_record_pair",
     "load_effective_translated_chunks",
@@ -498,6 +499,16 @@ def validate_chunk_pair(
     if translated is None:
         return findings
     return _validate_translated_chunk(source, translated, context)
+
+
+def load_validation_context(
+    project: Project, *, context_view_path: str | None = None
+) -> TranslationContext | None:
+    """Load the context that should be used for validation."""
+    if context_view_path is None:
+        return load_context(project)
+    path = project.root / context_view_path
+    return TranslationContext.model_validate_json(path.read_text("utf-8"))
 
 
 # --- project-level validation -----------------------------------------------

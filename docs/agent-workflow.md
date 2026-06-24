@@ -30,6 +30,9 @@ This writes:
 - `translations/<profile>/ingest/TASK.block.txt`
 - `translations/<profile>/ingest/TASK.json`
 
+The task JSON also records the dotted baseline version plus the immutable
+context-view snapshot used for that task.
+
 ## 4. Fill the durable ingest file
 
 Translate only the record bodies. Keep record ids and placeholders unchanged.
@@ -65,6 +68,8 @@ booktx translate todo-resume . --profile de_gpt5_5 --latest --format block
 Read the generated todo markdown and follow its loop. After each completed
 chapter, fill the `booktx context chapter-note` template printed by
 `booktx translate insert`; do not hand-edit `context.md` for chapter notes.
+That chapter-note append affects the next task's context view, but it does not
+mint a new dotted version by itself.
 Stop when the todo goal is complete, when `todo-status` says it is complete, or
 when a stop condition occurs. Report partial progress if conversation or tool
 budget runs low. `--max-run-words` is advisory only.

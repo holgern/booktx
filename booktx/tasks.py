@@ -41,6 +41,7 @@ from booktx.config import (
     translation_ingest_path,
     translation_task_source_block_path,
 )
+from booktx.context import ensure_context_view_snapshot
 from booktx.io_utils import write_json_text_atomic, write_text_atomic
 from booktx.models import TranslationTask, TranslationTaskRecord
 from booktx.versioning import canonical_json_sha256, resolve_current_version
@@ -201,13 +202,26 @@ def write_block_ingest_template(project: Project, task: TranslationTask) -> Path
     submit_hint = translate_insert_command(
         project, task_id=task.task_id, file_path=block_display
     )
+    context_display_path = (
+        task.context_view_path.replace("context.json", "context.md")
+        if task.context_view_path
+        else ""
+    )
     headers = [
         "# booktx block submission",
         f"# profile: {task.profile or 'none'}",
         f"# target: {task.target_locale or task.target_language}",
         f"# task: {task.task_id}",
         f"# translation_version: {task.translation_version or 'none'}",
+        f"# baseline: {task.baseline_ref or task.translation_version or 'none'}",
+        f"# baseline_sha256: {task.baseline_sha256 or ''}",
         f"# context_sha256: {task.context_sha256 or ''}",
+        f"# context_view_sha256: {task.context_view_sha256 or ''}",
+        f"# context_notes_scope: {task.context_notes_scope or ''}",
+        f"# context_target_chapter_id: {task.context_target_chapter_id or ''}",
+        f"# context_notes_through_chapter_id: {task.context_notes_through_chapter_id or ''}",
+        f"# context_view_path: {task.context_view_path or ''}",
+        f"# context_file: {context_display_path}",
         f"# source_sha256: {task.source_sha256 or ''}",
         f"# source: {source_display}",
         f"# submit: {submit_hint}",
@@ -326,12 +340,32 @@ def create_translation_task(
 
     source_by_id = bundle.index.source_by_id
     translation_version = None
+    baseline_ref = None
+    baseline_sha = None
     context_sha256 = None
+    context_view_sha256 = None
+    context_view_path = None
+    context_notes_scope = None
+    context_target_chapter_id = None
+    context_notes_through_chapter_id = None
     source_sha256 = bundle.snapshot.source.source_sha256 or None
     if bundle.snapshot.context.exists and bundle.snapshot.context.ready:
         resolution = resolve_current_version(project)
+        context_view = ensure_context_view_snapshot(
+            project,
+            baseline_ref=resolution.version_ref,
+            baseline_sha256=resolution.baseline_sha256,
+            target_chapter_id=chapter.chapter_id,
+        )
         translation_version = resolution.version_ref
-        context_sha256 = resolution.context_sha256
+        baseline_ref = resolution.version_ref
+        baseline_sha = resolution.baseline_sha256
+        context_sha256 = context_view.context_view_sha256
+        context_view_sha256 = context_view.context_view_sha256
+        context_view_path = context_view.context_path
+        context_notes_scope = context_view.notes_scope
+        context_target_chapter_id = context_view.target_chapter_id
+        context_notes_through_chapter_id = context_view.notes_through_chapter_id
     else:
         translation_version = load_translation_version_ledger(project).active_version
     task = TranslationTask(
@@ -344,7 +378,14 @@ def create_translation_task(
         target_language=project.config.target_language,
         target_locale=project.config.target_locale or project.config.target_language,
         translation_version=translation_version,
+        baseline_ref=baseline_ref,
+        baseline_sha256=baseline_sha,
         context_sha256=context_sha256,
+        context_view_sha256=context_view_sha256,
+        context_view_path=context_view_path,
+        context_notes_scope=context_notes_scope,
+        context_target_chapter_id=context_target_chapter_id,
+        context_notes_through_chapter_id=context_notes_through_chapter_id,
         source_sha256=source_sha256,
         profile_config_sha256=(
             canonical_json_sha256(project.profile_config.model_dump(mode="json"))

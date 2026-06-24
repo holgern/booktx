@@ -34,7 +34,13 @@ from booktx.config import (
     write_translation_task,
     write_translation_version_ledger,
 )
-from booktx.context import context_path, default_context, write_context
+from booktx.context import (
+    ChapterContext,
+    baseline_sha256,
+    context_path,
+    default_context,
+    write_context,
+)
 from booktx.models import (
     StoredTranslationRecordV2,
     TranslationCandidate,
@@ -272,11 +278,46 @@ def test_version_resolution_reuses_same_identity_and_context(tmp_path: Path):
 
     assert first.version_ref == "1.1"
     assert second.version_ref == "1.1"
+    assert first.baseline_sha256 == second.baseline_sha256
+    assert first.context_sha256 == first.baseline_sha256
     assert second.created_track is False
     assert second.created_subversion is False
 
 
-def test_version_resolution_creates_new_subversion_on_context_change(tmp_path: Path):
+def test_version_resolution_keeps_same_subversion_for_chapter_note_only_change(
+    tmp_path: Path,
+):
+    proj = load_project(_make_project_with_context(tmp_path))
+    write_identity(
+        proj,
+        TranslationIdentity(
+            actor="user:nahrstaedt",
+            harness="pi",
+            model="codex-openai/gpt-5.5@low",
+        ),
+    )
+
+    first = resolve_current_version(proj)
+    ctx = default_context(proj)
+    ctx.ready = True
+    ctx.chapter_contexts.append(
+        ChapterContext(
+            chapter_id="0001",
+            title="One",
+            translation_summary="Completed chapter one.",
+        )
+    )
+    write_context(proj, ctx)
+
+    second = resolve_current_version(proj)
+
+    assert first.version_ref == "1.1"
+    assert second.version_ref == "1.1"
+    assert first.baseline_sha256 == second.baseline_sha256
+    assert second.created_subversion is False
+
+
+def test_version_resolution_creates_new_subversion_on_baseline_change(tmp_path: Path):
     proj = load_project(_make_project_with_context(tmp_path))
     write_identity(
         proj,
@@ -297,6 +338,7 @@ def test_version_resolution_creates_new_subversion_on_context_change(tmp_path: P
 
     assert first.version_ref == "1.1"
     assert second.version_ref == "1.2"
+    assert second.baseline_sha256 == baseline_sha256(ctx)
     assert second.created_track is False
     assert second.created_subversion is True
 

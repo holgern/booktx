@@ -43,6 +43,14 @@ Versions are scoped inside a profile, not across the whole project.
 - a model change may create a new major track such as `2.1`
 - two profiles may both have a `1.1`, and those are intentionally independent
 
+Subversions are baseline-scoped, not full-live-context-scoped:
+
+- a chapter-note append updates the next task's effective context but keeps the
+  same dotted version;
+- a baseline policy change (style, glossary, answered questions, global rules,
+  readiness, source metadata, language metadata) creates or selects the next
+  subversion inside the current track.
+
 ## Translation store
 
 `translations/<profile>/translation-store.json` is the primary record-level
@@ -57,3 +65,8 @@ surface managed by `booktx translate export`.
 
 `translations/<profile>/context.md` is a rendered agent view and must not be
 treated as the durable source of truth.
+
+Each task composes a context view from the current baseline plus the chapter
+notes that come before the target chapter in chapter-map order. That composed
+view is snapshotted under `translations/<profile>/context-history/views/<sha>/`
+and becomes immutable task evidence.

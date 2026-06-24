@@ -131,6 +131,11 @@ batches over chapter-sized tasks.
 After a chapter completes, use the `booktx context chapter-note` template
 printed by `booktx translate insert` instead of hand-editing `context.md`.
 
+Chapter-note appends update the next task's effective context, but they do
+**not** create a new dotted translation version. Dotted versions track baseline
+policy changes such as style, glossary, answered questions, global rules,
+readiness, source metadata, language metadata, or actor/model track changes.
+
 ## Final release output
 
 For final release output, prefer:
@@ -194,6 +199,11 @@ booktx translate task-status ./demo --profile de_gpt5_5 --task-id TASK
 booktx translation compare ./demo --profile de_gpt5_5 74@38 --versions 1.1,1.2
 booktx profile compare ./demo --profiles de_gpt5_5,de_glm_5_2 --record 0001-000001
 ```
+
+`booktx translate next` also snapshots the exact effective task context under
+`translations/<profile>/context-history/views/<sha>/`. New tasks carry both the
+baseline version (for example `1.2`) and the immutable context-view evidence
+used for that task, and accepted candidates preserve that evidence.
 
 ## Translation contract
 
