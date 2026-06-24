@@ -290,8 +290,8 @@ def ensure_context_view_snapshot(
     if not context_json_text.endswith("\n"):
         context_json_text += "\n"
     context_md_text = render_context_markdown(view)
-    context_rel = str(context_json_path.relative_to(project.root))
-    context_md_rel = str(context_md_path.relative_to(project.root))
+    context_rel = context_json_path.relative_to(project.root).as_posix()
+    context_md_rel = context_md_path.relative_to(project.root).as_posix()
     note_ids = [note.chapter_id for note in selected_notes]
     notes_through = note_ids[-1] if note_ids else None
 
@@ -696,6 +696,11 @@ def write_context_markdown(project: Project, context: TranslationContext) -> Non
     )
 
 
+def _read_text_normalized(path: Path) -> str:
+    """Read UTF-8 text and normalize all line endings to LF."""
+    return path.read_bytes().decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+
+
 # --- chapter note parsing and markdown drift --------------------------------
 
 
@@ -815,7 +820,7 @@ def analyze_context_markdown_drift(
     md_path = context_markdown_path(project)
     if not md_path.is_file():
         return ContextMarkdownDrift()
-    markdown = md_path.read_text("utf-8")
+    markdown = _read_text_normalized(md_path)
     try:
         parsed = parse_context_markdown_chapter_notes(markdown)
     except ValueError as exc:

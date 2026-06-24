@@ -805,8 +805,14 @@ def _context_render_drift_finding(
     if not context_markdown_path(project).is_file():
         return None
     rendered = render_context_markdown(context)
-    current_markdown = context_markdown_path(project).read_text("utf-8")
-    if current_markdown.replace("\r\n", "\n") == rendered.replace("\r\n", "\n"):
+    current_markdown = (
+        context_markdown_path(project)
+        .read_bytes()
+        .decode("utf-8")
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+    )
+    if current_markdown == rendered.replace("\r\n", "\n"):
         return None
     drift = analyze_context_markdown_drift(project, context)
     if drift.parse_errors:

@@ -2597,13 +2597,13 @@ def translate_todo_next(
     console.print("chapters: " + ", ".join(c.chapter_id for c in todo.chapters))
     if md_path is not None:
         console.print(
-            f"markdown: {md_path.relative_to(proj.root)}",
+            f"markdown: {md_path.relative_to(proj.root).as_posix()}",
             soft_wrap=True,
             markup=False,
         )
     if json_path is not None:
         console.print(
-            f"json: {json_path.relative_to(proj.root)}",
+            f"json: {json_path.relative_to(proj.root).as_posix()}",
             soft_wrap=True,
             markup=False,
         )

@@ -67,9 +67,9 @@ __all__ = [
 def project_relative(path: Path, root: Path) -> str:
     """Return a stable project-relative display path when possible."""
     try:
-        return str(path.relative_to(root))
+        return path.relative_to(root).as_posix()
     except ValueError:
-        return str(path)
+        return path.as_posix()
 
 
 def make_task_id(chapter_id: str, first_record_id: str, record_ids: list[str]) -> str:
