@@ -1,1 +1,16 @@
-[]
+[
+  {
+    "artifact_count": 0,
+    "boundary_ref": null,
+    "changelog_file": null,
+    "entry_count": 13,
+    "previous_version": "v0.1.0",
+    "record_revision": 3,
+    "released_at": "2026-06-24",
+    "source_count": null,
+    "source_refs": [],
+    "status": "released",
+    "title": "Release v0.2.0",
+    "version": "v0.2.0"
+  }
+]

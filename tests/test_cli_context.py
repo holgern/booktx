@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -11,7 +12,11 @@ from booktx.cli import app
 from booktx.config import load_project
 from booktx.context import context_markdown_path, context_path
 
-runner = CliRunner()
+runner = CliRunner(env={"COLUMNS": "120"})
+
+
+def _ansi_clean(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
 MARKDOWN_DOC = """\
@@ -216,9 +221,10 @@ def _inject_md_only_note(
 def test_context_render_help_includes_write_flag():
     res = runner.invoke(app, ["context", "render", "--help"])
     assert res.exit_code == 0, res.output
-    assert "--write" in res.output
-    assert "--stdout" in res.output
-    assert "--force-discard-md-only" in res.output
+    clean = _ansi_clean(res.output)
+    assert "--write" in clean
+    assert "--stdout" in clean
+    assert "--force-discard-md-only" in clean
 
 
 def test_context_render_dry_run_does_not_overwrite_stale(tmp_path: Path):

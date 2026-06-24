@@ -1,0 +1,503 @@
+schema_version: 1
+object_type: commit_audit_sheet
+versioning:
+  schema_version: 1
+  revision: 3
+release_version: v0.2.0
+git_base_ref: v0.1.0
+git_base_sha: aef36b35b39f88f1be7cd1994041b7e2b0ef624a
+git_head_ref: HEAD
+git_head_sha: 2beb38748f48305c51e7072dd502ea425303dbd8
+git_range: aef36b35b39f88f1be7cd1994041b7e2b0ef624a..2beb38748f48305c51e7072dd502ea425303dbd8
+commit_count: 14
+rows:
+  - sha: e2a950b488de28fe0af4ad2b96fb72877ee21791
+    source_ref: git:e2a950b488de28fe0af4ad2b96fb72877ee21791
+    short_sha: e2a950b
+    changed_paths:
+      - booktx/cli.py
+      - booktx/validate.py
+      - tests/test_cli_context.py
+      - tests/test_epub_io.py
+    stats:
+      files_changed: 10
+      insertions: 101
+      deletions: 104
+    inspected: true
+    inspected_paths:
+      - booktx/cli.py
+      - booktx/validate.py
+      - tests/test_cli_context.py
+      - tests/test_epub_io.py
+    observed_behavior: Unit test alignment with refactored CLI and validate module
+    public_impact: none
+    decision: accepted
+    evidence_subject: "fix: unit test"
+    target_entry_id: entry-0012
+  - sha: fce06b4bdd52da4c0c36f6238efd22c59f1f9bd4
+    source_ref: git:fce06b4bdd52da4c0c36f6238efd22c59f1f9bd4
+    short_sha: fce06b4
+    changed_paths:
+      - booktx/cli.py
+      - booktx/config.py
+      - skills/booktx/SKILL.md
+      - tests/test_cli_translate.py
+      - tests/test_config.py
+    stats:
+      files_changed: 11
+      insertions: 739
+      deletions: 70
+    inspected: true
+    inspected_paths:
+      - booktx/cli.py
+      - booktx/config.py
+      - skills/booktx/SKILL.md
+      - tests/test_cli_translate.py
+      - tests/test_config.py
+    observed_behavior: New translate CLI commands and improved agent skill instructions
+    public_impact: public
+    decision: accepted
+    evidence_subject: "feat: new translate commands and improved skill"
+    target_entry_id: entry-0009
+  - sha: 35f8a1d1f66d3e646b93c734a0c5eeaad7689f6a
+    source_ref: git:35f8a1d1f66d3e646b93c734a0c5eeaad7689f6a
+    short_sha: 35f8a1d
+    changed_paths:
+      - booktx/acceptance.py
+      - booktx/submissions.py
+      - booktx/tasks.py
+      - booktx/status.py
+      - booktx/rendering.py
+      - booktx/io_utils.py
+      - booktx/placeholders.py
+      - booktx/cli.py
+      - tests/test_acceptance.py
+      - tests/test_cli.py
+    stats:
+      files_changed: 27
+      insertions: 2689
+      deletions: 1044
+    inspected: true
+    inspected_paths:
+      - booktx/acceptance.py
+      - booktx/submissions.py
+      - booktx/tasks.py
+      - booktx/status.py
+      - booktx/rendering.py
+      - booktx/io_utils.py
+      - booktx/placeholders.py
+      - booktx/cli.py
+      - tests/test_acceptance.py
+      - tests/test_cli.py
+    observed_behavior:
+      Acceptance/submission system, task creation, progress tracking,
+      rendering pipeline
+    public_impact: public
+    decision: accepted
+    evidence_subject: "feat: code improvements and docs updates"
+    target_entry_id: entry-0007
+  - sha: b97132def1277588b090697e1f30d831b0ca0c0e
+    source_ref: git:b97132def1277588b090697e1f30d831b0ca0c0e
+    short_sha: b97132d
+    changed_paths:
+      - booktx/versioning.py
+      - booktx/record_refs.py
+      - booktx/models.py
+      - booktx/translation_store.py
+      - booktx/cli.py
+      - booktx/config.py
+      - booktx/validate.py
+      - booktx/status.py
+      - tests/test_models.py
+      - tests/test_cli_translate.py
+      - tests/test_config.py
+      - tests/test_validate.py
+    stats:
+      files_changed: 25
+      insertions: 3168
+      deletions: 76
+    inspected: true
+    inspected_paths:
+      - booktx/versioning.py
+      - booktx/record_refs.py
+      - booktx/models.py
+      - booktx/translation_store.py
+      - booktx/cli.py
+      - booktx/config.py
+      - booktx/validate.py
+      - booktx/status.py
+      - tests/test_models.py
+      - tests/test_cli_translate.py
+      - tests/test_config.py
+      - tests/test_validate.py
+    observed_behavior: Translation versioning, record refs, nested version tracks
+    public_impact: public
+    decision: accepted
+    evidence_subject:
+      "feat: versions, nested versioning for translations and better
+      part adressing"
+    target_entry_id: entry-0002
+  - sha: 8a2fa654bad274e4749c373c68d23f861e2c022e
+    source_ref: git:8a2fa654bad274e4749c373c68d23f861e2c022e
+    short_sha: 8a2fa65
+    changed_paths:
+      - booktx/chunking.py
+      - booktx/models.py
+      - booktx/cli.py
+      - booktx/config.py
+      - booktx/validate.py
+      - booktx/acceptance.py
+      - booktx/submissions.py
+      - booktx/tasks.py
+      - tests/test_chunking.py
+      - tests/test_cli.py
+      - tests/test_cli_translate.py
+      - tests/test_models.py
+      - tests/test_validate.py
+    stats:
+      files_changed: 24
+      insertions: 1330
+      deletions: 66
+    inspected: true
+    inspected_paths:
+      - booktx/chunking.py
+      - booktx/models.py
+      - booktx/cli.py
+      - booktx/config.py
+      - booktx/validate.py
+      - booktx/acceptance.py
+      - booktx/submissions.py
+      - booktx/tasks.py
+      - tests/test_chunking.py
+      - tests/test_cli.py
+      - tests/test_cli_translate.py
+      - tests/test_models.py
+      - tests/test_validate.py
+    observed_behavior: Chunk schema version, rechunking, whoami identity command
+    public_impact: public
+    decision: accepted
+    evidence_subject:
+      "feat: improved whoami and new schema version for chunks, rechunking
+      added"
+    target_entry_id: entry-0006
+  - sha: 4d5b7e8543fdc3c78aed7962d0b29da651e6e2c2
+    source_ref: git:4d5b7e8543fdc3c78aed7962d0b29da651e6e2c2
+    short_sha: 4d5b7e8
+    changed_paths:
+      - booktx/context.py
+      - booktx/cli.py
+      - booktx/validate.py
+      - tests/test_cli_context.py
+      - tests/test_context_io.py
+      - tests/test_validate_context.py
+    stats:
+      files_changed: 12
+      insertions: 1523
+      deletions: 36
+    inspected: true
+    inspected_paths:
+      - booktx/context.py
+      - booktx/cli.py
+      - booktx/validate.py
+      - tests/test_cli_context.py
+      - tests/test_context_io.py
+      - tests/test_validate_context.py
+    observed_behavior: Context markdown drift detection, safe overwrite guards
+    public_impact: public
+    decision: accepted
+    evidence_subject: "feat: prevent context render drift"
+    target_entry_id: entry-0005
+  - sha: d677dbf2726658fa0a847b8eda7674a23d843c0f
+    source_ref: git:d677dbf2726658fa0a847b8eda7674a23d843c0f
+    short_sha: d677dbf
+    changed_paths:
+      - booktx/config.py
+      - booktx/models.py
+      - booktx/cli.py
+      - booktx/status.py
+      - booktx/submissions.py
+      - booktx/tasks.py
+      - booktx/versioning.py
+      - booktx/context.py
+      - booktx/rendering.py
+      - docs/profiles.md
+      - tests/test_cli_translate.py
+      - tests/test_config.py
+    stats:
+      files_changed: 35
+      insertions: 3331
+      deletions: 2519
+    inspected: true
+    inspected_paths:
+      - booktx/config.py
+      - booktx/models.py
+      - booktx/cli.py
+      - booktx/status.py
+      - booktx/submissions.py
+      - booktx/tasks.py
+      - booktx/versioning.py
+      - booktx/context.py
+      - booktx/rendering.py
+      - docs/profiles.md
+      - tests/test_cli_translate.py
+      - tests/test_config.py
+    observed_behavior:
+      Profile-based multi-language layout with separate translation
+      state per language
+    public_impact: public
+    decision: accepted
+    evidence_subject: "feat: introduce profile so that more than one lang is possible"
+    target_entry_id: entry-0001
+  - sha: b8bf30e80c6011c155ba2e2c42a725fad8e66186
+    source_ref: git:b8bf30e80c6011c155ba2e2c42a725fad8e66186
+    short_sha: b8bf30e
+    changed_paths:
+      - booktx/profile_migration.py
+      - booktx/identity.py
+      - booktx/config.py
+      - booktx/cli.py
+      - booktx/status.py
+      - booktx/submissions.py
+      - booktx/tasks.py
+      - docs/profiles.md
+      - docs/troubleshooting.md
+      - tests/test_profile_migration.py
+      - tests/test_profiles.py
+    stats:
+      files_changed: 22
+      insertions: 1647
+      deletions: 470
+    inspected: true
+    inspected_paths:
+      - booktx/profile_migration.py
+      - booktx/identity.py
+      - booktx/config.py
+      - booktx/cli.py
+      - booktx/status.py
+      - booktx/submissions.py
+      - booktx/tasks.py
+      - docs/profiles.md
+      - docs/troubleshooting.md
+      - tests/test_profile_migration.py
+      - tests/test_profiles.py
+    observed_behavior: Profile migration tooling, identity module, config refactoring
+    public_impact: public
+    decision: accepted
+    evidence_subject: "feat: improved skill and docs, refactoring"
+    target_entry_id: entry-0008
+  - sha: 8fa59eb91f1bb80cf49e9dd13168f3e7cbdc89cc
+    source_ref: git:8fa59eb91f1bb80cf49e9dd13168f3e7cbdc89cc
+    short_sha: 8fa59eb
+    changed_paths:
+      - booktx/build.py
+      - booktx/chapters.py
+      - booktx/chunking.py
+      - booktx/cli.py
+      - booktx/epub_io.py
+      - booktx/epub_manifest.py
+      - booktx/html_io.py
+      - booktx/models.py
+      - booktx/status.py
+      - booktx/validate.py
+    stats:
+      files_changed: 10
+      insertions: 124
+      deletions: 75
+    inspected: true
+    inspected_paths:
+      - booktx/build.py
+      - booktx/chapters.py
+      - booktx/chunking.py
+      - booktx/cli.py
+      - booktx/epub_io.py
+      - booktx/epub_manifest.py
+      - booktx/html_io.py
+      - booktx/models.py
+      - booktx/status.py
+      - booktx/validate.py
+    observed_behavior: mypy type annotation fixes across modules
+    public_impact: none
+    decision: accepted
+    evidence_subject: "chore: fix mypy"
+    target_entry_id: entry-0010
+  - sha: 7e8a89d2914aa8239caeeaccebe91f2c03c46cdf
+    source_ref: git:7e8a89d2914aa8239caeeaccebe91f2c03c46cdf
+    short_sha: 7e8a89d
+    changed_paths:
+      - booktx/cli.py
+      - booktx/config.py
+      - booktx/status.py
+      - docs/development.md
+      - docs/index.md
+      - docs/profiles.md
+      - docs/project-layout.md
+      - docs/translation-contract.md
+      - docs/troubleshooting.md
+      - tests/test_profile_migration.py
+    stats:
+      files_changed: 10
+      insertions: 111
+      deletions: 100
+    inspected: true
+    inspected_paths:
+      - booktx/cli.py
+      - booktx/config.py
+      - booktx/status.py
+      - docs/development.md
+      - docs/index.md
+      - docs/profiles.md
+      - docs/project-layout.md
+      - docs/translation-contract.md
+      - docs/troubleshooting.md
+      - tests/test_profile_migration.py
+    observed_behavior: Pre-commit hook fixes and documentation formatting
+    public_impact: none
+    decision: accepted
+    evidence_subject: "chore: fix pre-commit"
+    target_entry_id: entry-0011
+  - sha: 215914e759091000777d82702a07d752dcc9fe14
+    source_ref: git:215914e759091000777d82702a07d752dcc9fe14
+    short_sha: 215914e
+    changed_paths:
+      - booktx/agent_todo.py
+      - booktx/cli.py
+      - booktx/command_hints.py
+      - booktx/config.py
+      - booktx/models.py
+      - booktx/rendering.py
+      - booktx/status.py
+      - booktx/tasks.py
+      - tests/test_cli_translate_todo.py
+    stats:
+      files_changed: 16
+      insertions: 1381
+      deletions: 20
+    inspected: true
+    inspected_paths:
+      - booktx/agent_todo.py
+      - booktx/cli.py
+      - booktx/command_hints.py
+      - booktx/config.py
+      - booktx/models.py
+      - booktx/rendering.py
+      - booktx/status.py
+      - booktx/tasks.py
+      - tests/test_cli_translate_todo.py
+    observed_behavior:
+      Bounded multi-chapter run management, agent todo module, command
+      hints
+    public_impact: public
+    decision: accepted
+    evidence_subject: "feat: add commands for longer runs"
+    target_entry_id: entry-0003
+  - sha: d320f5cafa020f1eb1eb3f7099460315381acb26
+    source_ref: git:d320f5cafa020f1eb1eb3f7099460315381acb26
+    short_sha: d320f5c
+    changed_paths:
+      - booktx/agent_todo.py
+      - booktx/cli.py
+      - booktx/command_hints.py
+      - booktx/config.py
+      - booktx/context.py
+      - booktx/html_io.py
+      - booktx/models.py
+      - booktx/rendering.py
+      - booktx/tasks.py
+      - booktx/todo_resume.py
+      - booktx/todo_status.py
+      - booktx/validate.py
+      - tests/test_cli_translate_todo.py
+      - tests/test_validate_context.py
+    stats:
+      files_changed: 21
+      insertions: 1403
+      deletions: 118
+    inspected: true
+    inspected_paths:
+      - booktx/agent_todo.py
+      - booktx/cli.py
+      - booktx/command_hints.py
+      - booktx/config.py
+      - booktx/context.py
+      - booktx/html_io.py
+      - booktx/models.py
+      - booktx/rendering.py
+      - booktx/tasks.py
+      - booktx/todo_resume.py
+      - booktx/todo_status.py
+      - booktx/validate.py
+      - tests/test_cli_translate_todo.py
+      - tests/test_validate_context.py
+    observed_behavior: Resumable task creation, todo status snapshots, bounded run resume
+    public_impact: public
+    decision: accepted
+    evidence_subject: "feat: todo for longer runs"
+    target_entry_id: entry-0003
+  - sha: cea186b092751c414bdddffa99353dcb2e4833cb
+    source_ref: git:cea186b092751c414bdddffa99353dcb2e4833cb
+    short_sha: cea186b
+    changed_paths:
+      - booktx/context.py
+      - booktx/rendering.py
+      - booktx/models.py
+      - booktx/cli.py
+      - booktx/acceptance.py
+      - booktx/versioning.py
+      - booktx/translation_store.py
+      - tests/test_acceptance.py
+      - tests/test_cli_translate.py
+      - tests/test_context_io.py
+      - tests/test_models.py
+    stats:
+      files_changed: 25
+      insertions: 1002
+      deletions: 140
+    inspected: true
+    inspected_paths:
+      - booktx/context.py
+      - booktx/rendering.py
+      - booktx/models.py
+      - booktx/cli.py
+      - booktx/acceptance.py
+      - booktx/versioning.py
+      - booktx/translation_store.py
+      - tests/test_acceptance.py
+      - tests/test_cli_translate.py
+      - tests/test_context_io.py
+      - tests/test_models.py
+    observed_behavior: Chapter note parsing, context hash exclusion for chapter notes
+    public_impact: public
+    decision: accepted
+    evidence_subject:
+      "feat: better chapter note handling so that this is not counting
+      as new context build"
+    target_entry_id: entry-0004
+  - sha: 2beb38748f48305c51e7072dd502ea425303dbd8
+    source_ref: git:2beb38748f48305c51e7072dd502ea425303dbd8
+    short_sha: 2beb387
+    changed_paths:
+      - booktx/agent_todo.py
+      - booktx/models.py
+      - booktx/todo_status.py
+      - booktx/cli.py
+      - booktx/status.py
+      - tests/test_cli_translate_todo.py
+      - tests/test_models.py
+    stats:
+      files_changed: 12
+      insertions: 290
+      deletions: 54
+    inspected: true
+    inspected_paths:
+      - booktx/agent_todo.py
+      - booktx/models.py
+      - booktx/todo_status.py
+      - booktx/cli.py
+      - booktx/status.py
+      - tests/test_cli_translate_todo.py
+      - tests/test_models.py
+    observed_behavior: TranslationTodo model rebuild fix, agent status resolution fix
+    public_impact: none
+    decision: accepted
+    evidence_subject: "fix: agent todo, TranslationTodo fixed"
+    target_entry_id: entry-0013
