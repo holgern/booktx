@@ -98,7 +98,7 @@ booktx context mark-ready . --profile PROFILE
 Request a durable block task:
 
 ```bash
-booktx translate next . --profile PROFILE --unit batch --max-words 500 --format block
+booktx translate next . --profile PROFILE --unit batch --max-words 800 --format block
 ```
 
 This creates:
@@ -194,6 +194,21 @@ booktx translate export ...
 booktx validate ...
 ```
 
+## Bounded multi-chapter runs
+
+If the user asks to continue for multiple chapters, do not request one huge
+chapter task. Create a todo:
+
+```bash
+booktx translate todo-next . --profile PROFILE --chapters 3 --batch-words 800 --write
+```
+
+Read the generated todo markdown and follow its loop. Stop only when the todo
+goal is complete or a stop condition occurs. Report partial progress if context
+budget runs low.
+
+The todo files are run-control artifacts under `translations/<profile>/todos/`.
+They are NOT translation submissions.
 Do not use old profile-state paths in a profile project:
 
 ```text

@@ -21,7 +21,7 @@ Do not start translating when `context.json` is missing or not ready.
 ## 3. Request a task
 
 ```bash
-booktx translate next . --profile de_gpt5_5 --unit batch --max-words 500 --format block
+booktx translate next . --profile de_gpt5_5 --unit batch --max-words 800 --format block
 ```
 
 This writes:
@@ -50,6 +50,19 @@ booktx translate insert . \
 booktx validate . --profile de_gpt5_5
 booktx build . --profile de_gpt5_5
 ```
+
+## 7. Longer bounded runs
+
+When the user asks to continue for multiple chapters, do not request one huge
+chapter task. Create a todo instead:
+
+```bash
+booktx translate todo-next . --profile de_gpt5_5 --chapters 3 --batch-words 800 --write
+```
+
+Read the generated todo markdown and follow its loop. Stop only when the todo
+goal is complete or a stop condition occurs. Report partial progress if context
+budget runs low.
 
 ## Guardrails
 

@@ -13,7 +13,13 @@ Both must round-trip through JSON with stable field names and ordering.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    # Avoid a circular import: status.py imports from models.py.
+    # The forward-ref "StatusTotals" on TranslationTodo is resolved via
+    # model_rebuild() after status is importable.
+    from booktx.status import StatusTotals
 
 from pydantic import (
     BaseModel,
@@ -47,6 +53,8 @@ __all__ = [
     "TranslationIdentity",
     "TranslationTaskRecord",
     "TranslationTask",
+    "TranslationTodoChapter",
+    "TranslationTodo",
     "NamesFile",
     "SourceConfig",
     "ProfileIdentityConfig",
@@ -426,7 +434,54 @@ class TranslationTask(BaseModel):
     )
     source_words: int = 0
     record_count: int = 0
+    requested_max_words: int | None = None
     records: list[TranslationTaskRecord] = Field(default_factory=list)
+
+
+class TranslationTodoChapter(BaseModel):
+    """One chapter selected for a bounded agent translation run.
+
+    Carries only coverage/state at the moment the todo was created; it never
+    embeds source text. Source text belongs in per-task ``*.source.block.txt``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    chapter_id: str
+    title: str = ""
+    status: str
+    records_total: int
+    records_translated_at_start: int
+    records_remaining_at_start: int
+    source_words_remaining_at_start: int
+    pending_chunk_ids: list[str] = Field(default_factory=list)
+
+
+class TranslationTodo(BaseModel):
+    """A durable run-control artifact for a bounded multi-chapter agent run.
+
+    Written by ``booktx translate todo-next`` under
+    ``translations/<profile>/todos/<todo_id>.{json,md}``. This is NOT a
+    translation submission: it tells the agent how many chapters to complete,
+    the per-task word budget, and the stop conditions.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal[1] = 1
+    todo_id: str
+    profile: str
+    target_language: str
+    target_locale: str = ""
+    chapters_requested: int
+    batch_words: int
+    max_run_words: int | None = None
+    include_current: bool = True
+    created_at: str
+    context_sha256: str | None = None
+    source_sha256: str | None = None
+    start_totals: StatusTotals
+    chapters: list[TranslationTodoChapter] = Field(default_factory=list)
 
 
 class NamesFile(BaseModel):
@@ -604,3 +659,14 @@ class Manifest(BaseModel):
     # Mapping of record id -> placeholder-preserving template location. For
     # markdown this is enough to rebuild; epub rebuilds walk spine docs.
     template: dict[str, Any] = Field(default_factory=dict)
+
+
+def _rebuild_translation_todo() -> None:
+    """Resolve the StatusTotals forward reference on TranslationTodo.
+
+    Must be called once before instantiating :class:`TranslationTodo`, by any
+    module that imports both ``booktx.models`` and ``booktx.status``.
+    """
+    from booktx.status import StatusTotals as _ST
+
+    TranslationTodo.model_rebuild(_types_namespace={"StatusTotals": _ST})

@@ -132,6 +132,9 @@ __all__ = [
     "translation_ingest_dir",
     "translation_ingest_path",
     "translation_ingest_block_path",
+    "translation_todo_dir",
+    "translation_todo_json_path",
+    "translation_todo_markdown_path",
     "load_translation_task",
     "write_translation_task",
     "find_source_file",
@@ -1040,6 +1043,28 @@ def translation_ingest_block_path(project: Project, task_id: str) -> Path:
     if safe_task_id != task_id or not safe_task_id:
         raise _err("invalid_task_id", f"Invalid task id for ingest path: {task_id!r}")
     return translation_ingest_dir(project) / f"{safe_task_id}.block.txt"
+
+
+def translation_todo_dir(project: Project) -> Path:
+    """Profile-local directory for durable agent-run todo files.
+
+    Returns ``translations/<profile>/todos/``.  Raises :exc:`BooktxError`
+    if no profile is selected.
+    """
+    _require_profile_paths(project, "translation todo access")
+    return _profile_todos_dir(project.root, project.profile or "")
+
+
+def _profile_todos_dir(root: Path, profile: str) -> Path:
+    return profile_dir(root, profile) / "todos"
+
+
+def translation_todo_json_path(project: Project, todo_id: str) -> Path:
+    return translation_todo_dir(project) / f"{todo_id}.json"
+
+
+def translation_todo_markdown_path(project: Project, todo_id: str) -> Path:
+    return translation_todo_dir(project) / f"{todo_id}.md"
 
 
 def load_translation_task(project: Project, task_id: str) -> TranslationTask | None:

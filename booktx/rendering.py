@@ -135,8 +135,20 @@ def print_translate_task(
     """
     paths = task_paths(project, task.task_id)
     display = paths.display(project.root)
-    json_submit = paths.json_submit_hint(task.task_id, project.root)
-    block_submit = paths.block_submit_hint(task.task_id, project.root)
+    from booktx.command_hints import translate_insert_command
+
+    json_submit = translate_insert_command(
+        project,
+        task_id=task.task_id,
+        file_path=display.ingest_json,
+        input_format="json",
+    )
+    block_submit = translate_insert_command(
+        project,
+        task_id=task.task_id,
+        file_path=display.ingest_block,
+        input_format="block",
+    )
     block_stdin = paths.block_stdin_submit_hint(task.task_id)
     view_sources = f"cat {display.source_block}"
 
@@ -153,6 +165,7 @@ def print_translate_task(
         "source_sha256": task.source_sha256,
         "source_words": task.source_words,
         "record_count": task.record_count,
+        "requested_max_words": task.requested_max_words,
         "records": [record.model_dump(mode="json") for record in task.records],
         "ingest_path": display.ingest_json,
         "block_ingest_path": display.ingest_block,

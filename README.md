@@ -91,7 +91,7 @@ booktx context mark-ready ./demo --profile de_gpt5_5 --force
 booktx translate next ./demo \
   --profile de_gpt5_5 \
   --unit batch \
-  --max-words 500 \
+  --max-words 800 \
   --format block
 
 booktx translate insert ./demo \
@@ -103,6 +103,23 @@ booktx translate insert ./demo \
 booktx validate ./demo --profile de_gpt5_5
 booktx build ./demo --profile de_gpt5_5
 ```
+
+## Bounded agent runs
+
+When asking an agent to continue for several chapters, create a durable todo:
+
+```bash
+booktx translate todo-next ./demo \
+  --profile de_gpt5_5 \
+  --chapters 3 \
+  --batch-words 800 \
+  --max-run-words 12000 \
+  --write
+```
+
+This writes a todo file (not translations) under `translations/<profile>/todos/`.
+The agent reads the todo and loops `translate next -> fill -> insert -> validate`
+until complete or a stop condition occurs. Prefer batches over chapter-sized tasks.
 
 ## Multiple profiles
 

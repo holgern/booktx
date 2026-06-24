@@ -192,10 +192,10 @@ def write_block_ingest_template(project: Project, task: TranslationTask) -> Path
     paths = task_paths(project, task.task_id)
     source_display = project_relative(paths.source_block, project.root)
     block_display = project_relative(path, project.root)
-    submit_hint = (
-        f"booktx translate insert ."
-        f"{f' --profile {task.profile}' if task.profile else ''} --task-id {task.task_id} "
-        f"--file {block_display} --format block"
+    from booktx.command_hints import translate_insert_command
+
+    submit_hint = translate_insert_command(
+        project, task_id=task.task_id, file_path=block_display
     )
     headers = [
         "# booktx block submission",
@@ -249,6 +249,7 @@ def create_translation_task(
     *,
     unit: str,
     record_ids: list[str],
+    requested_max_words: int | None = None,
 ) -> TranslationTask:
     """Build, persist, and render durable files for one translation task."""
     from booktx.config import write_translation_task
@@ -287,6 +288,7 @@ def create_translation_task(
             source_by_id[record_id].source_words for record_id in record_ids
         ),
         record_count=len(record_ids),
+        requested_max_words=requested_max_words,
         records=[
             TranslationTaskRecord(
                 id=record_id,

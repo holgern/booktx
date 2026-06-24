@@ -32,7 +32,7 @@ booktx context mark-ready ./demo --profile de_gpt5_5 --force
 ## 5. Request a translation task
 
 ```bash
-booktx translate next ./demo --profile de_gpt5_5 --unit batch --max-words 500 --format block
+booktx translate next ./demo --profile de_gpt5_5 --unit batch --max-words 800 --format block
 ```
 
 Read `translations/de_gpt5_5/context.md`, then fill the generated durable file

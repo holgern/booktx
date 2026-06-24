@@ -56,7 +56,7 @@ until you pass `--profile` or select one.
 ## Translation workflow
 
 ```bash
-booktx translate next ./book --profile de_gpt5_5 --unit batch --max-words 500 --format block
+booktx translate next ./book --profile de_gpt5_5 --unit batch --max-words 800 --format block
 booktx translate insert ./book --profile de_gpt5_5 --task-id TASK --file translations/de_gpt5_5/ingest/TASK.block.txt --format block
 booktx translate task-status ./book --profile de_gpt5_5 --task-id TASK
 booktx translate set-record ./book --profile de_gpt5_5 --task-id TASK --record-id RECORD_ID --stdin
@@ -67,6 +67,21 @@ booktx translation activate ./book --profile de_gpt5_5 74@38 1.2
 booktx translation review ./book --profile de_gpt5_5 74@38 --activate 1.2 --note "Better rhythm"
 booktx translate export ./book --profile de_gpt5_5
 ```
+
+## Bounded agent runs
+
+```bash
+booktx translate todo-next ./book --profile de_gpt5_5 --chapters 3 --batch-words 800 --write
+booktx translate todo-next ./book --profile de_gpt5_5 --chapters 3 --batch-words 800 --max-run-words 12000 --write --json
+booktx translate todo-next ./book --profile de_gpt5_5 --chapters 5 --batch-words 800 --skip-current --write
+booktx translate todo-next ./book --profile de_gpt5_5 --chapters 3 --start-chapter 0017 --batch-words 800 --write
+```
+
+Creates a durable todo under `translations/<profile>/todos/` that describes the
+bounded run: chapters to complete, per-task word budget, run safety budget, and
+stop conditions. The agent reads the todo markdown and follows its loop until
+complete or a stop condition fires. This is NOT a translation submission; the
+agent still fills ingest files and runs `translate insert` for each batch.
 
 ## Version commands
 

@@ -41,6 +41,10 @@ from booktx.chapters import (
     write_chapter_map,
 )
 from booktx.chunking import RECORD_ID_SCHEME, segmenter_metadata, spans_to_chunks
+from booktx.command_hints import (
+    build_command,
+    translate_next_command,
+)
 from booktx.config import (
     BooktxError,
     Project,
@@ -2002,10 +2006,16 @@ def _create_translation_task(
     *,
     unit: str,
     record_ids: list[str],
+    requested_max_words: int | None = None,
 ) -> TranslationTask:
     """Backward-compatible alias for :func:`booktx.tasks.create_translation_task`."""
     return create_translation_task(
-        proj, bundle, chapter, unit=unit, record_ids=record_ids
+        proj,
+        bundle,
+        chapter,
+        unit=unit,
+        record_ids=record_ids,
+        requested_max_words=requested_max_words,
     )
 
 
@@ -2073,8 +2083,7 @@ def _next_chapter(proj: Project, *, print_context: bool) -> None:
     console.print(f"source words remaining: {chapter.source_words_remaining:,}")
     console.print(
         "[dim]next command:[/dim] "
-        f"booktx translate next . --chapter {chapter.chapter_id} --unit batch "
-        "--max-words 500 --format block"
+        + translate_next_command(proj, chapter_id=chapter.chapter_id)
     )
     raise typer.Exit(code=0)
 
@@ -2294,6 +2303,7 @@ def translate_next(
         selected_chapter,
         unit=actual_unit,
         record_ids=record_ids,
+        requested_max_words=max_words,
     )
     _print_translate_task(
         task,
@@ -2397,13 +2407,155 @@ def translate_insert(
             f"{result.records_total} records translated, "
             f"{result.records_remaining} remaining"
         )
+
+    # Rebuild status after insert to get fresh totals.
+    fresh = _project_status_snapshot(proj)
+    max_words = task.requested_max_words if task else 800
+    if fresh.snapshot.totals.records_remaining == 0:
+        console.print("next: " + build_command(proj))
+    elif result.chapter_id and result.records_remaining > 0:
+        # Current chapter still incomplete — stay on it.
         console.print(
             "next: "
-            f"booktx translate next ."
-            f"{f' --profile {proj.profile}' if proj.profile else ''} "
-            f"--chapter {result.chapter_id} --unit batch "
-            "--max-words 500 --format block"
+            + translate_next_command(
+                proj,
+                chapter_id=result.chapter_id,
+                max_words=max_words,
+            )
         )
+    elif result.chapter_id:
+        # Chapter just completed — advance to next incomplete chapter.
+        console.print(
+            "next: "
+            + translate_next_command(
+                proj,
+                max_words=max_words,
+            )
+        )
+
+
+@translate_app.command(name="todo-next")
+def translate_todo_next(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    chapters: int = typer.Option(
+        3, "--chapters", min=1, help="Number of incomplete chapters to complete."
+    ),
+    batch_words: int = typer.Option(
+        800, "--batch-words", min=1, help="Source-word budget per translate next batch."
+    ),
+    max_run_words: int | None = typer.Option(
+        None,
+        "--max-run-words",
+        min=1,
+        help="Optional source-word cap for this agent run.",
+    ),
+    start_chapter: str | None = typer.Option(
+        None,
+        "--start-chapter",
+        help="Optional chapter id to start from.",
+    ),
+    skip_current: bool = typer.Option(
+        False,
+        "--skip-current",
+        help="Start after the current first incomplete chapter.",
+    ),
+    write: bool = typer.Option(
+        False,
+        "--write",
+        help="Write todo markdown/json under translations/<profile>/todos/.",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    """Create a durable run-control todo for a bounded multi-chapter translation run.
+
+    This writes a todo file (not translations) describing how many chapters to
+    complete, the per-task word budget, and the stop conditions.  The agent
+    reads the todo and loops ``translate next -> fill -> insert -> validate``
+    until done or a stop condition occurs.
+    """
+    from booktx.agent_todo import build_translation_todo, write_translation_todo
+
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
+    _require_chunks(proj)
+    _require_no_source_drift(proj)
+    _require_ready_context(proj)
+    bundle = _project_status_snapshot(proj)
+
+    try:
+        todo = build_translation_todo(
+            proj,
+            bundle,
+            chapters=chapters,
+            batch_words=batch_words,
+            max_run_words=max_run_words,
+            skip_current=skip_current,
+            start_chapter=start_chapter,
+        )
+    except ValueError as exc:
+        _die(str(exc))
+
+    json_path: Path | None = None
+    md_path: Path | None = None
+    if write:
+        json_path, md_path = write_translation_todo(proj, todo)
+
+    if as_json:
+        payload: dict[str, object] = {
+            "version": 1,
+            "todo_id": todo.todo_id,
+            "profile": todo.profile,
+            "target_language": todo.target_language,
+            "target_locale": todo.target_locale,
+            "chapters_requested": todo.chapters_requested,
+            "batch_words": todo.batch_words,
+            "max_run_words": todo.max_run_words,
+            "include_current": todo.include_current,
+            "created_at": todo.created_at,
+            "context_sha256": todo.context_sha256,
+            "source_sha256": todo.source_sha256,
+            "chapters": [
+                {
+                    "chapter_id": c.chapter_id,
+                    "title": c.title,
+                    "status": c.status,
+                    "records_total": c.records_total,
+                    "records_translated_at_start": c.records_translated_at_start,
+                    "records_remaining_at_start": c.records_remaining_at_start,
+                    "source_words_remaining_at_start": c.source_words_remaining_at_start,
+                    "pending_chunk_ids": c.pending_chunk_ids,
+                }
+                for c in todo.chapters
+            ],
+        }
+        if json_path is not None:
+            payload["json_path"] = str(json_path.relative_to(proj.root))
+        if md_path is not None:
+            payload["markdown_path"] = str(md_path.relative_to(proj.root))
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
+
+    # Human output
+    console.print(f"todo: {todo.todo_id}")
+    first = todo.chapters[0] if todo.chapters else None
+    if first:
+        console.print(
+            f"goal: complete {todo.chapters_requested} incomplete chapter(s),"
+            f" starting at {first.chapter_id} {first.title}".rstrip()
+        )
+    else:
+        console.print(f"goal: complete {todo.chapters_requested} incomplete chapter(s)")
+    console.print(f"batch words: {todo.batch_words}")
+    console.print("chapters: " + ", ".join(c.chapter_id for c in todo.chapters))
+    if md_path is not None:
+        console.print(f"markdown: {md_path.relative_to(proj.root)}")
+    if json_path is not None:
+        console.print(f"json: {json_path.relative_to(proj.root)}")
+    console.print(
+        "next command: " + translate_next_command(proj, max_words=todo.batch_words)
+    )
 
 
 @translate_app.command(name="import-legacy")

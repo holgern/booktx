@@ -244,6 +244,7 @@ class StatusRuntimeIndex:
     record_ids_by_chapter: dict[str, list[str]]
     record_to_chapter: dict[str, str]
     chapters_by_id: dict[str, ChapterProgress]
+    chapter_summaries: list[ChapterProgress]
     chunk_summaries: list[ChunkProgress]
     record_error_by_id: dict[str, Finding]
 
@@ -547,6 +548,7 @@ def build_status_snapshot(
         record_ids_by_chapter=record_ids_by_chapter,
         record_to_chapter=record_to_chapter,
         chapters_by_id=chapters_by_id,
+        chapter_summaries=chapter_summaries,
         chunk_summaries=chunk_summaries,
         record_error_by_id=record_error_by_id,
     )

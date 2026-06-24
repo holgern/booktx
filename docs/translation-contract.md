@@ -9,6 +9,17 @@
 - `translations/<profile>/tasks/`
 - `translations/<profile>/ingest/`
 - `translations/<profile>/translated/`
+- `translations/<profile>/todos/`
+
+## Todo files
+
+`translations/<profile>/todos/<todo-id>.{json,md}` are **run-control artifacts**
+written by `booktx translate todo-next`. They describe a bounded multi-chapter
+agent run (chapters to complete, per-task word budget, stop conditions).
+
+Todo files are NOT translation submissions. The agent reads the markdown loop
+instructions, fills ingest files, and runs `translate insert` for each batch.
+Do not submit todo JSON files through `translate insert`.
 
 ## Task metadata
 
