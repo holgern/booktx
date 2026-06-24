@@ -92,8 +92,11 @@ from booktx.context import (
     hydrate_chapter_contexts_from_chapter_map,
     load_context,
     merge_chapter_contexts,
+    next_question_id,
     parse_context_markdown_chapter_notes,
     render_context_markdown,
+    unapproved_required_questions,
+    unresolved_required_questions,
     upsert_chapter_context,
     write_context,
     write_context_markdown,
@@ -1291,7 +1294,11 @@ def _guard_md_safe_or_die(
 
 
 def _open_required_questions(ctx: TranslationContext) -> list[ContextQuestion]:
-    return [q for q in ctx.questions if q.required and q.status == "open"]
+    return unresolved_required_questions(ctx)
+
+
+def _approval_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _resolved_identity(proj: Project) -> TranslationIdentity:
@@ -1409,7 +1416,7 @@ def context_init(
     seed: str | None = typer.Option(
         None,
         "--seed",
-        help="Packaged seed template name (e.g. 'shadows-of-apt').",
+        help="Packaged seed template name (e.g. 'shadows_of_apt').",
     ),
     seed_file: Path | None = typer.Option(
         None,
@@ -1461,6 +1468,10 @@ def context_init(
             if answer.strip():
                 q.answer = answer.strip()
                 q.status = "answered"
+                q.answer_source = "user"
+                q.approved_by = "cli:interactive"
+                q.approved_at = _approval_timestamp()
+                apply_answer_to_context(ctx, q.id, q.answer)
         ctx.ready = not _open_required_questions(ctx)
     _guard_md_safe_or_die(proj, ctx, allow_discard_md_only=force)
     write_context(proj, ctx)
@@ -1498,9 +1509,24 @@ def context_status(
     ctx = _load_context_or_exit(proj)
     open_required = _open_required_questions(ctx)
     open_total = [q for q in ctx.questions if q.status == "open"]
+    recommended_required = [
+        q for q in ctx.questions if q.required and q.status == "recommended"
+    ]
+    unapproved_required = unapproved_required_questions(ctx)
+    answered_required = [
+        q for q in ctx.questions if q.required and q.status == "answered"
+    ]
+    legacy_answered_required = [
+        q for q in answered_required if q.answer_source == "legacy"
+    ]
     status = "READY" if ctx.ready else "NOT READY"
     console.print(f"Status: {status}")
     console.print(f"open_required={len(open_required)} open_total={len(open_total)}")
+    console.print(f"recommended_required={len(recommended_required)}")
+    console.print(f"unapproved_required={len(unapproved_required)}")
+    console.print(f"answered_required={len(answered_required)}")
+    if legacy_answered_required:
+        console.print(f"legacy_answered_required={len(legacy_answered_required)}")
     console.print(f"glossary_entries={len(ctx.glossary)}")
     console.print(
         f"context: {display_path(context_markdown_path(proj), runtime.mode)}",
@@ -1578,13 +1604,16 @@ def context_answer(
         None, "--profile", help="Translation profile name."
     ),
 ) -> None:
-    """Answer one context question non-interactively."""
+    """Legacy command to answer one context question non-interactively."""
     proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
     ctx = _load_context_or_exit(proj)
     for q in ctx.questions:
         if q.id == question_id:
             q.answer = text
             q.status = "answered" if text.strip() else "open"
+            q.answer_source = "legacy" if text.strip() else None
+            q.approved_by = "legacy:context-answer" if text.strip() else ""
+            q.approved_at = _approval_timestamp() if text.strip() else ""
             apply_answer_to_context(ctx, question_id, text)
             _guard_md_safe_or_die(proj, ctx)
             write_context(proj, ctx)
@@ -1592,6 +1621,186 @@ def context_answer(
             console.print(f"answered {question_id}")
             return
     _die(f"unknown question id: {question_id}")
+
+
+@context_app.command(name="recommend")
+def context_recommend(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    question_id: str = typer.Argument(..., help="Question id, e.g. Q001."),
+    text: str = typer.Option(..., "--text", help="Recommended answer text."),
+    reason: str = typer.Option("", "--reason", help="Recommendation rationale."),
+    source: str = typer.Option(
+        "", "--source", help="Source evidence for the recommendation."
+    ),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+) -> None:
+    """Store an agent recommendation without answering the question."""
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
+    ctx = _load_context_or_exit(proj)
+    for q in ctx.questions:
+        if q.id == question_id:
+            q.recommendation = text
+            q.recommendation_reason = reason
+            q.recommendation_source = source
+            if q.status == "open":
+                q.status = "recommended"
+            _guard_md_safe_or_die(proj, ctx)
+            write_context(proj, ctx)
+            write_context_markdown(proj, ctx)
+            console.print(f"recommended {question_id}")
+            return
+    _die(f"unknown question id: {question_id}")
+
+
+@context_app.command(name="approve")
+def context_approve(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    question_id: str = typer.Argument(..., help="Question id, e.g. Q001."),
+    text: str | None = typer.Option(None, "--text", help="Approved answer text."),
+    use_recommendation: bool = typer.Option(
+        False, "--use-recommendation", help="Approve the stored recommendation."
+    ),
+    approved_by: str = typer.Option(
+        "user:unspecified", "--approved-by", help="User approval source."
+    ),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+) -> None:
+    """Commit a user-approved context answer."""
+    if (text is None) == (not use_recommendation):
+        _die("pass exactly one of --text or --use-recommendation")
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
+    ctx = _load_context_or_exit(proj)
+    for q in ctx.questions:
+        if q.id == question_id:
+            answer = q.recommendation if use_recommendation else text
+            if not answer or not answer.strip():
+                _die("approved answer is empty")
+                return
+            approved_answer = answer.strip()
+            q.answer = approved_answer
+            q.status = "answered"
+            q.answer_source = "user"
+            q.approved_by = approved_by
+            q.approved_at = _approval_timestamp()
+            apply_answer_to_context(ctx, question_id, approved_answer)
+            _guard_md_safe_or_die(proj, ctx)
+            write_context(proj, ctx)
+            write_context_markdown(proj, ctx)
+            console.print(f"approved {question_id}")
+            return
+    _die(f"unknown question id: {question_id}")
+
+
+@context_app.command(name="add-question")
+def context_add_question(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    topic: str = typer.Option(..., "--topic", help="Question topic."),
+    question: str = typer.Option(..., "--question", help="Question text."),
+    required: bool = typer.Option(
+        False, "--required", help="Block readiness until approved."
+    ),
+    origin: str = typer.Option("agent_review", "--origin", help="Question origin."),
+    recommendation: str | None = typer.Option(
+        None, "--recommendation", help="Recommended answer."
+    ),
+    reason: str = typer.Option("", "--reason", help="Recommendation rationale."),
+    source: str = typer.Option("", "--source", help="Recommendation source."),
+    question_id: str | None = typer.Option(None, "--id", help="Explicit question id."),
+    allow_duplicate: bool = typer.Option(
+        False, "--allow-duplicate", help="Allow duplicate topic/question."
+    ),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+) -> None:
+    """Add a book-specific context question."""
+    if origin not in {"core", "seed", "agent_review", "user", "legacy"}:
+        _die("--origin must be core, seed, agent_review, user, or legacy")
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
+    ctx = _load_context_or_exit(proj)
+    if not allow_duplicate:
+        for q in ctx.questions:
+            if q.topic == topic and q.question == question:
+                _die(f"duplicate question: {q.id}")
+    q = ContextQuestion(
+        id=question_id or next_question_id(ctx),
+        topic=topic,
+        question=question,
+        required=required,
+        origin=origin,  # type: ignore[arg-type]
+        recommendation=recommendation,
+        recommendation_reason=reason,
+        recommendation_source=source,
+        status="recommended" if recommendation else "open",
+    )
+    ctx.questions.append(q)
+    _guard_md_safe_or_die(proj, ctx)
+    write_context(proj, ctx)
+    write_context_markdown(proj, ctx)
+    console.print(f"added question {q.id}")
+
+
+@context_app.command(name="questionnaire")
+def context_questionnaire(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    stdout: bool = typer.Option(True, "--stdout", help="Print questionnaire Markdown."),
+    write: Path | None = typer.Option(
+        None, "--write", help="Write questionnaire Markdown."
+    ),
+) -> None:
+    """Print a user-facing approval form."""
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    ctx = _load_context_or_exit(runtime.project)
+    lines = [
+        "# Translation Context Approval",
+        "",
+        "Please approve, edit, or reject the following context answers.",
+        "",
+        "## Required questions",
+        "",
+    ]
+    for q in ctx.questions:
+        if not q.required:
+            continue
+        lines.extend(
+            [
+                f"### {q.id} {q.topic}",
+                f"Question: {q.question}",
+                f"Recommendation: {q.recommendation or ''}",
+                f"Reason: {q.recommendation_reason}",
+                "",
+                "Your answer:",
+                "",
+            ]
+        )
+    optional = [q for q in ctx.questions if not q.required]
+    if optional:
+        lines.extend(["## Optional questions", ""])
+        for q in optional:
+            lines.extend(
+                [
+                    f"### {q.id} {q.topic}",
+                    f"Question: {q.question}",
+                    f"Recommendation: {q.recommendation or ''}",
+                    f"Reason: {q.recommendation_reason}",
+                    "",
+                    "Your answer:",
+                    "",
+                ]
+            )
+    rendered = "\n".join(lines)
+    if write is not None:
+        write.write_text(rendered, "utf-8")
+        console.print(f"wrote {display_path(write, runtime.mode)}")
+    if stdout or write is None:
+        typer.echo(rendered)
 
 
 @context_app.command(name="add-term")
@@ -1651,8 +1860,9 @@ def context_add_term(
 def context_mark_ready(
     project_dir: Path = typer.Argument(..., help="Project directory."),
     force: bool = typer.Option(
-        False, "--force", help="Mark ready even with open required questions."
+        False, "--force", help="Mark ready even with unresolved required questions."
     ),
+    reason: str = typer.Option("", "--reason", help="Reason required with --force."),
     profile: str | None = typer.Option(
         None, "--profile", help="Translation profile name."
     ),
@@ -1662,10 +1872,21 @@ def context_mark_ready(
     proj = runtime.project
     ctx = _load_context_or_exit(proj)
     open_required = _open_required_questions(ctx)
-    if open_required and not force:
-        ids = ", ".join(q.id for q in open_required)
-        _die(f"required questions are still open: {ids}")
+    unapproved = unapproved_required_questions(ctx)
+    if force and not reason.strip():
+        _die("--force requires --reason")
+    if not force:
+        if open_required:
+            ids = ", ".join(q.id for q in open_required)
+            _die(f"required questions are unresolved or unapproved: {ids}")
+        if unapproved:
+            ids = ", ".join(q.id for q in unapproved)
+            _die(f"required questions have unapproved answers: {ids}")
     ctx.ready = True
+    ctx.ready_forced = force
+    ctx.ready_reason = reason
+    ctx.ready_by = "cli:mark-ready"
+    ctx.ready_at = _approval_timestamp()
     _guard_md_safe_or_die(proj, ctx)
     write_context(proj, ctx)
     write_context_markdown(proj, ctx)
@@ -2203,6 +2424,21 @@ def _require_ready_context(
     ctx = load_context(proj)
     if ctx is None or not ctx.ready:
         _die("translation context is missing or not ready.\nRun: booktx context init .")
+        return False
+    unresolved = unresolved_required_questions(ctx)
+    if unresolved and not ctx.ready_forced:
+        ids = ", ".join(q.id for q in unresolved)
+        _die(
+            f"translation context has unapproved required answers: {ids}\n"
+            "Run: booktx context questionnaire . and approve answers before translating."
+        )
+    unapproved = unapproved_required_questions(ctx)
+    if unapproved and not ctx.ready_forced:
+        ids = ", ".join(q.id for q in unapproved)
+        _die(
+            f"translation context has unapproved required answers: {ids}\n"
+            "Run: booktx context questionnaire . and approve answers before translating."
+        )
     return True
 
 

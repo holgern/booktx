@@ -3,7 +3,9 @@ name: booktx
 description: Use this skill when working in a booktx project or when the user asks to translate, validate, build, migrate, or inspect booktx state.
 ---
 
-# booktx Skill
+# booktx
+
+Context answers are user policy, not agent policy. Treat all agent-proposed answers as drafts until the user approves them. Skill
 
 ## Purpose
 
@@ -127,7 +129,9 @@ Typical context initialization:
 ```bash
 booktx context init . --profile PROFILE --non-interactive
 booktx context questions . --profile PROFILE
-booktx context answer . --profile PROFILE Q001 --text "..."
+booktx context render . --profile PROFILE --stdout
+# Show recommendations to the user and wait for explicit approval or edits.
+booktx context approve . --profile PROFILE Q001 --text "<USER_APPROVED_TEXT>" --approved-by "user:<USER>"
 booktx context render . --profile PROFILE --write
 booktx context mark-ready . --profile PROFILE
 ```
@@ -305,3 +309,9 @@ booktx profile migrate-current ./book PROFILE --select
 
 After migration, use only `translations/PROFILE/...` for translation work.
 Run `booktx status ./book --profile PROFILE` before continuing.
+
+## Context gate
+
+Before translation, context must be approved by the user. Never answer initial context questions from your own judgment. You may recommend answers, but you must show the questions and recommendations to the user and wait for explicit approval or edited answers before writing them with `booktx context approve`. Do not run `booktx context approve`, `booktx context answer`, `booktx context render --write`, or `booktx context mark-ready` until the user has replied with approval or custom answers. Do not use `booktx context mark-ready --force` during normal translation work.
+
+Recommended prompt: I reviewed the source and recommend the following context answers. Please approve all, edit specific answers, or provide your own text.

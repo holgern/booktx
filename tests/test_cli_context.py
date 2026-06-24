@@ -130,7 +130,17 @@ def test_context_mark_ready_fails_until_required_answers_exist(tmp_path: Path):
 def test_context_mark_ready_force_allows_open_questions(tmp_path: Path):
     project_dir = _make_project(tmp_path)
     runner.invoke(app, ["context", "init", str(project_dir), "--non-interactive"])
-    res = runner.invoke(app, ["context", "mark-ready", str(project_dir), "--force"])
+    res = runner.invoke(
+        app,
+        [
+            "context",
+            "mark-ready",
+            str(project_dir),
+            "--force",
+            "--reason",
+            "test override",
+        ],
+    )
     assert res.exit_code == 0, res.output
     data = json.loads(_ctx_json(project_dir).read_text("utf-8"))
     assert data["ready"] is True
@@ -579,3 +589,91 @@ def test_chapter_note_refuses_unsafe_markdown_drift(tmp_path: Path):
     assert "0099" in res.output
     # context.json must not have been written.
     assert not any(c["chapter_id"] == "0006" for c in _load_chapters(project_dir))
+
+
+def test_context_recommend_does_not_make_question_answered(tmp_path):
+    project_dir = _make_project(tmp_path)
+    runner.invoke(app, ["context", "init", str(project_dir), "--non-interactive"])
+    res = runner.invoke(
+        app,
+        ["context", "recommend", str(project_dir), "Q002", "--text", "Fluent literary"],
+    )
+    assert res.exit_code == 0, res.output
+    data = json.loads(_ctx_json(project_dir).read_text("utf-8"))
+    q = next(q for q in data["questions"] if q["id"] == "Q002")
+    assert q["status"] == "recommended"
+    assert q["recommendation"] == "Fluent literary"
+    assert q.get("answer") is None
+
+
+def test_mark_ready_refuses_recommended_but_unapproved_required_question(tmp_path):
+    project_dir = _make_project(tmp_path)
+    runner.invoke(app, ["context", "init", str(project_dir), "--non-interactive"])
+    for qid in ["Q001", "Q003", "Q004", "Q005", "Q006", "Q012"]:
+        runner.invoke(
+            app,
+            ["context", "approve", str(project_dir), qid, "--text", f"answer {qid}"],
+        )
+    runner.invoke(
+        app,
+        ["context", "recommend", str(project_dir), "Q002", "--text", "Fluent literary"],
+    )
+    res = runner.invoke(app, ["context", "mark-ready", str(project_dir)])
+    assert res.exit_code == 1
+    assert "unapproved" in res.output or "unresolved" in res.output
+    assert "Q002" in res.output
+
+
+def test_context_approve_use_recommendation_marks_answer_user_approved(tmp_path):
+    project_dir = _make_project(tmp_path)
+    runner.invoke(app, ["context", "init", str(project_dir), "--non-interactive"])
+    runner.invoke(
+        app,
+        ["context", "recommend", str(project_dir), "Q002", "--text", "Fluent literary"],
+    )
+    res = runner.invoke(
+        app,
+        [
+            "context",
+            "approve",
+            str(project_dir),
+            "Q002",
+            "--use-recommendation",
+            "--approved-by",
+            "user:test",
+        ],
+    )
+    assert res.exit_code == 0, res.output
+    data = json.loads(_ctx_json(project_dir).read_text("utf-8"))
+    q = next(q for q in data["questions"] if q["id"] == "Q002")
+    assert q["answer"] == "Fluent literary"
+    assert q["answer_source"] == "user"
+    assert q["approved_by"] == "user:test"
+
+
+def test_context_add_question_creates_required_dynamic_question(tmp_path):
+    project_dir = _make_project(tmp_path)
+    runner.invoke(app, ["context", "init", str(project_dir), "--non-interactive"])
+    res = runner.invoke(
+        app,
+        [
+            "context",
+            "add-question",
+            str(project_dir),
+            "--topic",
+            "poetry",
+            "--question",
+            "How should poems and songs be translated?",
+            "--required",
+            "--origin",
+            "agent_review",
+            "--recommendation",
+            "Translate poetically, preserve meter only if natural.",
+        ],
+    )
+    assert res.exit_code == 0, res.output
+    data = json.loads(_ctx_json(project_dir).read_text("utf-8"))
+    q = next(q for q in data["questions"] if q["topic"] == "poetry")
+    assert q["required"] is True
+    assert q["origin"] == "agent_review"
+    assert q["status"] == "recommended"

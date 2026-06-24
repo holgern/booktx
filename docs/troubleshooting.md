@@ -127,7 +127,9 @@ Translation work requires a ready context. If you see `translation context is mi
 
 ```bash
 booktx context init ./book --profile PROFILE --non-interactive
-booktx context mark-ready ./book --profile PROFILE --force
+booktx context questionnaire ./book --profile PROFILE --stdout
+# Ask the user to approve or edit answers, then use context approve before mark-ready.
+booktx context mark-ready ./book --profile PROFILE
 ```
 
 ## Missing source chunks
@@ -172,3 +174,5 @@ requires a late Pydantic `model_rebuild()`.
 If you see `internal todo model initialization failed` instead, the error
 classifier detected a schema/program error rather than a data validation error.
 Report this as a booktx bug with the full error message.
+
+Do not use `context mark-ready --force` during normal translation setup. If a legacy migration truly needs it, pass `--reason` and document the external approval.

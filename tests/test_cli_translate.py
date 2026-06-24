@@ -1434,3 +1434,24 @@ def test_make_task_id_distinguishes_different_record_sets(monkeypatch):
     a = tasks.make_task_id("ch01", "c0001-r0001", ["c0001-r0001", "c0001-r0002"])
     b = tasks.make_task_id("ch01", "c0001-r0001", ["c0001-r0001", "c0001-r9999"])
     assert a != b
+
+
+def test_translate_next_refuses_ready_context_with_unapproved_required_answers(
+    tmp_path: Path,
+):
+    project_dir = _make_project(tmp_path)
+    runner.invoke(app, ["context", "init", str(project_dir), "--non-interactive"])
+    ctx = load_context(load_project(project_dir))
+    assert ctx is not None
+    for q in ctx.questions:
+        if q.required:
+            q.answer = "agent filled"
+            q.status = "answered"
+            q.answer_source = "agent"
+    ctx.ready = True
+    write_context(load_project(project_dir), ctx)
+    res = runner.invoke(
+        app, ["translate", "next", str(project_dir), "--format", "block"]
+    )
+    assert res.exit_code == 1
+    assert "unapproved" in res.output

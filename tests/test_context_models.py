@@ -151,3 +151,28 @@ def test_context_json_is_valid_json_object():
         "chapter_contexts",
     ):
         assert key in data
+
+
+def test_context_question_recommendation_does_not_answer():
+    from booktx.context import ContextQuestion
+
+    q = ContextQuestion(id="Q001", topic="style", question="Style?")
+    q.recommendation = "Fluent literary"
+    q.status = "recommended"
+    assert q.answer is None
+    assert q.answer_source is None
+
+
+def test_default_questions_have_core_origin():
+    from booktx.context import seed_questions
+
+    assert all(q.origin == "core" for q in seed_questions())
+
+
+def test_load_seed_template_accepts_hyphen_alias():
+    from booktx.context import load_seed_template
+
+    q1, g1 = load_seed_template("shadows_of_apt")
+    q2, g2 = load_seed_template("shadows-of-apt")
+    assert [q.id for q in q1] == [q.id for q in q2]
+    assert [g.source for g in g1] == [g.source for g in g2]

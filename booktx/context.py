@@ -60,6 +60,9 @@ __all__ = [
     "ensure_context_markdown_safe_to_overwrite",
     "seed_questions",
     "seed_glossary",
+    "unresolved_required_questions",
+    "unapproved_required_questions",
+    "next_question_id",
 ]
 
 
@@ -115,8 +118,17 @@ class ContextQuestion(BaseModel):
     topic: str
     question: str
     answer: str | None = None
-    status: Literal["open", "answered"] = "open"
+    status: Literal["open", "recommended", "answered", "skipped"] = "open"
     required: bool = True
+    origin: Literal["core", "seed", "agent_review", "user", "legacy"] = "core"
+    recommendation: str | None = None
+    recommendation_reason: str = ""
+    recommendation_source: str = ""
+    answer_source: Literal["user", "imported", "legacy", "forced", "agent"] | None = (
+        None
+    )
+    approved_by: str = ""
+    approved_at: str = ""
 
 
 class ChapterContext(BaseModel):
@@ -145,6 +157,10 @@ class TranslationContext(BaseModel):
     source_author: str = ""
     source_sha256: str = ""
     ready: bool = False
+    ready_forced: bool = False
+    ready_reason: str = ""
+    ready_by: str = ""
+    ready_at: str = ""
     style: StyleProfile = Field(default_factory=StyleProfile)
     global_rules: list[str] = Field(default_factory=list)
     glossary: list[GlossaryEntry] = Field(default_factory=list)
@@ -198,7 +214,43 @@ def load_context(project: Project) -> TranslationContext | None:
     path = context_path(project)
     if not path.is_file():
         return None
-    return TranslationContext.model_validate_json(path.read_text("utf-8"))
+    ctx = TranslationContext.model_validate_json(path.read_text("utf-8"))
+    normalize_context_question_provenance(ctx)
+    return ctx
+
+
+def normalize_context_question_provenance(context: TranslationContext) -> None:
+    """Mark old answered questions without provenance as legacy."""
+    for q in context.questions:
+        if q.status == "answered" and q.answer and q.answer_source is None:
+            q.answer_source = "legacy"
+
+
+def unresolved_required_questions(context: TranslationContext) -> list[ContextQuestion]:
+    return [
+        q
+        for q in context.questions
+        if q.required and (q.status != "answered" or not (q.answer or "").strip())
+    ]
+
+
+def unapproved_required_questions(context: TranslationContext) -> list[ContextQuestion]:
+    normalize_context_question_provenance(context)
+    return [
+        q
+        for q in context.questions
+        if q.required
+        and q.status == "answered"
+        and q.answer_source not in {"user", "imported", "legacy", "forced"}
+    ]
+
+
+def next_question_id(context: TranslationContext, prefix: str = "Q") -> str:
+    max_seen = 0
+    for q in context.questions:
+        if q.id.startswith(prefix) and q.id[len(prefix) :].isdigit():
+            max_seen = max(max_seen, int(q.id[len(prefix) :]))
+    return f"{prefix}{max_seen + 1:03d}"
 
 
 def write_context(project: Project, context: TranslationContext) -> None:
@@ -443,7 +495,9 @@ def seed_questions() -> list[ContextQuestion]:
         ),
     ]
     return [
-        ContextQuestion(id=qid, topic=topic, question=text, required=required)
+        ContextQuestion(
+            id=qid, topic=topic, question=text, required=required, origin="core"
+        )
         for qid, topic, text, required in items
     ]
 
@@ -468,8 +522,18 @@ def load_seed_template(name: str) -> tuple[list[ContextQuestion], list[GlossaryE
     from pathlib import Path
 
     template_dir = Path(__file__).parent / "templates"
-    template_path = template_dir / f"{name}.json"
-    if not template_path.is_file():
+    template_path = None
+    normalized = name.strip()
+    for candidate in [
+        normalized,
+        normalized.replace("-", "_"),
+        normalized.replace("_", "-"),
+    ]:
+        path = template_dir / f"{candidate}.json"
+        if path.is_file():
+            template_path = path
+            break
+    if template_path is None:
         raise FileNotFoundError(f"unknown seed template: {name}")
     data = json.loads(template_path.read_text("utf-8"))
     questions = [
@@ -478,6 +542,7 @@ def load_seed_template(name: str) -> tuple[list[ContextQuestion], list[GlossaryE
             topic=q["topic"],
             question=q["question"],
             required=q.get("required", True),
+            origin=q.get("origin", "seed"),
         )
         for q in data.get("questions", [])
     ]
@@ -630,12 +695,23 @@ def _render_questions_section(questions: list[ContextQuestion]) -> list[str]:
         for q in open_q:
             lines.append(f"- {q.id}: {q.question}")
         lines.append("")
+    recommended = [q for q in questions if q.status == "recommended"]
+    if recommended:
+        lines += ["## Recommended questions", ""]
+        for q in recommended:
+            rec = q.recommendation or ""
+            reason = (
+                f" Reason: {q.recommendation_reason}" if q.recommendation_reason else ""
+            )
+            lines.append(f"- {q.id}: {q.question} -> {rec}{reason}")
+        lines.append("")
     answered = [q for q in questions if q.status == "answered"]
     if answered:
         lines += ["## Answered questions", ""]
         for q in answered:
             ans = q.answer or ""
-            lines.append(f"- {q.id}: {q.question} -> {ans}")
+            source = f" [{q.answer_source}]" if q.answer_source else ""
+            lines.append(f"- {q.id}: {q.question} -> {ans}{source}")
         lines.append("")
     return lines
 
@@ -681,6 +757,9 @@ def render_context_markdown(context: TranslationContext) -> str:
         "- Read this file before translating every new chapter.",
         "- Glossary rules override dictionary translations.",
         "- Do not use forbidden target terms.",
+        "- Context answers are user policy, not agent policy.",
+        "- Do not answer initial context questions yourself; ask the user to approve",
+        "  or edit recommendations.",
         "- Update chapter notes after completing a chapter.",
         "",
     ]

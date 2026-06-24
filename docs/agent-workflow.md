@@ -110,3 +110,7 @@ budget runs low. `--max-run-words` is advisory only.
   keep agent runs within budget; bypassing them defeats that purpose.
   Only use `translate next --unit chapter` for small chapters or when the user
   explicitly requests a whole-chapter task.
+
+## Context approval hard stop
+
+Stop and ask the user whenever context questions are open or only recommended. Do not translate from a context that you generated yourself. Prepare a user review form, then wait for explicit approval or edited answers before running `booktx context approve` and `booktx context mark-ready`.
