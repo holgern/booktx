@@ -435,6 +435,7 @@ class TranslationTask(BaseModel):
     source_words: int = 0
     record_count: int = 0
     requested_max_words: int | None = None
+    todo_id: str | None = None
     records: list[TranslationTaskRecord] = Field(default_factory=list)
 
 

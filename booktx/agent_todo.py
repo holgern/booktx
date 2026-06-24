@@ -213,17 +213,17 @@ def render_translation_todo_markdown(todo: TranslationTodo, project: Project) ->
     The output is the durable loop instruction file an agent reads before
     starting the bounded run.
     """
-    from booktx.command_hints import translate_next_command, validate_command
+    from booktx.command_hints import (
+        translate_todo_resume_command,
+        translate_todo_status_command,
+        validate_command,
+    )
 
     lines: list[str] = []
     lines.append(f"# booktx agent todo: {todo.todo_id}")
     lines.append("")
 
     first_chapter = todo.chapters[0] if todo.chapters else None
-    chapter_summary = ", ".join(
-        f"{c.chapter_id} {c.title}".rstrip() for c in todo.chapters
-    )
-
     max_run_label = f"{todo.max_run_words:,}" if todo.max_run_words else "unlimited"
     lines.append(
         f"Goal: complete {todo.chapters_requested} incomplete chapter(s)"
@@ -232,7 +232,7 @@ def render_translation_todo_markdown(todo: TranslationTodo, project: Project) ->
         else f"Goal: complete {todo.chapters_requested} incomplete chapter(s)"
     )
     lines.append(f"Per-task budget: {todo.batch_words} source words")
-    lines.append(f"Run safety budget: {max_run_label} source words")
+    lines.append(f"Advisory run budget: {max_run_label} source words")
     lines.append(f"Profile: {todo.profile}")
     if project.context_md_path is not None:
         lines.append(f"Context: {project.context_md_path.relative_to(project.root)}")
@@ -241,24 +241,34 @@ def render_translation_todo_markdown(todo: TranslationTodo, project: Project) ->
     # Stop conditions
     lines.append("## Stop immediately if")
     lines.append("")
-    lines.append(f"- `{validate_command(project)}` reports errors or warnings.")
+    strict_validate = validate_command(project, fail_on_warnings=True)
+    lines.append(f"- `{strict_validate}` reports errors or warnings.")
     lines.append("- `booktx translate insert` rejects the submission.")
     lines.append("- `booktx status` reports source drift or context not ready.")
     lines.append(
         f"- You have completed {todo.chapters_requested} chapter(s) from this todo."
     )
     if todo.max_run_words:
-        lines.append(f"- The run reaches {todo.max_run_words:,} source words.")
+        lines.append(
+            f"- The advisory run budget reaches {todo.max_run_words:,} source words; "
+            "stop and report progress before requesting more work."
+        )
     lines.append("- The source file for the next task is too large to read safely.")
     lines.append("")
 
     # Loop
     lines.append("## Loop")
     lines.append("")
-    lines.append("1. Run:")
+    lines.append("1. Inspect live todo status:")
     lines.append("")
     lines.append("   ```bash")
-    lines.append(f"   booktx status . --profile {todo.profile}")
+    lines.append(
+        "   "
+        + translate_todo_status_command(
+            project,
+            todo_id=todo.todo_id,
+        )
+    )
     lines.append("   ```")
     lines.append("")
     lines.append("2. If the todo goal is complete, stop and report progress.")
@@ -266,7 +276,11 @@ def render_translation_todo_markdown(todo: TranslationTodo, project: Project) ->
     lines.append("3. Request the next bounded batch:")
     lines.append("")
     lines.append("   ```bash")
-    next_cmd = translate_next_command(project, max_words=todo.batch_words)
+    next_cmd = translate_todo_resume_command(
+        project,
+        todo_id=todo.todo_id,
+        output_format="block",
+    )
     lines.append(f"   {next_cmd}")
     lines.append("   ```")
     lines.append("")
@@ -279,7 +293,7 @@ def render_translation_todo_markdown(todo: TranslationTodo, project: Project) ->
     lines.append("7. Validate:")
     lines.append("")
     lines.append("   ```bash")
-    lines.append(f"   {validate_command(project)}")
+    lines.append(f"   {validate_command(project, fail_on_warnings=True)}")
     lines.append("   ```")
     lines.append("")
     lines.append("8. Continue the loop unless a stop condition applies.")
@@ -289,7 +303,8 @@ def render_translation_todo_markdown(todo: TranslationTodo, project: Project) ->
     lines.append("## Planned chapters")
     lines.append("")
     lines.append(
-        "| chapter | title | remaining records | remaining source words | pending chunks |"
+        "| chapter | title | remaining records | "
+        "remaining source words | pending chunks |"
     )
     lines.append("|---|---|---:|---:|---|")
     for c in todo.chapters:

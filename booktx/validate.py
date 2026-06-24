@@ -802,7 +802,7 @@ def _context_render_drift_finding(
         detail = "; ".join(drift.parse_errors)
         message = (
             "context.md chapter notes could not be parsed: "
-            f"{detail}. Fix .booktx/context.md, then run "
+            f"{detail}. Fix {context_markdown_path(project)}, then run "
             "`booktx context import-md . --write`."
         )
     elif drift.unsafe_to_overwrite:

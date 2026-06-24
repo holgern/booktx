@@ -166,6 +166,7 @@ def print_translate_task(
         "source_words": task.source_words,
         "record_count": task.record_count,
         "requested_max_words": task.requested_max_words,
+        "todo_id": task.todo_id,
         "records": [record.model_dump(mode="json") for record in task.records],
         "ingest_path": display.ingest_json,
         "block_ingest_path": display.ingest_block,
@@ -187,20 +188,34 @@ def print_translate_task(
         return
     if output_format == "block":
         console.print(f"task: {task.task_id}")
+        if task.todo_id:
+            console.print(f"todo: {task.todo_id}")
         console.print(f"chapter: {task.chapter_id}  {task.chapter_title}".rstrip())
         console.print(f"unit: {task.unit}")
         console.print(f"records: {task.record_count}")
         console.print(f"source words: {task.source_words}")
         console.print()
-        console.print(f"Source file: {display.source_block}", soft_wrap=True)
-        console.print(f"Durable block template: {display.ingest_block}", soft_wrap=True)
-        console.print(f"Submit durable file with: {block_submit}", soft_wrap=True)
-        console.print(f"View sources: {view_sources}", soft_wrap=True)
+        console.print(
+            f"Source file: {display.source_block}",
+            soft_wrap=True,
+            markup=False,
+        )
+        console.print(
+            f"Durable block template: {display.ingest_block}",
+            soft_wrap=True,
+            markup=False,
+        )
+        console.print(
+            f"Submit durable file with: {block_submit}",
+            soft_wrap=True,
+            markup=False,
+        )
+        console.print(f"View sources: {view_sources}", soft_wrap=True, markup=False)
         if show_template:
             console.print()
             console.print("Heredoc template (optional, for tiny manual fixes):")
             console.print()
-            console.print(block_stdin, soft_wrap=True)
+            console.print(block_stdin, soft_wrap=True, markup=False)
             for idx, record in enumerate(task.records):
                 console.print(f">>> {record.id}")
                 console.print("<target>")
@@ -219,6 +234,8 @@ def print_translate_task(
         return
     # Default: human-readable list.
     console.print(f"task: {task.task_id}")
+    if task.todo_id:
+        console.print(f"todo: {task.todo_id}")
     console.print(f"chapter: {task.chapter_id}  {task.chapter_title}".rstrip())
     console.print(f"unit: {task.unit}")
     console.print(f"records: {task.record_count}")

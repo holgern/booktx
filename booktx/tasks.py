@@ -28,6 +28,7 @@ project-relative display strings and submit commands the CLI prints.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,6 +46,7 @@ from booktx.models import TranslationTask, TranslationTaskRecord
 from booktx.versioning import canonical_json_sha256, resolve_current_version
 
 if TYPE_CHECKING:
+    from booktx.progress import SourceRecordView
     from booktx.status import ChapterProgress, StatusBundle
 
 __all__ = [
@@ -52,6 +54,8 @@ __all__ = [
     "make_task_id",
     "task_paths",
     "project_relative",
+    "limit_records_by_words",
+    "select_translation_record_ids",
     "create_translation_task",
     "write_ingest_template",
     "write_block_ingest_template",
@@ -242,6 +246,71 @@ def write_task_source_block(project: Project, task: TranslationTask) -> Path:
     return path
 
 
+def limit_records_by_words(
+    record_ids: list[str],
+    source_by_id: Mapping[str, SourceRecordView],
+    max_words: int,
+) -> list[str]:
+    """Return the longest prefix of ``record_ids`` within ``max_words``.
+
+    The first record is always included when ``record_ids`` is non-empty so a
+    single long record still makes progress.
+    """
+    if max_words < 1:
+        raise ValueError("max_words must be >= 1")
+    selected: list[str] = []
+    total = 0
+    for record_id in record_ids:
+        words = source_by_id[record_id].source_words
+        if selected and total + words > max_words:
+            break
+        selected.append(record_id)
+        total += words
+    return selected
+
+
+def select_translation_record_ids(
+    bundle: StatusBundle,
+    chapter: ChapterProgress,
+    *,
+    unit: str,
+    max_words: int,
+) -> tuple[str, list[str]]:
+    """Select the record ids for the next translation task within ``chapter``."""
+    source_by_id = bundle.index.source_by_id
+    pending = [
+        record_id
+        for record_id in bundle.index.record_ids_by_chapter[chapter.chapter_id]
+        if record_id not in bundle.index.translated_by_id
+    ]
+    if not pending:
+        return (unit, [])
+    if unit == "chapter":
+        return (unit, pending)
+    if unit == "chunk":
+        first_chunk_id = source_by_id[pending[0]].chunk_id
+        return (
+            unit,
+            [
+                record_id
+                for record_id in pending
+                if source_by_id[record_id].chunk_id == first_chunk_id
+            ],
+        )
+    if unit == "paragraph":
+        first_record = source_by_id[pending[0]]
+        if first_record.span_index is None:
+            unit = "batch"
+        else:
+            same_span = [
+                record_id
+                for record_id in pending
+                if source_by_id[record_id].span_index == first_record.span_index
+            ]
+            return (unit, limit_records_by_words(same_span, source_by_id, max_words))
+    return (unit, limit_records_by_words(pending, source_by_id, max_words))
+
+
 def create_translation_task(
     project: Project,
     bundle: StatusBundle,
@@ -250,6 +319,7 @@ def create_translation_task(
     unit: str,
     record_ids: list[str],
     requested_max_words: int | None = None,
+    todo_id: str | None = None,
 ) -> TranslationTask:
     """Build, persist, and render durable files for one translation task."""
     from booktx.config import write_translation_task
@@ -289,6 +359,7 @@ def create_translation_task(
         ),
         record_count=len(record_ids),
         requested_max_words=requested_max_words,
+        todo_id=todo_id,
         records=[
             TranslationTaskRecord(
                 id=record_id,

@@ -43,7 +43,10 @@ from booktx.chapters import (
 from booktx.chunking import RECORD_ID_SCHEME, segmenter_metadata, spans_to_chunks
 from booktx.command_hints import (
     build_command,
+    context_chapter_note_command,
     translate_next_command,
+    translate_todo_resume_command,
+    translate_todo_status_command,
 )
 from booktx.config import (
     BooktxError,
@@ -127,7 +130,9 @@ from booktx.status import (
     build_status_snapshot,
 )
 from booktx.submissions import resolve_submission
-from booktx.tasks import create_translation_task
+from booktx.tasks import create_translation_task, select_translation_record_ids
+from booktx.todo_resume import resolve_translation_todo, resume_translation_todo
+from booktx.todo_status import build_todo_status, load_translation_todo
 from booktx.translation_store import (
     active_candidate,
     ensure_store_record,
@@ -1087,7 +1092,7 @@ def context_init(
         help="Path to a JSON seed file with extra questions and glossary.",
     ),
 ) -> None:
-    """Create .booktx/context.json and rendered context.md."""
+    """Create the active profile's context.json and rendered context.md."""
     from booktx.context import load_seed_template
 
     proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
@@ -1177,7 +1182,11 @@ def context_render(
     profile: str | None = typer.Option(
         None, "--profile", help="Translation profile name."
     ),
-    write: bool = typer.Option(False, "--write", help="Write .booktx/context.md."),
+    write: bool = typer.Option(
+        False,
+        "--write",
+        help="Write the active profile's context.md.",
+    ),
     stdout: bool = typer.Option(
         False, "--stdout", help="Print rendered Markdown without writing."
     ),
@@ -1938,17 +1947,13 @@ def _selected_chapter(
 def _limit_records_by_words(
     record_ids: list[str], source_by_id: dict[str, Any], max_words: int
 ) -> list[str]:
-    if max_words < 1:
-        _die("--max-words must be >= 1")
-    selected: list[str] = []
-    total = 0
-    for record_id in record_ids:
-        words = source_by_id[record_id].source_words
-        if selected and total + words > max_words:
-            break
-        selected.append(record_id)
-        total += words
-    return selected
+    from booktx.tasks import limit_records_by_words
+
+    try:
+        return limit_records_by_words(record_ids, source_by_id, max_words)
+    except ValueError as exc:
+        _die(f"--{str(exc).replace('_', '-')}")
+        raise typer.Exit(code=1) from exc
 
 
 def _select_translation_record_ids(
@@ -1958,38 +1963,16 @@ def _select_translation_record_ids(
     unit: str,
     max_words: int,
 ) -> tuple[str, list[str]]:
-    source_by_id = bundle.index.source_by_id
-    pending = [
-        record_id
-        for record_id in bundle.index.record_ids_by_chapter[chapter.chapter_id]
-        if record_id not in bundle.index.translated_by_id
-    ]
-    if not pending:
-        return (unit, [])
-    if unit == "chapter":
-        return (unit, pending)
-    if unit == "chunk":
-        first_chunk_id = source_by_id[pending[0]].chunk_id
-        return (
-            unit,
-            [
-                record_id
-                for record_id in pending
-                if source_by_id[record_id].chunk_id == first_chunk_id
-            ],
+    try:
+        return select_translation_record_ids(
+            bundle,
+            chapter,
+            unit=unit,
+            max_words=max_words,
         )
-    if unit == "paragraph":
-        first_record = source_by_id[pending[0]]
-        if first_record.span_index is None:
-            unit = "batch"
-        else:
-            same_span = [
-                record_id
-                for record_id in pending
-                if source_by_id[record_id].span_index == first_record.span_index
-            ]
-            return (unit, _limit_records_by_words(same_span, source_by_id, max_words))
-    return (unit, _limit_records_by_words(pending, source_by_id, max_words))
+    except ValueError as exc:
+        _die(f"--{str(exc).replace('_', '-')}")
+        raise typer.Exit(code=1) from exc
 
 
 def _project_relative(path: Path, root: Path) -> str:
@@ -2007,6 +1990,7 @@ def _create_translation_task(
     unit: str,
     record_ids: list[str],
     requested_max_words: int | None = None,
+    todo_id: str | None = None,
 ) -> TranslationTask:
     """Backward-compatible alias for :func:`booktx.tasks.create_translation_task`."""
     return create_translation_task(
@@ -2016,6 +2000,7 @@ def _create_translation_task(
         unit=unit,
         record_ids=record_ids,
         requested_max_words=requested_max_words,
+        todo_id=todo_id,
     )
 
 
@@ -2407,12 +2392,54 @@ def translate_insert(
             f"{result.records_total} records translated, "
             f"{result.records_remaining} remaining"
         )
+        if result.records_remaining == 0:
+            console.print(
+                f"chapter complete: {result.chapter_id} {result.chapter_title}".rstrip()
+            )
+            console.print("recommended context update template:")
+            console.print(
+                context_chapter_note_command(
+                    proj,
+                    chapter_id=result.chapter_id,
+                    title=result.chapter_title or "<TITLE>",
+                ),
+                soft_wrap=True,
+                markup=False,
+            )
 
     # Rebuild status after insert to get fresh totals.
     fresh = _project_status_snapshot(proj)
-    max_words = task.requested_max_words if task else 800
+    max_words = task.requested_max_words if task and task.requested_max_words else 800
+    if task is not None and task.todo_id:
+        todo = load_translation_todo(proj, task.todo_id)
+        if todo is None:
+            console.print(
+                f"[yellow]warning:[/yellow] todo {task.todo_id} referenced by task "
+                f"{task.task_id} is missing; falling back to generic next hints"
+            )
+        else:
+            todo_status = build_todo_status(
+                proj,
+                todo,
+                fresh,
+                fail_on_warnings=False,
+            )
+            if todo_status.goal_complete:
+                console.print(f"todo complete: {todo.todo_id}")
+                console.print("next: stop - todo goal complete")
+            elif todo_status.next_safe_command is not None:
+                console.print(
+                    "next: " + todo_status.next_safe_command,
+                    soft_wrap=True,
+                    markup=False,
+                )
+            return
     if fresh.snapshot.totals.records_remaining == 0:
-        console.print("next: " + build_command(proj))
+        console.print(
+            "next: " + build_command(proj),
+            soft_wrap=True,
+            markup=False,
+        )
     elif result.chapter_id and result.records_remaining > 0:
         # Current chapter still incomplete — stay on it.
         console.print(
@@ -2421,7 +2448,9 @@ def translate_insert(
                 proj,
                 chapter_id=result.chapter_id,
                 max_words=max_words,
-            )
+            ),
+            soft_wrap=True,
+            markup=False,
         )
     elif result.chapter_id:
         # Chapter just completed — advance to next incomplete chapter.
@@ -2430,7 +2459,9 @@ def translate_insert(
             + translate_next_command(
                 proj,
                 max_words=max_words,
-            )
+            ),
+            soft_wrap=True,
+            markup=False,
         )
 
 
@@ -2550,11 +2581,159 @@ def translate_todo_next(
     console.print(f"batch words: {todo.batch_words}")
     console.print("chapters: " + ", ".join(c.chapter_id for c in todo.chapters))
     if md_path is not None:
-        console.print(f"markdown: {md_path.relative_to(proj.root)}")
+        console.print(
+            f"markdown: {md_path.relative_to(proj.root)}",
+            soft_wrap=True,
+            markup=False,
+        )
     if json_path is not None:
-        console.print(f"json: {json_path.relative_to(proj.root)}")
+        console.print(
+            f"json: {json_path.relative_to(proj.root)}",
+            soft_wrap=True,
+            markup=False,
+        )
     console.print(
-        "next command: " + translate_next_command(proj, max_words=todo.batch_words)
+        "next command: " + translate_todo_status_command(proj, todo_id=todo.todo_id),
+        soft_wrap=True,
+        markup=False,
+    )
+    console.print(
+        "resume command: "
+        + translate_todo_resume_command(
+            proj,
+            todo_id=todo.todo_id,
+            output_format="block",
+        ),
+        soft_wrap=True,
+        markup=False,
+    )
+
+
+def _print_todo_status_human(status: Any) -> None:
+    chapters_display = ", ".join(chapter.chapter_id for chapter in status.todo.chapters)
+    console.print(f"todo: {status.todo.todo_id}")
+    console.print(
+        f"goal: complete {status.todo.chapters_requested} chapter(s): {chapters_display}"
+    )
+    console.print(f"complete: {status.complete_count} / {len(status.chapters)}")
+    console.print(f"state: {status.state}")
+    console.print(f"source drift: {'yes' if status.source_drifted else 'no'}")
+    console.print(f"context drift: {'yes' if status.context_drifted else 'no'}")
+    validation = status.validation
+    console.print(
+        "validation: "
+        f"errors={validation.errors} warnings={validation.warnings}"
+        f"{' (blocking)' if validation.blocking else ''}"
+    )
+    if status.blocking_reason:
+        console.print(f"reason: {status.blocking_reason}")
+    if status.current_chapter is not None:
+        current = status.current_chapter
+        console.print(f"current: {current.chapter_id} {current.title}".rstrip())
+        console.print(
+            f"progress: {current.records_translated_now} / {current.records_total} "
+            f"records, {current.records_remaining_now} remaining"
+        )
+    else:
+        console.print("current: none")
+    if status.next_safe_command is not None:
+        console.print(
+            "next: " + status.next_safe_command,
+            soft_wrap=True,
+            markup=False,
+        )
+    elif status.goal_complete:
+        console.print("next: stop - todo goal complete")
+    console.print("planned chapters:")
+    for chapter in status.chapters:
+        console.print(
+            f"- {chapter.chapter_id} {chapter.title}: "
+            f"{chapter.records_translated_now} / {chapter.records_total} translated, "
+            f"{chapter.records_remaining_now} remaining, status={chapter.status_now}"
+        )
+
+
+@translate_app.command(name="todo-status")
+def translate_todo_status(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    todo_id: str | None = typer.Option(None, "--todo-id", help="Todo id to inspect."),
+    latest: bool = typer.Option(
+        False, "--latest", help="Select the latest incomplete todo."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit stable JSON output."),
+) -> None:
+    """Show live bounded-run todo status and the next safe command."""
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
+    _require_chunks(proj)
+    bundle = _project_status_snapshot(proj)
+    try:
+        todo = resolve_translation_todo(proj, bundle, todo_id=todo_id, latest=latest)
+        status = build_todo_status(
+            proj,
+            todo,
+            bundle,
+            validation_report=validate_project(proj),
+            fail_on_warnings=True,
+        )
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
+        return
+    if as_json:
+        console.print_json(json.dumps(status.as_dict(), ensure_ascii=False))
+        return
+    _print_todo_status_human(status)
+
+
+@translate_app.command(name="todo-resume")
+def translate_todo_resume(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    todo_id: str | None = typer.Option(None, "--todo-id", help="Todo id to resume."),
+    latest: bool = typer.Option(
+        False, "--latest", help="Resume the latest incomplete todo."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+    output_format: str = typer.Option(
+        "block",
+        "--format",
+        help="Human output format: text, tsv, or block.",
+    ),
+    show_sources: bool = typer.Option(
+        False,
+        "--show-sources",
+        help="Print source records inline (block format only).",
+    ),
+    show_template: bool = typer.Option(
+        False,
+        "--show-template",
+        help="Print the heredoc submit template inline (block format only).",
+    ),
+) -> None:
+    """Resume a bounded multi-chapter todo and create the next safe task."""
+    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
+    if output_format not in {"text", "tsv", "block"}:
+        _die("--format must be text, tsv, or block")
+    if as_json and output_format != "text":
+        _die("--json cannot be combined with --format")
+    _require_chunks(proj)
+    bundle = _project_status_snapshot(proj)
+    try:
+        task = resume_translation_todo(proj, bundle, todo_id=todo_id, latest=latest)
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
+        return
+    _print_translate_task(
+        task,
+        proj,
+        as_json=as_json,
+        output_format=output_format,
+        show_sources=show_sources,
+        show_template=show_template,
     )
 
 
@@ -2912,10 +3091,13 @@ def translate_task_status(
     json_ingest_display = _project_relative(
         translation_ingest_path(proj, task.task_id), proj.root
     )
-    submit_hint = (
-        f"booktx translate insert ."
-        f"{f' --profile {task.profile}' if task.profile else ''} --task-id {task.task_id} "
-        f"--file {block_ingest_display} --format block"
+    from booktx.command_hints import translate_insert_command
+
+    submit_hint = translate_insert_command(
+        proj,
+        task_id=task.task_id,
+        file_path=block_ingest_display,
+        input_format="block",
     )
 
     payload = {
@@ -2947,9 +3129,9 @@ def translate_task_status(
         console.print(f"stale: {len(stale_ids)} record(s) need re-translation")
     if first_missing is not None:
         console.print(f"first missing: {first_missing}")
-    console.print(f"source file: {source_display}", soft_wrap=True)
-    console.print(f"ingest file: {block_ingest_display}", soft_wrap=True)
-    console.print(f"submit: {submit_hint}", soft_wrap=True)
+    console.print(f"source file: {source_display}", soft_wrap=True, markup=False)
+    console.print(f"ingest file: {block_ingest_display}", soft_wrap=True, markup=False)
+    console.print(f"submit: {submit_hint}", soft_wrap=True, markup=False)
     raise typer.Exit(code=0 if complete else 1)
 
 
@@ -3297,6 +3479,11 @@ def validate(
         "--all-versions-strict",
         help="Treat inactive-version validation errors as fatal.",
     ),
+    fail_on_warnings: bool = typer.Option(
+        False,
+        "--fail-on-warnings",
+        help="Exit non-zero when validation reports warnings.",
+    ),
 ) -> None:
     """Validate translated chunks against the translation contract."""
     proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
@@ -3318,8 +3505,9 @@ def validate(
         f"errors={len(report.errors)} warnings={len(report.warnings)} "
         f"missing={report.chunks_missing_translation}"
     )
-    console.print(f"[dim]report:[/dim] {out}")
-    if not report.passed:
+    console.print("[dim]report:[/dim] ", end="")
+    console.print(str(out), soft_wrap=True, markup=False)
+    if not report.passed or (fail_on_warnings and report.warnings):
         raise typer.Exit(code=1)
 
 

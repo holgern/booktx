@@ -67,7 +67,7 @@ import tomli_w
 try:
     import tomllib  # type: ignore[import-not-found]  # Python 3.11+ stdlib
 except ModuleNotFoundError:  # Python 3.10
-    import tomli as tomllib  # type: ignore[import-not-found]
+    import tomli as tomllib
 
 from booktx.epub_manifest import sha256_path
 from booktx.models import (

@@ -30,8 +30,6 @@ python -m pip install -e ".[dev,docs]"
 
 Python 3.10+ is supported.
 
-Python 3.10+ is supported.
-
 ## Core model
 
 ```text
@@ -118,8 +116,29 @@ booktx translate todo-next ./demo \
 ```
 
 This writes a todo file (not translations) under `translations/<profile>/todos/`.
-The agent reads the todo and loops `translate next -> fill -> insert -> validate`
-until complete or a stop condition occurs. Prefer batches over chapter-sized tasks.
+Continue bounded runs with:
+
+```bash
+booktx translate todo-status ./demo --profile de_gpt5_5 --latest
+booktx translate todo-resume ./demo --profile de_gpt5_5 --latest --format block
+booktx validate ./demo --profile de_gpt5_5 --fail-on-warnings
+```
+
+`--max-run-words` is advisory only: it tells the agent when to stop and report
+progress, but booktx does not hard-stop accepted work at that threshold. Prefer
+batches over chapter-sized tasks.
+
+After a chapter completes, use the `booktx context chapter-note` template
+printed by `booktx translate insert` instead of hand-editing `context.md`.
+
+## Final release output
+
+For final release output, prefer:
+
+```bash
+booktx validate ./demo --profile de_gpt5_5 --fail-on-warnings
+booktx build ./demo --profile de_gpt5_5 --require-complete
+```
 
 ## Multiple profiles
 

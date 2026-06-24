@@ -4,10 +4,10 @@ The translation contract in :mod:`booktx.models` preserves JSON structure,
 record ids, placeholders, tags, and protected names. It does **not** preserve
 translation *intent*: style, world terminology, and user-specific decisions.
 
-This module owns the machine-readable translation context
-(``.booktx/context.json``) and the rendered human/agent view
-(``.booktx/context.md``). ``context.json`` is authoritative; ``context.md`` is
-always regenerated from it.
+This module owns the profile-local machine-readable translation context
+(``translations/<profile>/context.json```) and the rendered human/agent view
+(``translations/<profile>/context.md```) for normal profile workflows.
+``context.json`` is authoritative; ``context.md`` is always regenerated from it.
 
 The context is built deterministically and locally. It never calls an LLM, never
 makes a network request, and never approves a glossary target on its own.
@@ -177,7 +177,7 @@ def load_context(project: Project) -> TranslationContext | None:
 
 
 def write_context(project: Project, context: TranslationContext) -> None:
-    """Persist ``context`` to ``.booktx/context.json``."""
+    """Persist ``context`` to the active profile's ``context.json``."""
     from booktx.io_utils import write_json_text_atomic
 
     write_json_text_atomic(
@@ -503,7 +503,7 @@ def render_context_markdown(context: TranslationContext) -> str:
 
 
 def write_context_markdown(project: Project, context: TranslationContext) -> None:
-    """Render ``context`` to ``.booktx/context.md``."""
+    """Render ``context`` to the active profile's ``context.md``."""
     from booktx.io_utils import write_text_atomic
 
     write_text_atomic(

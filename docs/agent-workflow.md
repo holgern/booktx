@@ -47,8 +47,8 @@ booktx translate insert . \
 ## 6. Validate and build
 
 ```bash
-booktx validate . --profile de_gpt5_5
-booktx build . --profile de_gpt5_5
+booktx validate . --profile de_gpt5_5 --fail-on-warnings
+booktx build . --profile de_gpt5_5 --require-complete
 ```
 
 ## 7. Longer bounded runs
@@ -58,11 +58,16 @@ chapter task. Create a todo instead:
 
 ```bash
 booktx translate todo-next . --profile de_gpt5_5 --chapters 3 --batch-words 800 --write
+booktx translate todo-status . --profile de_gpt5_5 --latest
+booktx translate todo-resume . --profile de_gpt5_5 --latest --format block
 ```
 
-Read the generated todo markdown and follow its loop. Stop only when the todo
-goal is complete or a stop condition occurs. Report partial progress if context
-budget runs low.
+Read the generated todo markdown and follow its loop. After each completed
+chapter, fill the `booktx context chapter-note` template printed by
+`booktx translate insert`; do not hand-edit `context.md` for chapter notes.
+Stop when the todo goal is complete, when `todo-status` says it is complete, or
+when a stop condition occurs. Report partial progress if conversation or tool
+budget runs low. `--max-run-words` is advisory only.
 
 ## Guardrails
 

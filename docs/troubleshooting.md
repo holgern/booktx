@@ -56,6 +56,17 @@ booktx translate next ./book --profile PROFILE --format block
 
 and submit the newly generated ingest file.
 
+## `context_render_drift`
+
+`context.md` differs from `context.json`. If the difference is chapter notes
+you want to keep, run:
+
+```bash
+booktx context import-md ./book --profile PROFILE --write
+```
+
+Prefer `booktx context chapter-note` for future chapter summaries.
+
 ## Source drift after extraction
 
 If the source file changed since the last `booktx extract`, the recorded
@@ -67,6 +78,48 @@ booktx extract ./book
 ```
 
 Then re-request tasks against the refreshed source.
+
+## Validation warnings during bounded todo runs
+
+Bounded todo runs should use:
+
+```bash
+booktx validate ./book --profile PROFILE --fail-on-warnings
+```
+
+Warnings remain non-fatal for plain `booktx validate`, but `todo-resume` and
+the generated todo workflow expect warnings to be cleared before continuing.
+
+## Latest todo is incomplete
+
+Inspect the live bounded-run state before requesting more work:
+
+```bash
+booktx translate todo-status ./book --profile PROFILE --latest
+booktx translate todo-resume ./book --profile PROFILE --latest --format block
+```
+
+If `todo-status` reports overlap ambiguity, re-run with `--todo-id TODO`.
+
+## Todo planned chapters are already complete
+
+When the planned chapter set is finished, `booktx translate todo-resume` stops
+instead of issuing a task for the next chapter. Start a new bounded run if you
+want more work:
+
+```bash
+booktx translate todo-next ./book --profile PROFILE --chapters 3 --batch-words 800 --write
+```
+
+## Task created outside a todo
+
+If a user asked to continue a bounded run but the current task was created with
+plain `booktx translate next`, switch back to the todo controller:
+
+```bash
+booktx translate todo-status ./book --profile PROFILE --latest
+booktx translate todo-resume ./book --profile PROFILE --latest --format block
+```
 
 ## Context is not ready
 

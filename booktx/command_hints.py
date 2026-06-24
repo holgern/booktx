@@ -17,6 +17,9 @@ __all__ = [
     "profile_option_fragment",
     "translate_next_command",
     "translate_insert_command",
+    "translate_todo_status_command",
+    "translate_todo_resume_command",
+    "context_chapter_note_command",
     "validate_command",
     "build_command",
 ]
@@ -90,11 +93,58 @@ def translate_insert_command(
     )
 
 
-def validate_command(project: Project) -> str:
+def translate_todo_status_command(
+    project: Project,
+    *,
+    todo_id: str | None = None,
+    latest: bool = False,
+) -> str:
+    """Build a ``booktx translate todo-status`` command string."""
+    selector = f" --todo-id {todo_id}" if todo_id else " --latest" if latest else ""
+    return f"booktx translate todo-status .{profile_option_fragment(project)}{selector}"
+
+
+def translate_todo_resume_command(
+    project: Project,
+    *,
+    todo_id: str | None = None,
+    latest: bool = False,
+    output_format: str = "block",
+) -> str:
+    """Build a ``booktx translate todo-resume`` command string."""
+    selector = f" --todo-id {todo_id}" if todo_id else " --latest" if latest else ""
+    return (
+        f"booktx translate todo-resume ."
+        f"{profile_option_fragment(project)}{selector} --format {output_format}"
+    )
+
+
+def context_chapter_note_command(
+    project: Project,
+    *,
+    chapter_id: str,
+    title: str = "<TITLE>",
+    source_summary: str = "<SOURCE_SUMMARY>",
+    translation_summary: str = "<TRANSLATION_SUMMARY>",
+    decision: str = "<DECISION>",
+) -> str:
+    """Build a template ``booktx context chapter-note`` command string."""
+    return (
+        f"booktx context chapter-note .{profile_option_fragment(project)} {chapter_id}"
+        f' --title "{title}"'
+        f' --source-summary "{source_summary}"'
+        f' --translation-summary "{translation_summary}"'
+        f' --decision "{decision}"'
+    )
+
+
+def validate_command(project: Project, *, fail_on_warnings: bool = False) -> str:
     """Build a ``booktx validate`` command string."""
-    return f"booktx validate .{profile_option_fragment(project)}"
+    strict = " --fail-on-warnings" if fail_on_warnings else ""
+    return f"booktx validate .{profile_option_fragment(project)}{strict}"
 
 
-def build_command(project: Project) -> str:
+def build_command(project: Project, *, require_complete: bool = False) -> str:
     """Build a ``booktx build`` command string."""
-    return f"booktx build .{profile_option_fragment(project)}"
+    strict = " --require-complete" if require_complete else ""
+    return f"booktx build .{profile_option_fragment(project)}{strict}"

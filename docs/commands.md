@@ -73,15 +73,21 @@ booktx translate export ./book --profile de_gpt5_5
 ```bash
 booktx translate todo-next ./book --profile de_gpt5_5 --chapters 3 --batch-words 800 --write
 booktx translate todo-next ./book --profile de_gpt5_5 --chapters 3 --batch-words 800 --max-run-words 12000 --write --json
+booktx translate todo-status ./book --profile de_gpt5_5 --latest
+booktx translate todo-status ./book --profile de_gpt5_5 --todo-id TODO --json
+booktx translate todo-resume ./book --profile de_gpt5_5 --latest --format block
+booktx translate todo-resume ./book --profile de_gpt5_5 --todo-id TODO --format block
 booktx translate todo-next ./book --profile de_gpt5_5 --chapters 5 --batch-words 800 --skip-current --write
 booktx translate todo-next ./book --profile de_gpt5_5 --chapters 3 --start-chapter 0017 --batch-words 800 --write
 ```
 
 Creates a durable todo under `translations/<profile>/todos/` that describes the
-bounded run: chapters to complete, per-task word budget, run safety budget, and
-stop conditions. The agent reads the todo markdown and follows its loop until
+bounded run: chapters to complete, per-task word budget, advisory run budget,
+and stop conditions. The agent reads the todo markdown and follows
+`todo-status -> todo-resume -> insert -> validate --fail-on-warnings` until
 complete or a stop condition fires. This is NOT a translation submission; the
 agent still fills ingest files and runs `translate insert` for each batch.
+`--max-run-words` is advisory only.
 
 ## Version commands
 
@@ -100,8 +106,13 @@ booktx version fork-context ./book --profile de_gpt5_5 --note "Manual context sp
 
 ```bash
 booktx validate ./book --profile de_gpt5_5
+booktx validate ./book --profile de_gpt5_5 --fail-on-warnings
 booktx build ./book --profile de_gpt5_5
+booktx build ./book --profile de_gpt5_5 --require-complete
 ```
+
+`--fail-on-warnings` keeps default validate behavior unchanged unless you opt
+into warning-fatal automation.
 
 Outputs land under:
 

@@ -143,6 +143,15 @@ def test_validate_cli_passes_with_warning_for_warn_enforcement(tmp_path: Path):
     assert "warnings=2" in res.output
 
 
+def test_validate_cli_fail_on_warnings_exits_nonzero(tmp_path: Path):
+    proj_path = _write_project(tmp_path)
+    _write_context(proj_path, enforce="warn")
+    res = runner.invoke(app, ["validate", str(proj_path), "--fail-on-warnings"])
+    assert res.exit_code == 1, res.output
+    assert "forbidden_term_used" in res.output
+    assert "warnings=2" in res.output
+
+
 # --- context render drift diagnostics --------------------------------------
 
 _MD_WITH_0006 = "## Chapter notes\n\n### 0006 — TWO\n- Decision: keep Apt\n"

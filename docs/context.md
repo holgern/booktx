@@ -14,6 +14,7 @@ translations/<profile>/context.md
 3. Treat `context.json` as authoritative and `context.md` as rendered.
 4. Persist chapter notes with `booktx context chapter-note`, never by hand-editing `context.md`.
 5. Context is not shared across languages or model experiments.
+6. If `context.md` already contains manual chapter notes, run `booktx context import-md ./book --profile PROFILE --write` before validating or rendering again.
 
 ## Typical workflow
 

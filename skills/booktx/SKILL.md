@@ -83,6 +83,10 @@ Stop before translating if `context.json` is missing or not ready. Initialize or
 update context with `booktx context ...` commands, not by directly editing
 `context.json`.
 
+Do not hand-edit `context.md` for chapter notes during normal operation. Use
+`booktx context chapter-note`. If `context.md` already has manual notes, run
+`booktx context import-md . --profile PROFILE --write` before validating.
+
 Typical context initialization:
 
 ```bash
@@ -154,8 +158,12 @@ Output is written under:
 translations/PROFILE/output/
 ```
 
-For a complete final build, use the project option that requires complete
-translations if available in the current CLI help.
+For a complete final build:
+
+```bash
+booktx validate . --profile PROFILE --fail-on-warnings
+booktx build . --profile PROFILE --require-complete
+```
 
 ## Versions
 
@@ -201,6 +209,8 @@ chapter task. Create a todo:
 
 ```bash
 booktx translate todo-next . --profile PROFILE --chapters 3 --batch-words 800 --write
+booktx translate todo-status . --profile PROFILE --latest
+booktx translate todo-resume . --profile PROFILE --latest --format block
 ```
 
 Read the generated todo markdown and follow its loop. Stop only when the todo
@@ -208,7 +218,11 @@ goal is complete or a stop condition occurs. Report partial progress if context
 budget runs low.
 
 The todo files are run-control artifacts under `translations/<profile>/todos/`.
-They are NOT translation submissions.
+They are NOT translation submissions. `--max-run-words` is advisory only.
+
+When a user says "continue with two more chapters", continue the latest
+incomplete todo if one exists; otherwise create a new todo. Do not silently
+start from the wrong profile or outside the todo's planned chapters.
 Do not use old profile-state paths in a profile project:
 
 ```text
