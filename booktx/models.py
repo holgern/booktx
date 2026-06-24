@@ -601,6 +601,10 @@ class ProfileConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: Literal[1] = 1
+    kind: Literal["translation", "pass-through"] = Field(
+        default="translation",
+        description="Profile kind: 'translation' or 'pass-through' fixture.",
+    )
     profile: str
     source_language: str = "en"
     target_language: str

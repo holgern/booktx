@@ -17,6 +17,7 @@ from booktx.config import (
     init_source_project,
     load_identity,
     load_names,
+    load_profile_config,
     load_project,
     load_source_project,
     load_translation_store,
@@ -438,3 +439,19 @@ def test_load_project_rejects_ambiguous_profiles_when_required(tmp_path: Path):
 
     with pytest.raises(BooktxError, match="multiple translation profiles exist"):
         load_project(proj.root, require_profile=True)
+
+
+def test_profile_config_kind_roundtrips_through_toml(tmp_path: Path):
+    proj = init_source_project(tmp_path / "book")
+    create_profile(
+        proj.root,
+        "pt",
+        target_language="en",
+        kind="pass-through",
+    )
+
+    cfg = load_profile_config(proj.root, "pt")
+    assert cfg.kind == "pass-through"
+    # Normal profiles continue to serialize as translation.
+    create_profile(proj.root, "de_default", target_language="de")
+    assert load_profile_config(proj.root, "de_default").kind == "translation"

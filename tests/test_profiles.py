@@ -340,6 +340,7 @@ def test_profile_show_uses_identity_json_after_model_set(tmp_path: Path):
     assert show.exit_code == 0, show.output
     payload = json.loads(show.output)
     assert payload["model"] == "codex-openai/gpt-5.5@low"
+    assert payload["kind"] == "translation"
     assert payload["actor"] == "user:unknown"
 
     who = runner.invoke(
@@ -383,6 +384,7 @@ def test_profile_list_uses_identity_json_after_model_set(tmp_path: Path):
     assert overview["profiles"]
     item = next(p for p in overview["profiles"] if p["profile"] == "de_gpt5_5")
     assert item["model"] == "glm-5.2"
+    assert item["kind"] == "translation"
 
 
 def test_profile_create_still_initializes_all_standard_dirs(tmp_path: Path):

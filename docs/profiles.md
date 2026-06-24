@@ -85,6 +85,25 @@ Create a new profile whenever you want a hard isolation boundary:
 Do **not** create a new profile for a routine re-translation of the same
 language/model/context; that is a _version_, not a profile.
 
+## Pass-through profiles
+
+A pass-through profile is a **generated validation fixture**, not a translation.
+Its target language equals the source language, and every translated record's
+target is set to the source text. Use it to verify that extraction and EPUB
+reconstruction include all content before involving a translator.
+
+- Pass-through profiles are generated fixtures; they must not be used for
+  human or LLM translation.
+- They use the source language as the target language.
+- They are isolated under `translations/<profile>/`, just like any profile, so
+  they cannot contaminate real translation profiles.
+- `booktx pass-through` requires an explicit `--profile` and refuses to run
+  against a profile whose `kind` is not `pass-through`.
+
+A non-empty translation store can silently override generated chunks, so
+pass-through refuses a profile with store records unless you pass
+`--clear-store` (which rewrites only `translation-store.json`).
+
 ## What stays a version?
 
 Versions live _inside_ a profile. Two profiles may both contain version `1.1`;

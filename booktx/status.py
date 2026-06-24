@@ -190,6 +190,7 @@ class ProfileOverview(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     profile: str
+    kind: str = "translation"
     target_language: str
     target_locale: str = ""
     model: str = ""
@@ -578,6 +579,7 @@ def build_profiles_overview(project: Project) -> ProfilesOverview:
         items.append(
             ProfileOverview(
                 profile=profile_name,
+                kind=profile_cfg.kind,
                 target_language=profile_cfg.target_language,
                 target_locale=profile_cfg.target_locale or profile_cfg.target_language,
                 # The live identity lives in translations/<profile>/identity.json;

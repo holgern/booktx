@@ -74,6 +74,24 @@ If the source changed, rebuild fails. Re-run extraction after intentional source
 
 The intended gold standard is that identity/no-op EPUB builds preserve the extracted source EPUB bytes. Tests cover no-translation and identity-translation paths.
 
+## Reconstruction validation
+
+To verify that extraction and reconstruction include all content, create a
+pass-through profile that rebuilds the EPUB from source-as-target chunks:
+
+```bash
+booktx extract ./book
+booktx pass-through ./book --profile passthrough_en --create
+```
+
+Then compare the source and rebuilt output byte-for-byte (for the fixture) or
+with an EPUB diff viewer (for real books):
+
+```text
+source/book.epub
+translations/passthrough_en/output/book.en.epub
+```
+
 ## Changed block tradeoff
 
 The current EPUB rebuild path replaces changed blocks with escaped translated text for the whole block body.

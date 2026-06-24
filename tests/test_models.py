@@ -20,6 +20,7 @@ from booktx.models import (
     ManifestSource,
     NamesFile,
     Placeholder,
+    ProfileConfig,
     ProjectConfig,
     Record,
     StoredTranslationRecord,
@@ -426,6 +427,21 @@ def test_project_config_rejects_unknown_format():
             source_file="book.pdf",
             format="pdf",  # unsupported in v1
         )
+
+
+def test_profile_config_kind_defaults_and_validation():
+    cfg = ProfileConfig(profile="de_default", target_language="de")
+    assert cfg.kind == "translation"
+
+    pt = ProfileConfig(profile="pt", target_language="en", kind="pass-through")
+    assert pt.kind == "pass-through"
+
+    with pytest.raises(ValidationError):
+        ProfileConfig(profile="pt", target_language="en", kind="bogus")
+
+    # A legacy config.toml without `kind` still loads.
+    legacy = ProfileConfig.model_validate({"profile": "de", "target_language": "de"})
+    assert legacy.kind == "translation"
 
 
 def test_names_file_default():

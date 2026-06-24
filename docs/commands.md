@@ -24,6 +24,7 @@ booktx profile show ./book de_gpt5_5
 booktx profile select ./book de_gpt5_5
 booktx profile compare ./book --profiles de_gpt5_5,de_glm_5_2 --record 0001-000001
 booktx profile migrate-current ./book de_gpt5_5 --select
+booktx profile create-pass-through ./book passthrough_en --select
 ```
 
 ## Context commands
@@ -125,6 +126,21 @@ Outputs land under:
 translations/<profile>/reports/
 translations/<profile>/output/
 ```
+
+## Pass-through validation
+
+`booktx pass-through` generates source-as-target translated chunks from the
+extracted source chunks, validates complete coverage, and rebuilds the output.
+It is a reconstruction fixture, not a translation:
+
+```bash
+booktx pass-through ./book --profile passthrough_en --create
+booktx pass-through ./book --profile passthrough_en --no-build
+```
+
+`--profile` is always required. Use `--clear-store` only when reusing a
+pass-through profile that has stray store records. Compare the rebuilt output
+against the source with an EPUB diff viewer.
 
 ## JSON output for machine consumers
 

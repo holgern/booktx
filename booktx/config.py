@@ -747,6 +747,7 @@ def create_profile(
     model: str | None = None,
     output_filename: str | None = None,
     select: bool = False,
+    kind: Literal["translation", "pass-through"] = "translation",
 ) -> Project:
     validate_profile_name(profile_name)
     source_project = load_source_project(root)
@@ -783,6 +784,7 @@ def create_profile(
     )
     cfg = ProfileConfig(
         profile=profile_name,
+        kind=kind,
         source_language=source_project.source_config.source_language,
         target_language=target_language,
         target_locale=target_locale or target_language,

@@ -115,6 +115,10 @@ from booktx.models import (
     TranslationStore,
     TranslationTask,
 )
+from booktx.pass_through import (
+    ensure_pass_through_profile,
+    run_pass_through,
+)
 from booktx.progress import (
     SourceRecordView,
     load_source_chunks,
@@ -648,7 +652,8 @@ def _render_profiles_overview_human(overview: ProfilesOverview) -> None:
             else "translated=0/0"
         )
         console.print(
-            f"  {marker} {item.profile}   target={item.target_locale or item.target_language}  "
+            f"  {marker} {item.profile}   kind={item.kind}  "
+            f"target={item.target_locale or item.target_language}  "
             f"model={item.model or 'human'}  {coverage}"
         )
     if overview.active_profile:
@@ -678,6 +683,7 @@ def _profile_detail_payload(project_dir: Path, profile_name: str) -> dict[str, A
         chapters_total = bundle.snapshot.totals.chapters_total
     return {
         "profile": profile_name,
+        "kind": profile_cfg.kind,
         "path": _project_relative(profile_project.profile_dir, profile_project.root)
         if profile_project.profile_dir is not None
         else "",
@@ -783,6 +789,7 @@ def profile_show_cmd(
         console.print_json(json.dumps(payload, ensure_ascii=False))
         return
     console.print(f"profile: {payload['profile']}")
+    console.print(f"kind: {payload['kind']}")
     console.print(f"path: {payload['path']}")
     console.print(f"target: {payload['target_locale']}")
     console.print(f"model: {payload['model']}")
@@ -914,6 +921,39 @@ def profile_migrate_current_cmd(
     console.print(
         f"next: booktx translate next {project_dir} --profile {profile_name} --unit batch --max-words 500 --format block"
     )
+
+
+@profile_app.command(name="create-pass-through")
+def profile_create_pass_through_cmd(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile_name: str = typer.Argument(..., help="Pass-through profile name."),
+    output_filename: str | None = typer.Option(
+        None, "--output-filename", help="Optional output filename override."
+    ),
+    select: bool = typer.Option(False, "--select", help="Select the created profile."),
+) -> None:
+    """Create a pass-through profile whose target language equals the source language."""
+    try:
+        source_project = load_source_project(project_dir)
+        target = source_project.source_config.source_language
+        project = create_profile(
+            project_dir,
+            profile_name,
+            target_language=target,
+            target_locale=target,
+            actor="booktx:pass-through",
+            harness="booktx",
+            model="booktx/pass-through",
+            output_filename=output_filename,
+            select=select,
+            kind="pass-through",
+        )
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
+        return
+    console.print(f"created pass-through profile: {project.profile}")
+    if select:
+        console.print(f"selected active profile: {project.profile}")
 
 
 # --- context -----------------------------------------------------------------
@@ -3560,6 +3600,104 @@ def build(
             f"{_changed_entry_count(changed_entries)} "
             f"replacements={result.report.get('replacement_count', 0)} "
             f"unresolved_tokens={result.report.get('unresolved_token_count', 0)}"
+        )
+
+
+@app.command(name="pass-through")
+def pass_through_cmd(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str = typer.Option(..., "--profile", help="Pass-through profile name."),
+    create: bool = typer.Option(
+        False, "--create", help="Create the pass-through profile if missing."
+    ),
+    select: bool = typer.Option(False, "--select", help="Select the created profile."),
+    output_filename: str | None = typer.Option(
+        None, "--output-filename", help="Output filename for a newly created profile."
+    ),
+    force: bool = typer.Option(
+        True, "--force/--no-force", help="Refresh existing generated translated chunks."
+    ),
+    prune_stale: bool = typer.Option(
+        True,
+        "--prune-stale/--keep-stale",
+        help="Remove stale generated translated chunks.",
+    ),
+    clear_store: bool = typer.Option(
+        False,
+        "--clear-store",
+        help="Clear store records that would override generated chunks.",
+    ),
+    no_build: bool = typer.Option(
+        False, "--no-build", help="Only generate and validate translated chunks."
+    ),
+    allow_warnings: bool = typer.Option(
+        False, "--allow-warnings", help="Do not fail on validation warnings."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    """Generate identity translated chunks, validate coverage, and rebuild output.
+
+    This produces a source-as-target reconstruction fixture. It is not a real
+    translation: each record target equals its source text. Compare the output
+    against the source with a diff viewer to detect reconstruction drift.
+    """
+    try:
+        proj = ensure_pass_through_profile(
+            project_dir,
+            profile,
+            create=create,
+            select=select,
+            output_filename=output_filename,
+        )
+        result = run_pass_through(
+            proj,
+            force=force,
+            prune_stale=prune_stale,
+            clear_store=clear_store,
+            build=not no_build,
+            allow_warnings=allow_warnings,
+        )
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
+        return
+    except BuildError as exc:
+        _die(str(exc))
+        return
+
+    payload = {
+        "profile": result.profile,
+        "chunks_written": result.chunks_written,
+        "records_written": result.records_written,
+        "stale_removed": result.stale_removed,
+        "translated_dir": str(result.translated_dir),
+        "validation": {
+            "errors": len(result.validation_report.errors),
+            "warnings": len(result.validation_report.warnings),
+            "missing": result.validation_report.chunks_missing_translation,
+        },
+        "output_path": str(result.build_result.output_path)
+        if result.build_result
+        else None,
+        "format": result.build_result.format if result.build_result else None,
+    }
+    if as_json:
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
+
+    console.print(f"pass-through profile: {result.profile}")
+    console.print(f"translated chunks: {result.chunks_written}")
+    console.print(f"translated records: {result.records_written}")
+    console.print(f"removed stale translated chunks: {result.stale_removed}")
+    console.print(
+        "validation: passed "
+        f"errors={len(result.validation_report.errors)} "
+        f"warnings={len(result.validation_report.warnings)} "
+        f"missing={result.validation_report.chunks_missing_translation}"
+    )
+    if result.build_result is not None:
+        console.print(
+            f"[green]Built[/green] {result.build_result.format} -> "
+            f"{result.build_result.output_path}"
         )
 
 

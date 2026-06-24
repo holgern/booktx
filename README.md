@@ -145,6 +145,24 @@ booktx validate ./demo --profile de_gpt5_5 --fail-on-warnings
 booktx build ./demo --profile de_gpt5_5 --require-complete
 ```
 
+## Pass-through validation profile
+
+Use a pass-through profile to verify that extraction and EPUB reconstruction
+include all text before doing real translation:
+
+```bash
+booktx extract ./demo
+booktx pass-through ./demo --profile passthrough_en --create
+```
+
+This writes source-as-target translated chunks under
+`translations/passthrough_en/translated/`, validates complete coverage, and
+builds `translations/passthrough_en/output/...`. Compare the output EPUB against
+`source/book.epub` with an EPUB diff viewer. The included EPUB fixture should be
+byte-identical, but real-world EPUBs should be treated as reconstruction checks,
+not guaranteed byte-for-byte copies. Never run pass-through against a real
+translation profile.
+
 ## Multiple profiles
 
 Create one profile per target language, model experiment, or hard-isolated

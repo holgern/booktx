@@ -167,6 +167,18 @@ booktx validate . --profile PROFILE --fail-on-warnings
 booktx build . --profile PROFILE --require-complete
 ```
 
+## Pass-through reconstruction check
+
+When the user asks to verify that EPUB reconstruction includes all content,
+create or refresh a pass-through profile instead of translating manually:
+
+```bash
+booktx pass-through . --profile passthrough_en --create
+```
+
+Never run pass-through against a real translation profile. Pass-through writes
+generated source-as-target chunks under `translations/<profile>/translated/`.
+
 ## Versions
 
 Versions are profile-local. Two profiles may both contain version `1.1`; these
