@@ -67,7 +67,7 @@ __all__ = [
 
 #: Severity ordering for reporting.
 SEVERITY_ORDER = ("info", "warn", "error")
-SUPPORTED_SOURCE_CHUNK_SCHEMA_VERSIONS = {2}
+SUPPORTED_SOURCE_CHUNK_SCHEMA_VERSIONS = {2, 3}
 
 
 class Severity:
@@ -321,6 +321,28 @@ def _check_protected_names_preserved(
     return findings
 
 
+def _check_inline_xhtml(
+    source_rec: Record, target_rec: TranslatedRecord, chunk_id: str
+) -> list[Finding]:
+    if source_rec.source_markup != "epub-inline-xhtml:v1":
+        return []
+    from booktx.epub_inline_xhtml import sanitize_target_fragment
+
+    sanitized = sanitize_target_fragment(target_rec.target, source_rec.source)
+    findings: list[Finding] = []
+    for issue in sanitized.issues:
+        findings.append(
+            Finding(
+                chunk_id=chunk_id,
+                severity=issue.severity,
+                rule=issue.rule,
+                message=issue.message,
+                record_id=target_rec.id,
+            )
+        )
+    return findings
+
+
 def validate_record_pair(
     source_rec: Record,
     target_rec: TranslatedRecord,
@@ -342,6 +364,7 @@ def validate_record_pair(
     findings.extend(_check_placeholders_preserved(source_rec, target_rec, chunk_id))
     findings.extend(_check_protected_names_preserved(source_rec, target_rec, chunk_id))
     findings.extend(_check_forbidden_terms(source_rec, target_rec, chunk_id, context))
+    findings.extend(_check_inline_xhtml(source_rec, target_rec, chunk_id))
     return findings
 
 

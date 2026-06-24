@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import zipfile
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from hashlib import sha256
 from html.parser import HTMLParser
 from pathlib import Path
@@ -12,7 +12,6 @@ from typing import Any
 
 from booktx.chunking import ProseSpan
 from booktx.models import EpubNavigationRef, EpubSpanRef, EpubTemplateData, Manifest
-from booktx.placeholders import protect_names
 
 EPUB_TEMPLATE_PIPELINE = "epub2text+text2epub"
 EPUB2TEXT_SCHEMA = "epub2text.structured.v1"
@@ -314,6 +313,25 @@ def structured_to_span_refs(
 ) -> tuple[list[ProseSpan], list[EpubSpanRef]]:
     """Build booktx spans plus ordered span refs from epub2text blocks."""
     raw_block_index = raw_block_index or build_raw_block_index(structured)
+    from booktx.epub_inline_xhtml import (
+        INLINE_XHTML_CODEC,
+        inline_skeleton,
+        protect_names_in_xhtml_text_nodes,
+    )
+
+    # epub2text stores sentence-level segments globally on the structured
+    # extraction, keyed by block id. TextBlock has no ``segments`` attribute, so
+    # looking it up on the block always missed and booktx fell back to the full
+    # block XHTML fragment. Consume the upstream segments here so sentence
+    # detection already happened on visible block text.
+    segments_by_block_id: dict[str, list[Any]] = {}
+    for segment in getattr(structured, "segments", []) or []:
+        segments_by_block_id.setdefault(segment.block_id, []).append(segment)
+    for items in segments_by_block_id.values():
+        items.sort(
+            key=lambda segment: (segment.block_text_start, segment.block_text_end)
+        )
+
     spans: list[ProseSpan] = []
     span_refs: list[EpubSpanRef] = []
 
@@ -321,33 +339,54 @@ def structured_to_span_refs(
         if not block.text or not block.text.strip():
             continue
 
-        protected = protect_names(block.text, protected_terms)
-        names = [placeholder.original for placeholder in protected.placeholders]
-        span_index = len(span_refs)
+        block_fragment = (
+            getattr(getattr(block, "xhtml_fragment", None), "xhtml", "") or block.text
+        )
+        source_view_sha256 = sha256(block_fragment.encode("utf-8")).hexdigest()
+        segment_items = segments_by_block_id.get(block.id) or [block]
+        block_has_upstream_segments = block.id in segments_by_block_id
+        first_span_index = len(spans)
         raw_block = raw_block_index[block.id]
-
-        spans.append(
-            ProseSpan(
-                text=protected.text,
-                placeholders=protected.placeholders,
-                protected_terms=names,
+        for segment in segment_items:
+            segment_text = getattr(segment, "text", block.text)
+            segment_fragment = (
+                getattr(getattr(segment, "xhtml_fragment", None), "xhtml", "")
+                or segment_text
             )
-        )
-        span_refs.append(
-            EpubSpanRef(
-                span_index=span_index,
-                block_id=block.id,
-                document_href=block.document_href,
-                spine_index=block.spine_index,
-                tag_name=block.tag_name,
-                source_text=block.text,
-                source_text_sha256=sha256(block.text.encode("utf-8")).hexdigest(),
-                source_char_start=raw_block.inner_start,
-                source_char_end=raw_block.inner_end,
-                placeholders=protected.placeholders,
-                protected_terms=names,
+            if not segment_text or not str(segment_text).strip():
+                continue
+            protected_text, record_placeholders = protect_names_in_xhtml_text_nodes(
+                str(segment_fragment), protected_terms
             )
+            names = [placeholder.original for placeholder in record_placeholders]
+            spans.append(
+                ProseSpan(
+                    text=protected_text,
+                    placeholders=record_placeholders,
+                    protected_terms=names,
+                    presegmented=block_has_upstream_segments,
+                )
+            )
+        span_ref = EpubSpanRef(
+            span_index=first_span_index,
+            block_id=block.id,
+            document_href=block.document_href,
+            spine_index=block.spine_index,
+            tag_name=block.tag_name,
+            source_text=block.text,
+            source_text_sha256=sha256(block.text.encode("utf-8")).hexdigest(),
+            source_char_start=raw_block.inner_start,
+            source_char_end=raw_block.inner_end,
+            placeholders=[],
+            protected_terms=[],
+            source_view_text=str(block_fragment),
+            source_view_sha256=source_view_sha256,
+            source_markup=INLINE_XHTML_CODEC,
+            inline_skeleton=[
+                asdict(token) for token in inline_skeleton(str(block_fragment))
+            ],
         )
+        span_refs.append(span_ref)
 
     return spans, span_refs
 

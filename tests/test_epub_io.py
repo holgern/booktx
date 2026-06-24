@@ -8,6 +8,7 @@ import pytest
 from ebooklib import epub
 from text2epub.validation import sha256_path
 
+from booktx.chunking import spans_to_chunks
 from booktx.epub_io import build_epub, extract_epub, read_epub
 from booktx.placeholders import restore
 
@@ -43,6 +44,23 @@ def _make_epub(path: str) -> None:
     book.add_item(nav)
     book.add_item(epub.EpubNcx())
     book.toc = (ch1, ch2)
+    epub.write_epub(str(path), book, {})
+
+
+def _make_epub_with_body(path, body) -> None:
+    book = epub.EpubBook()
+    book.set_identifier("body-book")
+    book.set_title("Body Book")
+    book.set_language("en")
+    chapter = epub.EpubHtml(title="Chapter", file_name="chap.xhtml", lang="en")
+    chapter.content = (
+        '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Chapter</title></head>'
+        f"<body>{body}</body></html>"
+    )
+    book.add_item(chapter)
+    book.add_item(epub.EpubNav())
+    book.add_item(epub.EpubNcx())
+    book.spine = ["nav", chapter]
     epub.write_epub(str(path), book, {})
 
 
@@ -119,7 +137,7 @@ def test_extract_reads_spine_documents_without_tag_placeholders(tmp_path):
     joined = " ".join(span.text for span in extraction.spans)
     assert "Chapter One" in joined
     assert "Chapter Two" in joined
-    assert "Alice met Bob. A second sentence." in joined
+    assert "Alice met <strong>Bob</strong>. A second sentence." in joined
     assert "__TAG_" not in joined
     assert "__SPANTX_" not in joined
     assert "do_not_translate" not in joined
@@ -176,7 +194,7 @@ def test_extract_title_like_xhtml_uses_document_order(tmp_path):
         "Subtitle",
         "Author",
         "Centered",
-        "Book Three",
+        "Book <i>Three</i>",
         "Logo",
     ]
 
@@ -259,12 +277,14 @@ def test_build_changed_translation_has_no_token_leaks(tmp_path):
 
     extraction = extract_epub(str(epub_path))
     replacements = [restore(span.text, span.placeholders) for span in extraction.spans]
-    paragraph_index = next(
-        idx
-        for idx, span_ref in enumerate(extraction.span_refs)
+    paragraph_ref = next(
+        span_ref
+        for span_ref in extraction.span_refs
         if span_ref.source_text == "Alice met Bob. A second sentence."
     )
-    replacements[paragraph_index] = "Hallo Welt."
+    # The paragraph block is now segmented into sentence-level spans. Rewrite
+    # the span that carries the inline <strong> (the block's first sentence).
+    replacements[paragraph_ref.span_index] = "Hallo <strong>Welt</strong>."
 
     build_epub(str(epub_path), str(out_path), extraction, replacements)
 
@@ -274,7 +294,7 @@ def test_build_changed_translation_has_no_token_leaks(tmp_path):
         )
         ch1 = archive.read(ch1_name).decode("utf-8")
 
-    assert "Hallo Welt." in ch1
+    assert "Hallo <strong>Welt</strong>." in ch1
     assert "<strong>Bob</strong>" not in ch1
     assert "__TAG_" not in ch1
     assert "__NAME_" not in ch1
@@ -284,3 +304,56 @@ def test_build_changed_translation_has_no_token_leaks(tmp_path):
 def test_extract_missing_file(tmp_path):
     with pytest.raises(FileNotFoundError):
         extract_epub(str(tmp_path / "nope.epub"))
+
+
+def test_extract_epub_uses_epub2text_segments_before_inline_xhtml_chunking(tmp_path):
+    epub_path = tmp_path / "book.epub"
+    _make_epub_with_body(
+        epub_path,
+        "<p>He nodded slowly. "
+        "<em>I can\u2019t force her, for all that I need her.</em> "
+        "Perhaps Tisamon would have more luck in persuading her.</p>",
+    )
+
+    extraction = extract_epub(str(epub_path))
+
+    texts = [span.text for span in extraction.spans]
+    assert texts == [
+        "He nodded slowly.",
+        "<em>I can\u2019t force her, for all that I need her.</em>",
+        "Perhaps Tisamon would have more luck in persuading her.",
+    ]
+    assert all(span.presegmented for span in extraction.spans)
+
+    chunks = spans_to_chunks(
+        extraction.spans,
+        source_language="en",
+        target_language="de",
+        chunk_size=50,
+    )
+    records = [record for chunk in chunks for record in chunk.records]
+    assert [record.source for record in records] == [
+        "He nodded slowly.",
+        "<em>I can\u2019t force her, for all that I need her.</em>",
+        "Perhaps Tisamon would have more luck in persuading her.",
+    ]
+    assert not any("He nodded slowly. <em>" in record.source for record in records)
+
+
+def test_build_identity_preserves_inline_tag_spanning_sentence_boundary(tmp_path):
+    epub_path = tmp_path / "book.epub"
+    out_path = tmp_path / "book.en.epub"
+    _make_epub_with_body(epub_path, "<p><em>First sentence. Second sentence.</em></p>")
+
+    extraction = extract_epub(str(epub_path))
+    restored = [restore(span.text, span.placeholders) for span in extraction.spans]
+    build_epub(str(epub_path), str(out_path), extraction, restored)
+
+    with read_epub(str(out_path)) as archive:
+        chap_name = next(
+            name for name in archive.namelist() if name.endswith("chap.xhtml")
+        )
+        rebuilt_xhtml = archive.read(chap_name).decode("utf-8")
+
+    assert "<em>First sentence. Second sentence.</em>" in rebuilt_xhtml
+    assert "<em>First sentence.</em> <em>Second sentence.</em>" not in rebuilt_xhtml

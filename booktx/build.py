@@ -179,39 +179,75 @@ def _build_epub(project: Project, *, require_complete: bool = False) -> BuildRes
 
     chunks = _load_chunks(project)
     translated = _load_translated(project)
-    target_stream = _build_target_stream(
-        chunks,
-        translated,
-        require_complete=require_complete,
-    )
-
-    from booktx.chunking import segment_spans
-
+    flat_records = [record for chunk in chunks for record in chunk.records]
+    translated_by_id = {
+        record.id: record for chunk in translated.values() for record in chunk.records
+    }
     replacements: list[Replacement] = []
-    pos = 0
-    for span_ref in epub_template.spans:
-        span = _prose_span_from_ref(span_ref)
-        count = len(segment_spans([span], language=manifest.source.source_language))
-        chunk_targets = target_stream[pos : pos + count]
-        if len(chunk_targets) != count:
+    from booktx.epub_inline_xhtml import sanitize_target_fragment
+
+    for idx, span_ref in enumerate(epub_template.spans):
+        next_span_index = (
+            epub_template.spans[idx + 1].span_index
+            if idx + 1 < len(epub_template.spans)
+            else None
+        )
+        source_records = [
+            record
+            for record in flat_records
+            if record.span_index is not None
+            and record.span_index >= span_ref.span_index
+            and (next_span_index is None or record.span_index < next_span_index)
+        ]
+        if not source_records:
             raise BuildError(
                 "Stored EPUB spans no longer align with the extracted chunk stream. "
                 "Re-run `booktx extract`."
             )
-        pos += count
+        chunk_targets: list[str] = []
+        source_fragments: list[str] = []
+        for record in source_records:
+            translated_record = translated_by_id.get(record.id)
+            if translated_record is None and require_complete:
+                raise BuildError("build requires complete translations")
+            chunk_targets.append(
+                translated_record.target if translated_record else record.source
+            )
+            source_fragments.append(record.source)
+        span = ProseSpan(
+            text=" ".join(source_fragments),
+            placeholders=[p for record in source_records for p in record.placeholders],
+            protected_terms=[
+                term for record in source_records for term in record.protected_terms
+            ],
+        )
+        joined_target = records_to_span_text(span, chunk_targets)
+        joined_source = records_to_span_text(span, source_fragments)
+        source_view = span_ref.source_view_text or span_ref.source_text
+        replacement_text = joined_target
+        allow_inline_xhtml = False
+        records_unchanged = all(
+            target == source
+            for target, source in zip(chunk_targets, source_fragments, strict=True)
+        )
+        if records_unchanged:
+            replacement_text = span_ref.source_text
+        elif joined_target == source_view:
+            replacement_text = span_ref.source_text
+        elif span_ref.source_markup == "epub-inline-xhtml:v1":
+            sanitized = sanitize_target_fragment(joined_target, joined_source)
+            errors = [issue for issue in sanitized.issues if issue.severity == "error"]
+            if errors:
+                raise BuildError(errors[0].message)
+            replacement_text = sanitized.xhtml
+            allow_inline_xhtml = True
         replacements.append(
             Replacement(
                 block_id=span_ref.block_id,
-                text=records_to_span_text(span, chunk_targets),
+                text=replacement_text,
                 expected_source=span_ref.source_text,
-                allow_inline_xhtml=False,
+                allow_inline_xhtml=allow_inline_xhtml,
             )
-        )
-
-    if pos != len(target_stream):
-        raise BuildError(
-            "Chunk records do not align with the stored EPUB span order. "
-            "Re-run `booktx extract`."
         )
 
     out_path = _output_path(project, source, suffix=".epub")

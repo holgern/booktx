@@ -103,6 +103,10 @@ class Record(BaseModel):
         default=None,
         description="Sentence index inside the original prose span",
     )
+    source_markup: Literal["plain:v1", "epub-inline-xhtml:v1"] = Field(
+        default="plain:v1",
+        description="Source markup contract for this record",
+    )
 
     @field_validator("source")
     @classmethod
@@ -110,6 +114,13 @@ class Record(BaseModel):
         if v is None:  # pragma: no cover - pydantic guards None already
             raise ValueError("source must not be null")
         return v
+
+    @model_serializer(mode="wrap")
+    def _omit_plain_source_markup(self, handler: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = handler(self)
+        if payload.get("source_markup") == "plain:v1":
+            payload.pop("source_markup", None)
+        return payload
 
 
 class TranslatedRecord(BaseModel):
@@ -685,6 +696,11 @@ class EpubSpanRef(BaseModel):
     source_char_end: int | None = None
     placeholders: list[Placeholder] = Field(default_factory=list)
     protected_terms: list[str] = Field(default_factory=list)
+
+    source_view_text: str = ""
+    source_view_sha256: str = ""
+    source_markup: str = "plain:v1"
+    inline_skeleton: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class EpubNavigationRef(BaseModel):

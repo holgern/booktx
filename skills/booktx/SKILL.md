@@ -315,3 +315,7 @@ Run `booktx status ./book --profile PROFILE` before continuing.
 Before translation, context must be approved by the user. Never answer initial context questions from your own judgment. You may recommend answers, but you must show the questions and recommendations to the user and wait for explicit approval or edited answers before writing them with `booktx context approve`. Do not run `booktx context approve`, `booktx context answer`, `booktx context render --write`, or `booktx context mark-ready` until the user has replied with approval or custom answers. Do not use `booktx context mark-ready --force` during normal translation work.
 
 Recommended prompt: I reviewed the source and recommend the following context answers. Please approve all, edit specific answers, or provide your own text.
+
+## EPUB inline XHTML records
+
+For EPUB records, the source may contain inline XHTML fragments such as `<em>`, `<strong>`, `<span class="...">`, `<a href="...">`, `<sup>`, `<sub>`, or `<code>`. Translate only the human-readable text nodes. Preserve the inline tags and attributes around the equivalent target-language phrase. Do not replace XHTML with Markdown markers. Do not invent new tags or attributes. Keep opaque tags such as `<code>...</code>` unchanged.

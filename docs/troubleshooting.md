@@ -176,3 +176,7 @@ classifier detected a schema/program error rather than a data validation error.
 Report this as a booktx bug with the full error message.
 
 Do not use `context mark-ready --force` during normal translation setup. If a legacy migration truly needs it, pass `--reason` and document the external approval.
+
+## EPUB inline XHTML validation failures
+
+If validation reports `inline_xhtml_preserved`, `inline_xhtml_no_new_attributes`, `inline_xhtml_no_block_tags`, or `inline_xhtml_opaque_preserved`, correct the target so it preserves the source inline XHTML skeleton. Use `booktx translate audit-inline ./book --profile PROFILE` to list active records that need review.

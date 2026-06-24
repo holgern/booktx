@@ -95,3 +95,9 @@ Submissions may also be supplied as JSON (`schema_version` 2). Example:
 The `profile` and `translation_version` fields must match the target profile
 and the durable task metadata, or `booktx translate insert` rejects the
 submission.
+
+## EPUB inline XHTML fragments
+
+EPUB source records may contain constrained inline XHTML fragments. Targets must preserve equivalent inline XHTML semantics. A target that drops `<em>`, `<strong>`, link, span-class, code, superscript/subscript, or other source inline semantics is invalid unless the user explicitly approves a semantic change.
+
+Translate only human-readable text nodes. Preserve tag names and attributes around the equivalent target-language phrase. Do not replace XHTML with Markdown markers. Do not invent block markup, comments, scripts, styles, or new attributes. Opaque inline elements such as `<code>...</code>` must stay unchanged.

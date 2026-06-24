@@ -38,6 +38,7 @@ from booktx.validate import (
     Severity,
     validate_chunk_pair,
     validate_project,
+    validate_record_pair,
     write_report,
 )
 
@@ -568,3 +569,113 @@ def test_new_epub_source_chunk_with_tag_tokens_fails(tmp_path: Path):
         for finding in report.findings
     )
     assert not report.passed
+
+
+def test_validate_errors_when_required_em_tag_missing():
+    source = Record(
+        id="0001-000001",
+        source="A <em>title</em> here.",
+        source_markup="epub-inline-xhtml:v1",
+    )
+    target = {"id": source.id, "target": "Ein Titel hier."}
+    from booktx.models import TranslatedRecord
+
+    findings = validate_record_pair(
+        source, TranslatedRecord.model_validate(target), "0001"
+    )
+
+    assert any(
+        f.rule == "inline_xhtml_preserved" and f.severity == Severity.ERROR
+        for f in findings
+    )
+
+
+def test_validate_accepts_translated_text_inside_preserved_em_tag():
+    source = Record(
+        id="0001-000001",
+        source="A <em>title</em> here.",
+        source_markup="epub-inline-xhtml:v1",
+    )
+    from booktx.models import TranslatedRecord
+
+    findings = validate_record_pair(
+        source,
+        TranslatedRecord(id=source.id, target="Ein <em>Titel</em> hier."),
+        "0001",
+    )
+
+    assert not [f for f in findings if f.severity == Severity.ERROR]
+
+
+def test_validate_rejects_new_inline_attribute():
+    source = Record(
+        id="0001-000001", source="<em>Title</em>", source_markup="epub-inline-xhtml:v1"
+    )
+    from booktx.models import TranslatedRecord
+
+    findings = validate_record_pair(
+        source,
+        TranslatedRecord(id=source.id, target='<em class="new">Titel</em>'),
+        "0001",
+    )
+
+    assert any(f.rule == "inline_xhtml_no_new_attributes" for f in findings)
+
+
+def test_validate_rejects_block_tag_in_inline_xhtml_target():
+    source = Record(
+        id="0001-000001", source="<em>Title</em>", source_markup="epub-inline-xhtml:v1"
+    )
+    from booktx.models import TranslatedRecord
+
+    findings = validate_record_pair(
+        source, TranslatedRecord(id=source.id, target="<p><em>Titel</em></p>"), "0001"
+    )
+
+    assert any(f.rule == "inline_xhtml_no_block_tags" for f in findings)
+
+
+def test_validate_rejects_changed_code_opaque_element():
+    source = Record(
+        id="0001-000001",
+        source="Use <code>pip install booktx</code>.",
+        source_markup="epub-inline-xhtml:v1",
+    )
+    from booktx.models import TranslatedRecord
+
+    findings = validate_record_pair(
+        source,
+        TranslatedRecord(id=source.id, target="Nutze <code>pip install other</code>."),
+        "0001",
+    )
+
+    assert any(f.rule == "inline_xhtml_opaque_preserved" for f in findings)
+
+
+def test_validate_warns_when_dash_semantic_cue_missing():
+    source = Record(
+        id="0001-000001",
+        source="<em>Again – now!</em>",
+        source_markup="epub-inline-xhtml:v1",
+    )
+    from booktx.models import TranslatedRecord
+
+    findings = validate_record_pair(
+        source, TranslatedRecord(id=source.id, target="<em>Wieder jetzt!</em>"), "0001"
+    )
+
+    assert any(
+        f.rule == "dash_semantic_cue_missing" and f.severity == Severity.WARN
+        for f in findings
+    )
+
+
+def test_validate_accepts_plain_v1_records_without_xhtml():
+    source = Record(id="0001-000001", source="A title here.")
+    from booktx.models import TranslatedRecord
+
+    findings = validate_record_pair(
+        source, TranslatedRecord(id=source.id, target="Ein Titel hier."), "0001"
+    )
+
+    assert not [f for f in findings if f.rule.startswith("inline_xhtml_")]

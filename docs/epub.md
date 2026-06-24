@@ -131,3 +131,9 @@ The source EPUB bytes differ from the extraction manifest. Restore the original 
 ### Unresolved placeholder in output EPUB
 
 A target likely omitted or changed a placeholder token. Run validation, repair the translated chunk, and rebuild.
+
+## Inline XHTML semantics
+
+EPUB extraction exposes inline XHTML fragments in record `source` values when the source block contains inline semantics. EPUB records use `source_markup="epub-inline-xhtml:v1"`. Legacy plain records continue to load as `plain:v1`.
+
+During rebuild, changed EPUB targets are parsed and sanitized as constrained inline XHTML before `text2epub` receives `allow_inline_xhtml=True`. Identity/pass-through output uses the plain expected source so reconstruction checks remain useful.

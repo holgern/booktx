@@ -251,8 +251,8 @@ def test_build_epub_changed_translation_has_no_token_leaks(tmp_path: Path):
         records = []
         for record in chunk["records"]:
             source = record["source"]
-            if source == "Alice met Bob.":
-                target = "Hallo Welt."
+            if source == "Alice met <strong>Bob</strong>.":
+                target = "Hallo <strong>Welt</strong>."
             elif source == "A second sentence.":
                 target = "Noch ein Satz."
             else:
@@ -272,7 +272,7 @@ def test_build_epub_changed_translation_has_no_token_leaks(tmp_path: Path):
         )
         ch1 = archive.read(ch1_name).decode("utf-8")
 
-    assert "Hallo Welt. Noch ein Satz." in ch1
+    assert "Hallo <strong>Welt</strong>. Noch ein Satz." in ch1
     assert "<strong>Bob</strong>" not in ch1
     for token in ("__TAG_", "__NAME_", "__SPANTX_"):
         assert token not in ch1

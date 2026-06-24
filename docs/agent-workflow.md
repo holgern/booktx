@@ -114,3 +114,7 @@ budget runs low. `--max-run-words` is advisory only.
 ## Context approval hard stop
 
 Stop and ask the user whenever context questions are open or only recommended. Do not translate from a context that you generated yourself. Prepare a user review form, then wait for explicit approval or edited answers before running `booktx context approve` and `booktx context mark-ready`.
+
+## EPUB inline XHTML translation rule
+
+For EPUB records, preserve inline XHTML tags and attributes in the target. Translate text nodes only. Do not convert `<em>` or other inline tags to Markdown markers.

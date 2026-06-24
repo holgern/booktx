@@ -294,3 +294,7 @@ used for that task, and accepted candidates preserve that evidence.
 ## Context approval
 
 booktx never decides translation policy by itself. An agent may propose context answers, but the user must approve them before translation begins. Do not use `context mark-ready --force` during normal translation work.
+
+### EPUB inline XHTML records
+
+EPUB records may expose constrained inline XHTML fragments such as `<em>`, `<strong>`, `<span class="...">`, `<a href="...">`, `<sup>`, `<sub>`, or `<code>`. Translators must preserve tags and attributes around the equivalent target-language phrase and must not replace XHTML with Markdown markers.

@@ -69,16 +69,20 @@ _LANGUAGE_MODEL_BY_CODE: dict[str, str] = {
 class ProseSpan:
     """A protected prose span produced by a format extractor.
 
-    ``text`` is the prose with names/tags already replaced by placeholder
-    tokens. ``placeholders`` lists every placeholder that appears anywhere in
-    ``text``. Segmentation filters that list per record so each record carries
-    only placeholders visible in its own source. ``protected_terms`` is the
-    subset of names relevant to this span.
+    ``text`` is the prose or inline-XHTML fragment with names already replaced
+    by placeholder tokens. ``placeholders`` lists every placeholder that
+    appears anywhere in ``text``. Segmentation filters that list per record so
+    each record carries only placeholders visible in its own source.
+    ``protected_terms`` is the subset of names relevant to this span.
+
+    ``presegmented`` means the upstream extractor already selected this span as
+    one sentence/record. In that case booktx must not run phrasplit again.
     """
 
     text: str
     placeholders: list[Placeholder]
     protected_terms: list[str]
+    presegmented: bool = False
 
 
 def _language_model(language: str) -> str:
@@ -126,7 +130,14 @@ def segment_spans(spans: list[ProseSpan], *, language: str = "en") -> list[Recor
     for span_index, span in enumerate(spans):
         if not span.text or not span.text.strip():
             continue
-        sentences = _sentences(span.text, language=language)
+        sentences = (
+            [span.text]
+            if span.presegmented
+            else _sentences(
+                span.text,
+                language=language,
+            )
+        )
         for span_record_index, sentence in enumerate(sentences):
             cleaned = sentence.strip()
             if not cleaned:
@@ -170,9 +181,14 @@ def pack_chunks(
         renumbered: list[Record] = []
         for intra, rec in enumerate(bucket, start=1):
             renumbered.append(rec.model_copy(update={"id": f"{chunk_id}-{intra:06d}"}))
+        schema_version = (
+            3
+            if any(rec.source_markup == "epub-inline-xhtml:v1" for rec in renumbered)
+            else 2
+        )
         chunks.append(
             Chunk(
-                schema_version=2,
+                schema_version=schema_version,
                 chunk_id=chunk_id,
                 chunk_size=chunk_size,
                 record_id_scheme=RECORD_ID_SCHEME,

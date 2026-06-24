@@ -4120,6 +4120,64 @@ def validate(
         raise typer.Exit(code=1)
 
 
+@translate_app.command(name="audit-inline")
+def translate_audit_inline(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    """Audit active translations for required EPUB inline XHTML semantics."""
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    from booktx.inline_audit import audit_inline_xhtml
+
+    result = audit_inline_xhtml(runtime.project)
+    if json_output:
+        console.print_json(json.dumps(result.as_dict(), ensure_ascii=False))
+        return
+    console.print("Inline XHTML audit")
+    console.print(f"records with inline source: {result.records_with_inline_source}")
+    console.print(f"valid active targets: {result.valid_active_targets}")
+    console.print(f"missing inline tags: {result.missing_inline_tags}")
+    console.print(f"invalid XHTML targets: {result.invalid_xhtml_targets}")
+    console.print(f"opaque changed: {result.opaque_changed}")
+    console.print(f"needs review: {result.needs_review}")
+
+
+@translate_app.command(name="migrate-inline-xhtml")
+def translate_migrate_inline_xhtml(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Report safe migrations without writing translated chunks.",
+    ),
+    write_safe: bool = typer.Option(
+        False, "--write-safe", help="Write only safe automatic migrations."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    """Safely migrate legacy targets for simple EPUB inline XHTML cases."""
+    if dry_run and write_safe:
+        _die("choose either --dry-run or --write-safe")
+        return
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    from booktx.inline_audit import migrate_inline_xhtml
+
+    report = migrate_inline_xhtml(runtime.project, write_safe=write_safe)
+    if json_output:
+        console.print_json(json.dumps(report, ensure_ascii=False))
+        return
+    console.print("Inline XHTML migration")
+    console.print(f"safe mappings: {len(report['mapped_records'])}")
+    console.print(f"needs review: {len(report['targets_requiring_review'])}")
+    console.print(f"written: {report['written']}")
+
+
 # --- build -------------------------------------------------------------------
 
 
