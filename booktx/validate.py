@@ -33,6 +33,7 @@ from booktx.config import (
     load_manifest,
     load_translation_store,
     load_translation_version_ledger,
+    resolve_stored_path,
     translation_store_path,
 )
 from booktx.context import (
@@ -507,7 +508,7 @@ def load_validation_context(
     """Load the context that should be used for validation."""
     if context_view_path is None:
         return load_context(project)
-    path = project.root / context_view_path
+    path = resolve_stored_path(project, context_view_path)
     return TranslationContext.model_validate_json(path.read_text("utf-8"))
 
 

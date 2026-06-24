@@ -33,7 +33,8 @@ Python 3.10+ is supported.
 ## Core model
 
 ```text
-Profile = hard isolation boundary
+Profile = hard boundary for mutable translation state
+Access mode = determines whether sibling profiles are visible
 Version = history/candidate boundary inside that profile
 ```
 
@@ -57,6 +58,7 @@ book/
 
   translations/
     de_gpt5_5/
+      .booktx-profile.json
       config.toml
       identity.json
       context.json
@@ -101,6 +103,48 @@ booktx translate insert ./demo \
 booktx validate ./demo --profile de_gpt5_5
 booktx build ./demo --profile de_gpt5_5
 ```
+
+## Collaborative vs isolated profile-root mode
+
+`booktx` supports two deliberate access modes:
+
+1. **Collaborative project-root mode**: start the harness at the book project
+   root when you need profile administration, profile comparison, or other
+   cross-profile work.
+2. **Isolated profile-root mode**: start the harness inside
+   `translations/<profile>/` when you want unbiased model evaluation without
+   normal booktx workflows revealing sibling profiles.
+
+Profile-root isolation is **booktx-mediated isolation**, not OS sandboxing. It
+depends on two things:
+
+- the harness starts inside `translations/<profile>/` and blocks parent paths,
+  absolute paths, sibling profile paths, shell globs, and arbitrary filesystem
+  inspection snippets;
+- `booktx` commands are used with project argument `.` and do not print parent
+  or sibling paths.
+
+If a profile-root command suggests `../`, prints an absolute path, or reveals a
+sibling profile, stop and report a booktx isolation bug.
+
+### Isolated evaluation workflow
+
+From `book/translations/de_gpt5_5/`:
+
+```bash
+booktx mode .
+booktx doctor isolation .
+booktx source status .
+booktx context status .
+booktx translate next . --unit batch --max-words 800 --format block
+booktx translate insert . --task-id TASK --file ingest/TASK.block.txt --format block
+booktx validate .
+booktx build .
+```
+
+In this mode, `booktx` automatically binds the current profile, brokers source
+access internally, and renders profile-local paths such as `tasks/...`,
+`ingest/...`, `reports/...`, and `output/...`.
 
 ## Bounded agent runs
 
@@ -209,6 +253,7 @@ legacy `.booktx/identity.json`.
 ```bash
 booktx status ./demo
 booktx status ./demo --profile de_gpt5_5
+booktx mode ./demo
 booktx profile list ./demo
 booktx profile show ./demo de_gpt5_5
 booktx whoami ./demo --profile de_gpt5_5
@@ -216,6 +261,7 @@ booktx version current ./demo --profile de_gpt5_5
 booktx translate task-status ./demo --profile de_gpt5_5 --task-id TASK
 booktx translation compare ./demo --profile de_gpt5_5 74@38 --versions 1.1,1.2
 booktx profile compare ./demo --profiles de_gpt5_5,de_glm_5_2 --record 0001-000001
+booktx source status ./demo
 ```
 
 `booktx translate next` also snapshots the exact effective task context under

@@ -15,11 +15,14 @@ from typing import TYPE_CHECKING
 
 from rich.console import Console
 
+from booktx.config import resolve_stored_path
+from booktx.path_display import display_path
 from booktx.tasks import task_paths
 
 if TYPE_CHECKING:
     from booktx.config import Project
     from booktx.models import TranslationTask
+    from booktx.runtime import RuntimeMode
     from booktx.status import ChapterProgress, StatusBundle
     from booktx.validate import Finding
 
@@ -244,6 +247,7 @@ def print_translate_task(
     task: TranslationTask,
     project: Project,
     *,
+    mode: RuntimeMode | None = None,
     as_json: bool,
     output_format: str,
     show_sources: bool = False,
@@ -255,26 +259,36 @@ def print_translate_task(
     (the durable agent workflow), and the default human-readable list.
     """
     paths = task_paths(project, task.task_id)
-    display = paths.display(project.root)
+    display = paths.display(project.root, mode=mode)
     from booktx.command_hints import translate_insert_command
 
     json_submit = translate_insert_command(
         project,
+        mode=mode,
         task_id=task.task_id,
         file_path=display.ingest_json,
         input_format="json",
     )
     block_submit = translate_insert_command(
         project,
+        mode=mode,
         task_id=task.task_id,
         file_path=display.ingest_block,
         input_format="block",
     )
-    block_stdin = paths.block_stdin_submit_hint(task.task_id)
+    block_stdin = paths.block_stdin_submit_hint(task.task_id, mode=mode)
     view_sources = f"cat {display.source_block}"
+    context_view_display = None
+    if task.context_view_path:
+        raw_context_path = resolve_stored_path(project, task.context_view_path)
+        context_view_display = (
+            display_path(raw_context_path, mode)
+            if mode is not None
+            else task.context_view_path
+        )
     context_display_path = (
-        task.context_view_path.replace("context.json", "context.md")
-        if task.context_view_path
+        context_view_display.replace("context.json", "context.md")
+        if context_view_display
         else None
     )
 
@@ -291,7 +305,7 @@ def print_translate_task(
         "baseline_sha256": task.baseline_sha256,
         "context_sha256": task.context_sha256,
         "context_view_sha256": task.context_view_sha256,
-        "context_view_path": task.context_view_path,
+        "context_view_path": context_view_display,
         "context_notes_scope": task.context_notes_scope,
         "context_target_chapter_id": task.context_target_chapter_id,
         "context_notes_through_chapter_id": task.context_notes_through_chapter_id,

@@ -54,6 +54,7 @@ __all__ = [
     "SourceConfig",
     "ProfileIdentityConfig",
     "ProfileConfig",
+    "ProfileRootMarker",
     "ProfileState",
     "ProjectConfig",
     "EpubSpanRef",
@@ -612,6 +613,22 @@ class ProfileConfig(BaseModel):
     output_filename: str | None = None
     identity: ProfileIdentityConfig = Field(default_factory=ProfileIdentityConfig)
     """Initial identity defaults; the live identity is identity.json (see above)."""
+
+
+class ProfileRootMarker(BaseModel):
+    """Profile-root marker for isolated runtime resolution."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    schema_name: Literal["booktx.profile-root.v1"] = Field(
+        default="booktx.profile-root.v1",
+        alias="schema",
+    )
+    profile: str
+    source_id: str
+    target_language: str
+    target_locale: str
+    mode_hint: Literal["profile-root"] = "profile-root"
 
 
 class ProfileState(BaseModel):

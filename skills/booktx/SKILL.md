@@ -22,6 +22,41 @@ Version = history/candidate boundary inside that profile
 Shared source state lives under `.booktx/`.
 Mutable translation state lives under `translations/<profile>/`.
 
+## Access modes
+
+### Collaborative project-root mode
+
+Start at the book project root when you need profile administration,
+cross-profile comparison, migration, or debugging:
+
+```bash
+booktx status .
+booktx profile list .
+```
+
+### Isolated profile-root mode
+
+For unbiased model or context evaluation, start inside `translations/<profile>/`
+and use only profile-local booktx commands with project argument `"."`.
+
+Never use parent paths, absolute paths, shell globs, interpreter snippets, or
+sibling profile commands. Never inspect sibling profiles. If a command suggests
+a parent path or prints a sibling profile, stop and report a booktx isolation
+bug.
+
+Use:
+
+```bash
+booktx mode .
+booktx doctor isolation .
+booktx source status .
+booktx context status .
+booktx translate next . --unit batch --max-words 800 --format block
+booktx translate insert . --task-id TASK --file ingest/TASK.block.txt --format block
+booktx validate .
+booktx build .
+```
+
 ## First commands in any existing project
 
 Run:
@@ -138,6 +173,9 @@ booktx translate insert . \
   --file translations/PROFILE/ingest/TASK.block.txt \
   --format block
 ```
+
+In isolated profile-root mode, omit `--profile` and use profile-local paths such
+as `ingest/TASK.block.txt`.
 
 When a task file exists, its recorded `translation_version` and context-view
 snapshot are authoritative for submission. A live baseline change alone should

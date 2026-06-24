@@ -19,6 +19,7 @@ from booktx.config import (
     translation_store_path,
 )
 from booktx.context import context_path, load_context
+from booktx.path_display import display_path
 from booktx.versioning import canonical_json_sha256, resolve_identity
 
 __all__ = [
@@ -35,9 +36,15 @@ def _relative(path: Path, root: Path) -> str:
         return path.as_posix()
 
 
-def context_identity_payload(proj: Project) -> dict[str, Any]:
+def context_identity_payload(
+    proj: Project,
+    *,
+    mode=None,
+) -> dict[str, Any]:
     path = context_path(proj)
-    rel_path = _relative(path, proj.root)
+    rel_path = (
+        display_path(path, mode) if mode is not None else _relative(path, proj.root)
+    )
     if not path.is_file():
         return {
             "path": rel_path,
@@ -106,7 +113,7 @@ def store_identity_payload(proj: Project) -> dict[str, Any]:
     }
 
 
-def identity_payload(proj: Project) -> dict[str, Any]:
+def identity_payload(proj: Project, *, mode=None) -> dict[str, Any]:
     identity = resolve_identity(proj)
     active_version = None
     try:
@@ -120,12 +127,16 @@ def identity_payload(proj: Project) -> dict[str, Any]:
         source_sha256 = None
 
     return {
-        "project_dir": str(proj.root),
+        "project_dir": (
+            display_path(proj.profile_dir or proj.root, mode)
+            if mode is not None and mode.isolated_output
+            else str(proj.root)
+        ),
         "actor": identity.actor,
         "harness": identity.harness,
         "model": identity.model,
         "active_version": active_version,
-        "context": context_identity_payload(proj),
+        "context": context_identity_payload(proj, mode=mode),
         "source_sha256": source_sha256,
         "store": store_identity_payload(proj),
     }

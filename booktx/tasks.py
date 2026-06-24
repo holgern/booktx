@@ -44,10 +44,12 @@ from booktx.config import (
 from booktx.context import ensure_context_view_snapshot
 from booktx.io_utils import write_json_text_atomic, write_text_atomic
 from booktx.models import TranslationTask, TranslationTaskRecord
+from booktx.path_display import display_path
 from booktx.versioning import canonical_json_sha256, resolve_current_version
 
 if TYPE_CHECKING:
     from booktx.progress import SourceRecordView
+    from booktx.runtime import RuntimeMode
     from booktx.status import ChapterProgress, StatusBundle
 
 __all__ = [
@@ -97,42 +99,74 @@ class TaskPaths:
     ingest_json: Path
     ingest_block: Path
 
-    def display(self, root: Path) -> TaskPathDisplay:
+    def display(
+        self, root: Path, *, mode: RuntimeMode | None = None
+    ) -> TaskPathDisplay:
         return TaskPathDisplay(
-            task_json=project_relative(self.task_json, root),
-            source_block=project_relative(self.source_block, root),
-            ingest_json=project_relative(self.ingest_json, root),
-            ingest_block=project_relative(self.ingest_block, root),
+            task_json=(
+                display_path(self.task_json, mode)
+                if mode is not None
+                else project_relative(self.task_json, root)
+            ),
+            source_block=(
+                display_path(self.source_block, mode)
+                if mode is not None
+                else project_relative(self.source_block, root)
+            ),
+            ingest_json=(
+                display_path(self.ingest_json, mode)
+                if mode is not None
+                else project_relative(self.ingest_json, root)
+            ),
+            ingest_block=(
+                display_path(self.ingest_block, mode)
+                if mode is not None
+                else project_relative(self.ingest_block, root)
+            ),
         )
 
-    def block_submit_hint(self, task_id: str, root: Path) -> str:
-        profile_part = (
-            f" --profile {self.task_json.parent.parent.name}"
-            if self.task_json.parent.parent.name != ".booktx"
-            else ""
-        )
+    def block_submit_hint(
+        self,
+        task_id: str,
+        root: Path,
+        *,
+        mode: RuntimeMode | None = None,
+    ) -> str:
+        profile_part = ""
+        if mode is None and self.task_json.parent.parent.name != ".booktx":
+            profile_part = f" --profile {self.task_json.parent.parent.name}"
         return (
             f"booktx translate insert .{profile_part} --task-id {task_id} "
-            f"--file {project_relative(self.ingest_block, root)} --format block"
+            f"--file "
+            f"{display_path(self.ingest_block, mode) if mode is not None else project_relative(self.ingest_block, root)} "
+            "--format block"
         )
 
-    def json_submit_hint(self, task_id: str, root: Path) -> str:
-        profile_part = (
-            f" --profile {self.task_json.parent.parent.name}"
-            if self.task_json.parent.parent.name != ".booktx"
-            else ""
-        )
+    def json_submit_hint(
+        self,
+        task_id: str,
+        root: Path,
+        *,
+        mode: RuntimeMode | None = None,
+    ) -> str:
+        profile_part = ""
+        if mode is None and self.task_json.parent.parent.name != ".booktx":
+            profile_part = f" --profile {self.task_json.parent.parent.name}"
         return (
             f"booktx translate insert .{profile_part} --task-id {task_id} "
-            f"--json-file {project_relative(self.ingest_json, root)}"
+            f"--json-file "
+            f"{display_path(self.ingest_json, mode) if mode is not None else project_relative(self.ingest_json, root)}"
         )
 
-    def block_stdin_submit_hint(self, task_id: str) -> str:
-        profile_part = (
-            f" --profile {self.task_json.parent.parent.name}"
-            if self.task_json.parent.parent.name != ".booktx"
-            else ""
-        )
+    def block_stdin_submit_hint(
+        self,
+        task_id: str,
+        *,
+        mode: RuntimeMode | None = None,
+    ) -> str:
+        profile_part = ""
+        if mode is None and self.task_json.parent.parent.name != ".booktx":
+            profile_part = f" --profile {self.task_json.parent.parent.name}"
         return (
             f"booktx translate insert .{profile_part} --task-id {task_id} "
             "--stdin --format block <<'BOOKTX'"
@@ -184,7 +218,12 @@ def write_ingest_template(project: Project, task: TranslationTask) -> Path:
     return path
 
 
-def write_block_ingest_template(project: Project, task: TranslationTask) -> Path:
+def write_block_ingest_template(
+    project: Project,
+    task: TranslationTask,
+    *,
+    mode: RuntimeMode | None = None,
+) -> Path:
     """Create the durable block submission file for a task without overwriting work.
 
     The file starts with metadata comment headers (ignored by the block parser)
@@ -195,12 +234,16 @@ def write_block_ingest_template(project: Project, task: TranslationTask) -> Path
     if path.exists():
         return path
     paths = task_paths(project, task.task_id)
-    source_display = project_relative(paths.source_block, project.root)
-    block_display = project_relative(path, project.root)
+    display = paths.display(project.root, mode=mode)
+    source_display = display.source_block
+    block_display = display.ingest_block
     from booktx.command_hints import translate_insert_command
 
     submit_hint = translate_insert_command(
-        project, task_id=task.task_id, file_path=block_display
+        project,
+        mode=mode,
+        task_id=task.task_id,
+        file_path=block_display,
     )
     context_display_path = (
         task.context_view_path.replace("context.json", "context.md")
@@ -330,6 +373,7 @@ def create_translation_task(
     bundle: StatusBundle,
     chapter: ChapterProgress,
     *,
+    mode: RuntimeMode | None = None,
     unit: str,
     record_ids: list[str],
     requested_max_words: int | None = None,
@@ -414,6 +458,6 @@ def create_translation_task(
     )
     write_translation_task(project, task)
     write_ingest_template(project, task)
-    write_block_ingest_template(project, task)
+    write_block_ingest_template(project, task, mode=mode)
     write_task_source_block(project, task)
     return task

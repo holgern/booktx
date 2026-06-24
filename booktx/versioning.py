@@ -13,6 +13,7 @@ from booktx.config import (
     load_identity,
     load_translation_version_ledger,
     project_source_sha256,
+    stored_path,
     write_translation_version_ledger,
 )
 from booktx.context import baseline_sha256, context_path, load_context
@@ -208,9 +209,9 @@ def resolve_current_version(
             subversion=next_subversion,
             version_ref=version_ref,
             context_sha256=baseline_hash,
-            context_path=str(context_path(project).relative_to(project.root)),
+            context_path=stored_path(project, context_path(project)),
             baseline_sha256=baseline_hash,
-            baseline_path=str(context_path(project).relative_to(project.root)),
+            baseline_path=stored_path(project, context_path(project)),
             context_label=context_label,
             created_at=now,
             updated_at=now,
@@ -224,9 +225,7 @@ def resolve_current_version(
         if subversion.baseline_sha256 is None:
             subversion.baseline_sha256 = baseline_hash
         if subversion.baseline_path is None:
-            subversion.baseline_path = str(
-                context_path(project).relative_to(project.root)
-            )
+            subversion.baseline_path = stored_path(project, context_path(project))
         if context_label is not None:
             subversion.context_label = context_label
         if note is not None:

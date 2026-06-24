@@ -1,7 +1,7 @@
 # Profiles
 
-`booktx` translation profiles let one source book support multiple isolated
-translation efforts safely.
+`booktx` translation profiles let one source book support multiple translation
+efforts without mixing mutable state.
 
 Examples:
 
@@ -36,6 +36,52 @@ booktx profile migrate-current ./book de_gpt5_5 --select
 3. Otherwise exactly one existing profile is auto-resolved.
 4. Otherwise target-dependent commands fail until a profile is chosen explicitly.
 
+## Access modes
+
+Profiles own mutable translation state, but **visibility of sibling profiles**
+depends on how the harness starts:
+
+### Collaborative project-root mode
+
+Start the harness at the book project root when you need:
+
+- profile administration
+- profile comparison
+- cross-profile reference work
+- migration and debugging
+
+In this mode, project-relative paths and explicit cross-profile commands are
+expected and allowed.
+
+### Isolated profile-root mode
+
+Start the harness inside `translations/<profile>/` when you want unbiased model
+or context evaluation for one target profile.
+
+This is **booktx-mediated isolation**, not OS sandboxing. It assumes:
+
+- the harness blocks parent paths, absolute paths, sibling profile paths, shell
+  globs, and arbitrary filesystem inspection snippets;
+- the agent uses only profile-local `booktx ... .` commands;
+- `booktx` itself never requires or prints parent/sibling paths for the normal
+  isolated workflow.
+
+Use:
+
+```bash
+booktx mode .
+booktx doctor isolation .
+booktx source status .
+booktx context status .
+booktx translate next . --unit batch --max-words 800 --format block
+booktx translate insert . --task-id TASK --file ingest/TASK.block.txt --format block
+booktx validate .
+booktx build .
+```
+
+If a command in profile-root mode suggests `../`, prints an absolute path, or
+reveals another profile, stop and report a booktx isolation bug.
+
 ## What is isolated?
 
 Each profile owns its own copy of all mutable translation state under
@@ -43,6 +89,7 @@ Each profile owns its own copy of all mutable translation state under
 
 | Path                              | Meaning                               |
 | --------------------------------- | ------------------------------------- |
+| `.booktx-profile.json`            | Profile-root runtime marker           |
 | `config.toml`                     | Profile config (target, output name)  |
 | `identity.json`                   | Live actor/harness/model identity     |
 | `context.json` / `context.md`     | Translation context and rendered form |
@@ -71,6 +118,9 @@ Source-derived state under `.booktx/` is shared by all profiles:
 | `profile-state.json`   | Active-profile selector             |
 
 Re-extracting the source updates the shared state for every profile at once.
+
+Profile-root isolated mode reads that shared source state only through booktx's
+brokered commands such as `booktx source ...` and `booktx translate next .`.
 
 ## When to create a new profile?
 
@@ -156,6 +206,12 @@ legacy `config.toml` is removed only after all moves succeed.
 
 - **`multiple_profiles_ambiguous`**: more than one profile exists and no
   `--profile` was given for a target-state command. Pass `--profile`.
+- **`profile_root_marker_missing`**: the profile-root marker is missing. Recreate
+  or backfill the profile marker before using isolated mode.
+- **`profile_root_marker_mismatch`**: the marker no longer matches the profile
+  directory, project root, or profile config. Regenerate or repair the marker.
+- **`stale_profile_root_marker`**: the marker is bound to an older extracted
+  source identity. Refresh the marker after source extraction changes.
 - **`task_profile_mismatch`**: a submission's profile header does not match
   the selected profile. Re-request the task in the correct profile.
 - **`submission_profile_mismatch`**: a JSON submission's `profile` field

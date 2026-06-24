@@ -75,6 +75,7 @@ from booktx.models import (
     NamesFile,
     ProfileConfig,
     ProfileIdentityConfig,
+    ProfileRootMarker,
     ProfileState,
     ProjectConfig,
     SourceConfig,
@@ -95,11 +96,15 @@ __all__ = [
     "translations_dir",
     "profile_dir",
     "profile_config_path",
+    "profile_root_marker_path",
+    "profile_source_cache_dir",
     "list_profiles",
     "load_profile_state",
     "write_profile_state",
     "load_profile_config",
+    "load_profile_root_marker",
     "write_profile_config",
+    "write_profile_root_marker",
     "resolve_profile_name",
     "load_project",
     "load_source_project",
@@ -115,6 +120,8 @@ __all__ = [
     "load_names",
     "protected_terms_sha256",
     "project_source_sha256",
+    "project_source_id",
+    "project_source_id_or_unavailable",
     "current_source_sha256",
     "extracted_source_sha256",
     "translation_store_path",
@@ -138,6 +145,9 @@ __all__ = [
     "load_translation_task",
     "write_translation_task",
     "find_source_file",
+    "project_storage_root",
+    "stored_path",
+    "resolve_stored_path",
 ]
 
 SUPPORTED_SOURCE_SUFFIXES: dict[str, str] = {
@@ -148,6 +158,7 @@ SUPPORTED_SOURCE_SUFFIXES: dict[str, str] = {
 
 DEFAULT_NAMES_JSON: dict[str, Any] = {"protected_terms": []}
 PROFILE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+PROFILE_ROOT_MARKER_FILENAME = ".booktx-profile.json"
 
 
 class BooktxError(Exception):
@@ -256,6 +267,18 @@ def profile_config_path(
     root_or_project: Project | Path | str, profile_name: str
 ) -> Path:
     return profile_dir(root_or_project, profile_name) / "config.toml"
+
+
+def profile_root_marker_path(
+    root_or_project: Project | Path | str, profile_name: str
+) -> Path:
+    return profile_dir(root_or_project, profile_name) / PROFILE_ROOT_MARKER_FILENAME
+
+
+def profile_source_cache_dir(
+    root_or_project: Project | Path | str, profile_name: str
+) -> Path:
+    return profile_dir(root_or_project, profile_name) / "source-cache"
 
 
 def _profile_context_json_path(
@@ -369,6 +392,51 @@ def write_profile_config(
         profile_config_path(project_or_root, cfg.profile),
         cfg.model_dump(mode="json", exclude_none=True),
     )
+
+
+def load_profile_root_marker(profile_root: Path | str) -> ProfileRootMarker:
+    root = Path(profile_root).expanduser().resolve()
+    path = root / PROFILE_ROOT_MARKER_FILENAME
+    if not path.is_file():
+        raise _err(
+            "profile_root_marker_missing",
+            f"profile root marker is missing: {path.name}",
+        )
+    try:
+        return ProfileRootMarker.model_validate_json(path.read_text("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise _err(
+            "invalid_profile_root_marker", f"profile root marker is invalid: {exc}"
+        ) from exc
+
+
+def write_profile_root_marker(
+    project_or_root: Project | Path | str,
+    profile_name: str,
+    *,
+    profile_config: ProfileConfig | None = None,
+) -> ProfileRootMarker:
+    validate_profile_name(profile_name)
+    source_project = load_source_project(_root_path(project_or_root))
+    if source_project.layout_version != "profiles":
+        raise _err(
+            "legacy_project_required",
+            "project uses the legacy single-layout format; profile-root markers are only available for translation profiles",
+        )
+    cfg = profile_config or load_profile_config(source_project, profile_name)
+    marker = ProfileRootMarker(
+        profile=profile_name,
+        source_id=project_source_id_or_unavailable(source_project),
+        target_language=cfg.target_language,
+        target_locale=cfg.target_locale or cfg.target_language,
+    )
+    path = profile_root_marker_path(source_project, profile_name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        marker.model_dump_json(indent=2, by_alias=True) + "\n",
+        encoding="utf-8",
+    )
+    return marker
 
 
 def list_profiles(project_or_root: Project | Path | str) -> list[str]:
@@ -524,6 +592,27 @@ def _with_profile(
         config=effective,
         layout_version="profiles",
     )
+
+
+def project_storage_root(project: Project) -> Path:
+    """Return the root used for persisted profile-local path strings."""
+    if project.layout_version == "profiles" and project.profile_dir is not None:
+        return project.profile_dir
+    return project.root
+
+
+def stored_path(project: Project, path: Path) -> str:
+    """Persist a path relative to the active profile when available."""
+    return path.relative_to(project_storage_root(project)).as_posix()
+
+
+def resolve_stored_path(project: Project, stored_rel_path: str) -> Path:
+    """Resolve a persisted path against legacy root-relative or profile-relative roots."""
+    rel_path = Path(stored_rel_path)
+    legacy_candidate = project.root / rel_path
+    if legacy_candidate.exists():
+        return legacy_candidate
+    return project_storage_root(project) / rel_path
 
 
 def resolve_profile_name(
@@ -810,6 +899,7 @@ def create_profile(
             model=identity_cfg.model,
         ),
     )
+    write_profile_root_marker(source_project, profile_name, profile_config=cfg)
     if select:
         write_profile_state(source_project, ProfileState(active_profile=profile_name))
     return load_profile_project(source_project.root, profile_name)
@@ -913,6 +1003,19 @@ def project_source_sha256(project: Project) -> str:
     if manifest is not None and manifest.source.sha256:
         return manifest.source.sha256
     return sha256_path(find_source_file(project))
+
+
+def project_source_id(project: Project) -> str:
+    return f"sha256:{project_source_sha256(project)}"
+
+
+def project_source_id_or_unavailable(project: Project) -> str:
+    try:
+        return project_source_id(project)
+    except BooktxError as exc:
+        if exc.code != "no_source":
+            raise
+        return "unavailable"
 
 
 def current_source_sha256(project: Project) -> str:

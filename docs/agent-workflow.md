@@ -1,6 +1,11 @@
 # Agent workflow
 
-## 1. Resolve the profile first
+## 1. Choose the access mode
+
+### Collaborative translation workflow
+
+Start at the project root when you need profile selection or cross-profile
+review:
 
 ```bash
 booktx status .
@@ -10,10 +15,27 @@ booktx profile select . de_gpt5_5
 
 If multiple profiles exist, pass `--profile` on all translation-state commands.
 
+### Isolated evaluation workflow
+
+Start inside `translations/<profile>/` when you want unbiased model or context
+evaluation for one profile:
+
+```bash
+booktx mode .
+booktx doctor isolation .
+booktx source status .
+booktx context status .
+```
+
+In isolated mode, use only profile-local `booktx ... .` commands. Never use
+parent paths, absolute paths, shell globs, interpreter snippets, or sibling
+profile commands. If booktx prints a sibling profile or a parent path, stop and
+report a booktx isolation bug.
+
 ## 2. Read the profile-local context
 
 ```text
-translations/<profile>/context.md
+context.md
 ```
 
 Do not start translating when `context.json` is missing or not ready.
@@ -21,14 +43,14 @@ Do not start translating when `context.json` is missing or not ready.
 ## 3. Request a task
 
 ```bash
-booktx translate next . --profile de_gpt5_5 --unit batch --max-words 800 --format block
+booktx translate next . --unit batch --max-words 800 --format block
 ```
 
 This writes:
 
-- `translations/<profile>/tasks/TASK.source.block.txt`
-- `translations/<profile>/ingest/TASK.block.txt`
-- `translations/<profile>/ingest/TASK.json`
+- `tasks/TASK.source.block.txt`
+- `ingest/TASK.block.txt`
+- `ingest/TASK.json`
 
 The task JSON also records the dotted baseline version plus the immutable
 context-view snapshot used for that task.
@@ -41,17 +63,16 @@ Translate only the record bodies. Keep record ids and placeholders unchanged.
 
 ```bash
 booktx translate insert . \
-  --profile de_gpt5_5 \
   --task-id TASK \
-  --file translations/de_gpt5_5/ingest/TASK.block.txt \
+  --file ingest/TASK.block.txt \
   --format block
 ```
 
 ## 6. Validate and build
 
 ```bash
-booktx validate . --profile de_gpt5_5 --fail-on-warnings
-booktx build . --profile de_gpt5_5 --require-complete
+booktx validate . --fail-on-warnings
+booktx build . --require-complete
 ```
 
 ## 7. Longer bounded runs
@@ -77,6 +98,8 @@ budget runs low. `--max-run-words` is advisory only.
 ## Guardrails
 
 - Never mix files between profiles.
+- Cross-profile reference work is allowed only from project-root collaborative
+  mode.
 - Never edit `.booktx/chunks/*.json` directly during normal translation work.
 - Never edit `translations/<profile>/translation-store.json` directly.
 - Never edit `translations/<profile>/translated/*.json` directly; use `booktx translate export`.

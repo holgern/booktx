@@ -119,6 +119,7 @@ from booktx.pass_through import (
     ensure_pass_through_profile,
     run_pass_through,
 )
+from booktx.path_display import display_path
 from booktx.progress import (
     SourceRecordView,
     load_source_chunks,
@@ -126,6 +127,7 @@ from booktx.progress import (
     source_record_sha256,
 )
 from booktx.record_refs import parse_record_ref, resolve_record_range
+from booktx.runtime import RuntimeContext, RuntimeMode, resolve_runtime
 from booktx.status import (
     ChapterProgress,
     ProfilesOverview,
@@ -176,6 +178,8 @@ app = typer.Typer(
 console = Console()
 context_app = typer.Typer(help="Build, inspect, and render translation context.")
 translate_app = typer.Typer(help="Command-based translation workflow.")
+source_app = typer.Typer(help="Inspect brokered source records without path leaks.")
+doctor_app = typer.Typer(help="Diagnostic commands.")
 actor_app = typer.Typer(help="Manage translation actor defaults.")
 harness_app = typer.Typer(help="Manage translation harness defaults.")
 model_app = typer.Typer(help="Manage translation model defaults.")
@@ -187,6 +191,8 @@ profile_app = typer.Typer(help="Manage isolated translation profiles.")
 app.add_typer(context_app, name="context")
 app.add_typer(translate_app, name="translate")
 app.add_typer(translate_app, name="translation")
+app.add_typer(source_app, name="source")
+app.add_typer(doctor_app, name="doctor")
 app.add_typer(actor_app, name="actor")
 app.add_typer(harness_app, name="harness")
 app.add_typer(model_app, name="model")
@@ -205,7 +211,47 @@ def _handle_booktx_error(exc: BooktxError) -> None:
     _die(str(exc))
 
 
-def _submission_ingest_hint(proj: Project, task_id: str | None) -> str | None:
+def _isolated_mode_error() -> str:
+    return (
+        "command is not available in profile-root isolated mode.\n"
+        "Run this from the project root for collaborative/admin workflows."
+    )
+
+
+def _reject_if_isolated(runtime: RuntimeContext) -> None:
+    if runtime.mode.isolated_output:
+        _die(_isolated_mode_error())
+
+
+def _display_path(path: Path, mode: RuntimeMode | None) -> str:
+    if mode is not None:
+        return display_path(path, mode)
+    return path.as_posix()
+
+
+def _load_runtime_or_exit(
+    project_dir: Path,
+    *,
+    profile: str | None = None,
+    require_profile: bool = False,
+) -> RuntimeContext:
+    try:
+        return resolve_runtime(
+            project_dir,
+            profile=profile,
+            require_profile=require_profile,
+        )
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
+        raise typer.Exit(code=1) from exc
+
+
+def _submission_ingest_hint(
+    proj: Project,
+    task_id: str | None,
+    *,
+    mode: RuntimeMode | None = None,
+) -> str | None:
     """Project-relative path to the canonical profile-local ingest file.
 
     Used to point agents at the generated submission location when a
@@ -216,7 +262,11 @@ def _submission_ingest_hint(proj: Project, task_id: str | None) -> str | None:
         return None
     from booktx.config import translation_ingest_block_path
 
-    return _project_relative(translation_ingest_block_path(proj, task_id), proj.root)
+    return (
+        display_path(translation_ingest_block_path(proj, task_id), mode)
+        if mode is not None
+        else _project_relative(translation_ingest_block_path(proj, task_id), proj.root)
+    )
 
 
 def _resolve_project_value_args(
@@ -288,8 +338,8 @@ def _render_identity_human(payload: dict[str, Any]) -> None:
 
 
 def _print_identity(project_dir: Path, *, profile: str | None, as_json: bool) -> None:
-    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
-    payload = identity_payload(proj)
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    payload = identity_payload(runtime.project, mode=runtime.mode)
     if as_json:
         console.print_json(json.dumps(payload, ensure_ascii=False))
         return
@@ -335,6 +385,234 @@ def identity_whoami(
 ) -> None:
     """Alias for the top-level whoami command."""
     _print_identity(project_dir, profile=profile, as_json=as_json)
+
+
+@app.command(name="mode")
+def mode_cmd(
+    project_dir: Path = typer.Argument(..., help="Project directory or profile root."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    """Show how booktx resolved the current working path."""
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=False)
+    payload = {
+        "mode": runtime.mode.kind,
+        "profile": runtime.mode.profile_name,
+        "profiles_visible": not runtime.mode.isolated_output,
+        "cross_profile_access": not runtime.mode.isolated_output,
+        "safe_for_model_evaluation": runtime.mode.isolated_output,
+        "source_access": runtime.mode.source_access,
+    }
+    if as_json:
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
+    console.print(f"mode: {payload['mode']}")
+    if payload["profile"]:
+        console.print(f"profile: {payload['profile']}")
+    console.print(f"profiles visible: {'yes' if payload['profiles_visible'] else 'no'}")
+    console.print(
+        f"cross-profile access: {'yes' if payload['cross_profile_access'] else 'no'}"
+    )
+    console.print(
+        "safe for model evaluation: "
+        f"{'yes' if payload['safe_for_model_evaluation'] else 'no'}"
+    )
+
+
+@source_app.command(name="status")
+def source_status_cmd(
+    project_dir: Path = typer.Argument(..., help="Project directory or profile root."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    """Show a safe summary of extracted source state."""
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=False)
+    proj = runtime.project
+    manifest = load_manifest(proj)
+    source_records = load_source_records(proj)
+    chapter_map = load_chapter_map(proj) or detect_chapters(proj)
+    payload = {
+        "source": "available" if proj.chunks() else "missing",
+        "format": proj.config.format,
+        "source_language": proj.config.source_language,
+        "records": len(source_records),
+        "chunks": len(proj.chunks()),
+        "chapters": len(chapter_map.chapters),
+        "source_sha256": manifest.source.sha256 if manifest is not None else "",
+    }
+    if as_json:
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
+    console.print(f"source: {payload['source']}")
+    console.print(f"format: {payload['format']}")
+    console.print(f"source language: {payload['source_language']}")
+    console.print(f"records: {payload['records']}")
+    console.print(f"chunks: {payload['chunks']}")
+    console.print(f"chapters: {payload['chapters']}")
+
+
+@source_app.command(name="record")
+def source_record_cmd(
+    project_dir: Path = typer.Argument(..., help="Project directory or profile root."),
+    record_ref: str = typer.Argument(..., help="Record id or record ref."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    output_format: str = typer.Option(
+        "block",
+        "--format",
+        help="Output format: block, text, or json.",
+    ),
+) -> None:
+    """Print one source record without exposing chunk paths."""
+    if output_format not in {"block", "text", "json"}:
+        _die("--format must be block, text, or json")
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=False)
+    proj = runtime.project
+    canonical_id = parse_record_ref(record_ref).canonical_id
+    source_by_id = {record.record_id: record for record in load_source_records(proj)}
+    record = source_by_id.get(canonical_id)
+    if record is None:
+        _die(f"unknown source record id: {canonical_id}")
+        return
+    payload = {"id": record.record_id, "source": record.source}
+    if output_format == "json":
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+    elif output_format == "text":
+        console.print(f"{record.record_id}\t{record.source}")
+    else:
+        console.print(f">>> {record.record_id}")
+        console.print(record.source)
+
+
+@source_app.command(name="chapter")
+def source_chapter_cmd(
+    project_dir: Path = typer.Argument(..., help="Project directory or profile root."),
+    chapter_id: str = typer.Argument(..., help="Chapter id, e.g. 0001."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    output_format: str = typer.Option(
+        "block",
+        "--format",
+        help="Output format: block, text, or json.",
+    ),
+) -> None:
+    """Print all source records for one chapter without exposing chunk paths."""
+    if output_format not in {"block", "text", "json"}:
+        _die("--format must be block, text, or json")
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=False)
+    proj = runtime.project
+    bundle = _project_status_snapshot(proj)
+    record_ids = bundle.index.record_ids_by_chapter.get(chapter_id)
+    chapter = bundle.index.chapters_by_id.get(chapter_id)
+    if not record_ids or chapter is None:
+        _die(f"unknown chapter id: {chapter_id}")
+        return
+    records = [
+        {"id": record_id, "source": bundle.index.source_by_id[record_id].source}
+        for record_id in record_ids
+    ]
+    if output_format == "json":
+        console.print_json(
+            json.dumps(
+                {
+                    "chapter_id": chapter.chapter_id,
+                    "title": chapter.title,
+                    "records": records,
+                },
+                ensure_ascii=False,
+            )
+        )
+        return
+    for item in records:
+        if output_format == "text":
+            console.print(f"{item['id']}\t{item['source']}")
+        else:
+            console.print(f">>> {item['id']}")
+            console.print(item["source"])
+            if item != records[-1]:
+                console.print()
+
+
+@doctor_app.command(name="isolation")
+def doctor_isolation_cmd(
+    project_dir: Path = typer.Argument(..., help="Project directory or profile root."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    """Check whether the current path is ready for isolated evaluation."""
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=False)
+    proj = runtime.project
+    marker_exists = bool(
+        runtime.mode.profile_root
+        and (runtime.mode.profile_root / ".booktx-profile.json").is_file()
+    )
+    profile_local_context = bool(
+        proj.context_json_path is not None
+        and runtime.mode.profile_root is not None
+        and proj.context_json_path.parent == runtime.mode.profile_root
+    )
+    profile_local_store = bool(
+        proj.store_path is not None
+        and runtime.mode.profile_root is not None
+        and proj.store_path.parent == runtime.mode.profile_root
+    )
+    profile_local_ledger = bool(
+        proj.ledger_path is not None
+        and runtime.mode.profile_root is not None
+        and proj.ledger_path.parent == runtime.mode.profile_root
+    )
+    redacted_samples = [
+        display_path(proj.root, runtime.mode),
+        display_path(proj.chunks_dir, runtime.mode),
+        display_path(proj.profile_dir or proj.root, runtime.mode),
+    ]
+    path_redaction_pass = all(
+        not sample.startswith("/")
+        and "../" not in sample
+        and (runtime.mode.profile_name or "") not in sample.replace(".", "")
+        for sample in redacted_samples[:2]
+    )
+    source_available = bool(proj.chunks())
+    passed = (
+        runtime.mode.isolated_output
+        and marker_exists
+        and source_available
+        and profile_local_context
+        and profile_local_store
+        and profile_local_ledger
+        and path_redaction_pass
+    )
+    payload = {
+        "isolation": "PASS" if passed else "FAIL",
+        "mode": runtime.mode.kind,
+        "profile": runtime.mode.profile_name,
+        "source_broker": "available" if source_available else "unavailable",
+        "cross_profile_commands": "blocked"
+        if runtime.mode.isolated_output
+        else "available",
+        "path_redaction": "PASS" if path_redaction_pass else "FAIL",
+        "source_access": runtime.mode.source_access,
+    }
+    if as_json:
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+    else:
+        console.print(f"isolation: {payload['isolation']}")
+        console.print(f"mode: {payload['mode']}")
+        if payload["profile"]:
+            console.print(f"profile: {payload['profile']}")
+        console.print(f"source broker: {payload['source_broker']}")
+        console.print(f"cross-profile commands: {payload['cross_profile_commands']}")
+        console.print(f"path redaction: {payload['path_redaction']}")
+    if not passed:
+        raise typer.Exit(code=1)
 
 
 @actor_app.command(name="whoami")
@@ -747,11 +1025,9 @@ def profile_list_cmd(
     project_dir: Path = typer.Argument(..., help="Project directory."),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
-    try:
-        project = load_source_project(project_dir)
-    except BooktxError as exc:
-        _handle_booktx_error(exc)
-        return
+    runtime = _load_runtime_or_exit(project_dir, require_profile=False)
+    _reject_if_isolated(runtime)
+    project = load_source_project(runtime.project.root)
     overview = build_profiles_overview(project)
     if as_json:
         console.print_json(
@@ -766,8 +1042,10 @@ def profile_select_cmd(
     project_dir: Path = typer.Argument(..., help="Project directory."),
     profile_name: str = typer.Argument(..., help="Translation profile name."),
 ) -> None:
+    runtime = _load_runtime_or_exit(project_dir, require_profile=False)
+    _reject_if_isolated(runtime)
     try:
-        project = select_profile(project_dir, profile_name)
+        project = select_profile(runtime.project.root, profile_name)
     except BooktxError as exc:
         _handle_booktx_error(exc)
         return
@@ -780,8 +1058,10 @@ def profile_show_cmd(
     profile_name: str = typer.Argument(..., help="Translation profile name."),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
+    runtime = _load_runtime_or_exit(project_dir, require_profile=False)
+    _reject_if_isolated(runtime)
     try:
-        payload = _profile_detail_payload(project_dir, profile_name)
+        payload = _profile_detail_payload(runtime.project.root, profile_name)
     except BooktxError as exc:
         _handle_booktx_error(exc)
         return
@@ -814,11 +1094,9 @@ def profile_compare_cmd(
     ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
-    try:
-        source_project = load_source_project(project_dir)
-    except BooktxError as exc:
-        _handle_booktx_error(exc)
-        return
+    runtime = _load_runtime_or_exit(project_dir, require_profile=False)
+    _reject_if_isolated(runtime)
+    source_project = load_source_project(runtime.project.root)
     requested = [item.strip() for item in profiles.split(",") if item.strip()]
     if len(requested) < 2:
         _die("--profiles must contain at least two profile names")
@@ -834,7 +1112,7 @@ def profile_compare_cmd(
     comparisons: list[dict[str, Any]] = []
     for profile_name in requested:
         try:
-            profile_project = load_profile_project(project_dir, profile_name)
+            profile_project = load_profile_project(runtime.project.root, profile_name)
         except BooktxError as exc:
             _handle_booktx_error(exc)
             return
@@ -965,13 +1243,11 @@ def _load_project_or_exit(
     profile: str | None = None,
     require_profile: bool = False,
 ) -> Project:
-    try:
-        return load_project(
-            project_dir, profile=profile, require_profile=require_profile
-        )
-    except BooktxError as exc:
-        _handle_booktx_error(exc)
-        raise typer.Exit(code=1) from exc
+    return _load_runtime_or_exit(
+        project_dir,
+        profile=profile,
+        require_profile=require_profile,
+    ).project
 
 
 def _load_context_or_exit(proj: Project) -> TranslationContext:
@@ -1144,12 +1420,15 @@ def context_init(
     """Create the active profile's context.json and rendered context.md."""
     from booktx.context import load_seed_template
 
-    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
     existing = None if force else load_context(proj)
     if existing is not None:
         _guard_md_safe_or_die(proj, existing)
         write_context_markdown(proj, existing)
-        console.print(f"context exists: {context_markdown_path(proj)}")
+        console.print(
+            f"context exists: {display_path(context_markdown_path(proj), runtime.mode)}"
+        )
         return
 
     ctx = default_context(proj)
@@ -1186,8 +1465,8 @@ def context_init(
     _guard_md_safe_or_die(proj, ctx, allow_discard_md_only=force)
     write_context(proj, ctx)
     write_context_markdown(proj, ctx)
-    console.print(f"wrote {context_path(proj)}")
-    console.print(f"wrote {context_markdown_path(proj)}")
+    console.print(f"wrote {display_path(context_path(proj), runtime.mode)}")
+    console.print(f"wrote {display_path(context_markdown_path(proj), runtime.mode)}")
 
 
 @context_app.command(name="questions")
@@ -1214,7 +1493,8 @@ def context_status(
     ),
 ) -> None:
     """Show translation context readiness."""
-    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
     ctx = _load_context_or_exit(proj)
     open_required = _open_required_questions(ctx)
     open_total = [q for q in ctx.questions if q.status == "open"]
@@ -1222,7 +1502,10 @@ def context_status(
     console.print(f"Status: {status}")
     console.print(f"open_required={len(open_required)} open_total={len(open_total)}")
     console.print(f"glossary_entries={len(ctx.glossary)}")
-    console.print(f"context: {context_markdown_path(proj)}", soft_wrap=True)
+    console.print(
+        f"context: {display_path(context_markdown_path(proj), runtime.mode)}",
+        soft_wrap=True,
+    )
 
 
 @context_app.command(name="render")
@@ -1252,7 +1535,8 @@ def context_render(
     ``--write`` persists, but refuses when drift analysis says the write is
     unsafe unless ``--force-discard-md-only`` is also passed.
     """
-    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
     ctx = _load_context_or_exit(proj)
     rendered = render_context_markdown(ctx)
     if stdout:
@@ -1269,12 +1553,12 @@ def context_render(
         if drift.unsafe_to_overwrite and not force_discard_md_only:
             _die(_drift_unsafe_message(drift))
         write_context_markdown(proj, ctx)
-        console.print(f"rendered {md_path}")
+        console.print(f"rendered {display_path(md_path, runtime.mode)}")
         return
     if matches:
-        console.print(f"{md_path} is up to date")
+        console.print(f"{display_path(md_path, runtime.mode)} is up to date")
     else:
-        console.print(f"{md_path} is out of date")
+        console.print(f"{display_path(md_path, runtime.mode)} is out of date")
         if drift.unsafe_to_overwrite:
             console.print(_drift_unsafe_message(drift))
             console.print(
@@ -1374,7 +1658,8 @@ def context_mark_ready(
     ),
 ) -> None:
     """Mark context ready once required questions are answered."""
-    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
     ctx = _load_context_or_exit(proj)
     open_required = _open_required_questions(ctx)
     if open_required and not force:
@@ -1384,7 +1669,9 @@ def context_mark_ready(
     _guard_md_safe_or_die(proj, ctx)
     write_context(proj, ctx)
     write_context_markdown(proj, ctx)
-    console.print(f"context ready: {context_markdown_path(proj)}")
+    console.print(
+        f"context ready: {display_path(context_markdown_path(proj), runtime.mode)}"
+    )
 
 
 @context_app.command(name="import-md")
@@ -1417,7 +1704,8 @@ def context_import_md(
     """
     if replace_existing and append_existing_lists:
         _die("--replace-existing and --append-existing-lists are mutually exclusive")
-    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
     ctx = _load_context_or_exit(proj)
     md_path = context_markdown_path(proj)
     if not md_path.is_file():
@@ -1445,7 +1733,7 @@ def context_import_md(
             console.print(f"updated chapters: {', '.join(changed)}")
         else:
             console.print("no chapter changes")
-        console.print(f"wrote {context_path(proj)}")
+        console.print(f"wrote {display_path(context_path(proj), runtime.mode)}")
     else:
         if changed:
             console.print(f"would add or change chapters: {', '.join(changed)}")
@@ -2036,6 +2324,7 @@ def _create_translation_task(
     bundle: StatusBundle,
     chapter: ChapterProgress,
     *,
+    mode: RuntimeMode | None = None,
     unit: str,
     record_ids: list[str],
     requested_max_words: int | None = None,
@@ -2046,6 +2335,7 @@ def _create_translation_task(
         proj,
         bundle,
         chapter,
+        mode=mode,
         unit=unit,
         record_ids=record_ids,
         requested_max_words=requested_max_words,
@@ -2063,6 +2353,7 @@ def _print_translate_task(
     task: TranslationTask,
     proj: Project,
     *,
+    mode: RuntimeMode | None = None,
     as_json: bool,
     output_format: str,
     show_sources: bool = False,
@@ -2073,6 +2364,7 @@ def _print_translate_task(
     print_translate_task(
         task,
         proj,
+        mode=mode,
         as_json=as_json,
         output_format=output_format,
         show_sources=show_sources,
@@ -2094,14 +2386,25 @@ def _render_submission_failures(findings: list[Finding]) -> None:
     render_submission_failures(findings)
 
 
-def _next_chapter(proj: Project, *, print_context: bool) -> None:
+def _next_chapter(
+    proj: Project,
+    *,
+    print_context: bool,
+    mode: RuntimeMode | None = None,
+) -> None:
     summary = _project_status_snapshot(proj)
     chapter = summary.snapshot.next
     if chapter is None:
         console.print("All chapter records have accepted translations.")
         raise typer.Exit(code=1)
     if print_context:
-        console.print(f"context: {context_markdown_path(proj)}", soft_wrap=True)
+        if mode is not None:
+            console.print(
+                f"context: {display_path(context_markdown_path(proj), mode)}",
+                soft_wrap=True,
+            )
+        else:
+            console.print(f"context: {context_markdown_path(proj)}", soft_wrap=True)
     console.print(f"chapter: {chapter.chapter_id}  {chapter.title}".rstrip())
     console.print(f"status: {chapter.status}")
     console.print(
@@ -2117,7 +2420,7 @@ def _next_chapter(proj: Project, *, print_context: bool) -> None:
     console.print(f"source words remaining: {chapter.source_words_remaining:,}")
     console.print(
         "[dim]next command:[/dim] "
-        + translate_next_command(proj, chapter_id=chapter.chapter_id)
+        + translate_next_command(proj, mode=mode, chapter_id=chapter.chapter_id)
     )
     raise typer.Exit(code=0)
 
@@ -2137,13 +2440,10 @@ def status_cmd(
     as_json: bool = typer.Option(False, "--json", help="Emit stable JSON output."),
 ) -> None:
     """Report record-aware translation progress."""
-    try:
-        proj = load_project(project_dir, profile=profile, require_profile=False)
-    except BooktxError as exc:
-        _handle_booktx_error(exc)
-        return
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=False)
+    proj = runtime.project
     if proj.layout_version == "profiles" and proj.profile is None:
-        overview = build_profiles_overview(load_source_project(project_dir))
+        overview = build_profiles_overview(load_source_project(proj.root))
         if as_json:
             console.print_json(
                 json.dumps(overview.model_dump(mode="json"), ensure_ascii=False)
@@ -2157,6 +2457,10 @@ def status_cmd(
     if selected is not None:
         summary.snapshot.chapters = [selected]
         summary.snapshot.next = selected
+    if runtime.mode.isolated_output:
+        summary.snapshot.project = display_path(
+            proj.profile_dir or proj.root, runtime.mode
+        )
     if as_json:
         console.print_json(
             json.dumps(summary.snapshot.model_dump(mode="json"), ensure_ascii=False)
@@ -2181,7 +2485,8 @@ def next_cmd(
     ),
 ) -> None:
     """Print the next pending legacy work item and point callers at translate/*."""
-    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
 
     if unit not in {"chunk", "chapter"}:
         _die("--unit must be chunk or chapter")
@@ -2190,8 +2495,12 @@ def next_cmd(
         proj, allow_missing_context=allow_missing_context
     )
     if unit == "chapter":
-        _next_chapter(proj, print_context=print_context)
+        _next_chapter(proj, print_context=print_context, mode=runtime.mode)
         return
+    if runtime.mode.isolated_output:
+        _die(
+            "booktx next is not available in profile-root isolated mode; use `booktx translate next .` instead"
+        )
     summary = _project_status_snapshot(proj)
     pending_chunks = [
         chunk.chunk_id
@@ -2259,12 +2568,13 @@ def next_chapter_cmd(
     ),
 ) -> None:
     """Print the next incomplete chapter and all chunks it covers."""
-    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
     _require_chunks(proj)
     print_context = _require_ready_context(
         proj, allow_missing_context=allow_missing_context
     )
-    _next_chapter(proj, print_context=print_context)
+    _next_chapter(proj, print_context=print_context, mode=runtime.mode)
 
 
 @translate_app.command(name="next")
@@ -2307,7 +2617,8 @@ def translate_next(
     ),
 ) -> None:
     """Return the next text to translate and persist a task id."""
-    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
     if unit not in {"paragraph", "batch", "chunk", "chapter"}:
         _die("--unit must be paragraph, batch, chunk, or chapter")
     if output_format not in {"text", "tsv", "block"}:
@@ -2335,6 +2646,7 @@ def translate_next(
         proj,
         summary,
         selected_chapter,
+        mode=runtime.mode,
         unit=actual_unit,
         record_ids=record_ids,
         requested_max_words=max_words,
@@ -2342,6 +2654,7 @@ def translate_next(
     _print_translate_task(
         task,
         proj,
+        mode=runtime.mode,
         as_json=as_json,
         output_format=output_format,
         show_sources=show_sources,
@@ -2381,7 +2694,8 @@ def translate_insert(
     ),
 ) -> None:
     """Accept translated text through the CLI and write the store atomically."""
-    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
     if input_format not in {"json", "tsv", "block"}:
         _die("--format must be json, tsv, or block")
     _require_chunks(proj)
@@ -2396,7 +2710,7 @@ def translate_insert(
             stdin=stdin,
             json_file=json_file,
             input_file=input_file,
-            ingest_hint=_submission_ingest_hint(proj, task_id),
+            ingest_hint=_submission_ingest_hint(proj, task_id, mode=runtime.mode),
         )
     except BooktxError as exc:
         _handle_booktx_error(exc)
@@ -2449,6 +2763,7 @@ def translate_insert(
             console.print(
                 context_chapter_note_command(
                     proj,
+                    mode=runtime.mode,
                     chapter_id=result.chapter_id,
                     title=result.chapter_title or "<TITLE>",
                 ),
@@ -2485,7 +2800,7 @@ def translate_insert(
             return
     if fresh.snapshot.totals.records_remaining == 0:
         console.print(
-            "next: " + build_command(proj),
+            "next: " + build_command(proj, mode=runtime.mode),
             soft_wrap=True,
             markup=False,
         )
@@ -2495,6 +2810,7 @@ def translate_insert(
             "next: "
             + translate_next_command(
                 proj,
+                mode=runtime.mode,
                 chapter_id=result.chapter_id,
                 max_words=max_words,
             ),
@@ -2507,6 +2823,7 @@ def translate_insert(
             "next: "
             + translate_next_command(
                 proj,
+                mode=runtime.mode,
                 max_words=max_words,
             ),
             soft_wrap=True,
@@ -3541,7 +3858,8 @@ def validate(
     ),
 ) -> None:
     """Validate translated chunks against the translation contract."""
-    proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
 
     report = validate_project(proj, all_versions_strict=all_versions_strict)
     out = write_report(proj, report)
@@ -3561,7 +3879,7 @@ def validate(
         f"missing={report.chunks_missing_translation}"
     )
     console.print("[dim]report:[/dim] ", end="")
-    console.print(str(out), soft_wrap=True, markup=False)
+    console.print(display_path(out, runtime.mode), soft_wrap=True, markup=False)
     if not report.passed or (fail_on_warnings and report.warnings):
         raise typer.Exit(code=1)
 
@@ -3583,7 +3901,10 @@ def build(
 ) -> None:
     """Rebuild the translated document into ``output/``."""
     try:
-        proj = load_project(project_dir, profile=profile, require_profile=True)
+        runtime = _load_runtime_or_exit(
+            project_dir, profile=profile, require_profile=True
+        )
+        proj = runtime.project
         result = build_project(proj, require_complete=require_complete)
     except BooktxError as exc:
         _handle_booktx_error(exc)
@@ -3592,7 +3913,10 @@ def build(
         _die(str(exc))
         return
 
-    console.print(f"[green]Built[/green] {result.format} -> {result.output_path}")
+    console.print(
+        f"[green]Built[/green] {result.format} -> "
+        f"{display_path(result.output_path, runtime.mode)}"
+    )
     if result.report:
         changed_entries = result.report.get("changed_entries", [])
         console.print(
@@ -3641,9 +3965,11 @@ def pass_through_cmd(
     translation: each record target equals its source text. Compare the output
     against the source with a diff viewer to detect reconstruction drift.
     """
+    runtime = _load_runtime_or_exit(project_dir, require_profile=False)
+    _reject_if_isolated(runtime)
     try:
         proj = ensure_pass_through_profile(
-            project_dir,
+            runtime.project.root,
             profile,
             create=create,
             select=select,

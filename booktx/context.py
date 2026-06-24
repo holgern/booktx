@@ -264,6 +264,7 @@ def ensure_context_view_snapshot(
 ) -> ContextViewSnapshot:
     """Compose and persist an immutable task context view snapshot."""
     from booktx.chapters import ensure_chapter_map, load_chapter_map
+    from booktx.config import stored_path
     from booktx.io_utils import utc_timestamp, write_json_text_atomic, write_text_atomic
     from booktx.versioning import canonical_json_sha256
 
@@ -290,8 +291,8 @@ def ensure_context_view_snapshot(
     if not context_json_text.endswith("\n"):
         context_json_text += "\n"
     context_md_text = render_context_markdown(view)
-    context_rel = context_json_path.relative_to(project.root).as_posix()
-    context_md_rel = context_md_path.relative_to(project.root).as_posix()
+    context_rel = stored_path(project, context_json_path)
+    context_md_rel = stored_path(project, context_md_path)
     note_ids = [note.chapter_id for note in selected_notes]
     notes_through = note_ids[-1] if note_ids else None
 

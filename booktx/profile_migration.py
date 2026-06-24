@@ -49,6 +49,7 @@ from booktx.config import (
     source_config_path,
     validate_profile_name,
     write_profile_config,
+    write_profile_root_marker,
     write_profile_state,
 )
 from booktx.epub_manifest import sha256_path
@@ -377,6 +378,11 @@ def migrate_current_project(
     write_json_model_atomic(
         _profile_identity_path(project_root, profile_name),
         plan.identity,
+    )
+    write_profile_root_marker(
+        project_root,
+        profile_name,
+        profile_config=plan.profile_config,
     )
     if select:
         write_profile_state(project_root, ProfileState(active_profile=profile_name))
