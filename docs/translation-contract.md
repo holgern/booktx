@@ -101,3 +101,16 @@ submission.
 EPUB source records may contain constrained inline XHTML fragments. Targets must preserve equivalent inline XHTML semantics. A target that drops `<em>`, `<strong>`, link, span-class, code, superscript/subscript, or other source inline semantics is invalid unless the user explicitly approves a semantic change.
 
 Translate only human-readable text nodes. Preserve tag names and attributes around the equivalent target-language phrase. Do not replace XHTML with Markdown markers. Do not invent block markup, comments, scripts, styles, or new attributes. Opaque inline elements such as `<code>...</code>` must stay unchanged.
+
+## Review candidates
+
+Review candidates are quality-improved targets stored separately from
+translation versions. They live under a separate `reviews[]` array in
+`StoredTranslationRecordV2` and use a separate ref namespace -- `R<pass>.<run>` (e.g. `R1.1`, `R2.1`) -- so they are visibly different from dotted version refs.
+
+- **Translation versions** answer: which source/context/model produced the initial target?
+- **Review candidates** answer: which quality pass improved or approved that target?
+
+Final output resolves as: `active_review (if valid) -> active_version -> missing`.
+A stale or invalid active review is reported as an error during validation.
+Review candidates are stored under `translations/<profile>/reviews/`.

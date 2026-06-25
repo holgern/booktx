@@ -83,6 +83,14 @@ def ensure_pass_through_profile(
             f"profile {profile} is not a pass-through profile; "
             "create one with `booktx pass-through PROJECT --profile PROFILE --create`",
         )
+    # Pass-through profiles write source-as-target and never participate in
+    # quality review. Reject a pass-through profile that was given a
+    # [quality_review] table.
+    if project.profile_config.quality_review is not None:
+        raise _err(
+            "pass_through_quality_review_forbidden",
+            f"pass-through profile {profile} must not configure quality_review",
+        )
     return project
 
 

@@ -549,3 +549,220 @@ def test_translation_todo_model_validates_without_rebuild_side_effects():
 
     todo = TranslationTodo.model_validate(payload)
     assert todo.start_totals.records_total == 2
+
+
+# --- translation review candidates -----------------------------------------
+
+
+def _review_candidate(**overrides):
+    base = {
+        "pass_number": 1,
+        "run_number": 1,
+        "review_ref": "R1.1",
+        "base_kind": "translation",
+        "base_ref": "1.1",
+        "base_target_sha256": "h-base",
+        "target": "target",
+        "target_sha256": "h-target",
+        "created_at": "2026-06-25T10:00:00Z",
+        "updated_at": "2026-06-25T10:00:00Z",
+    }
+    base.update(overrides)
+    return base
+
+
+def _record_with_reviews(reviews, **overrides):
+    payload = {
+        "chunk_id": 2,
+        "part_id": 17,
+        "source_sha256": "src",
+        "source": "He nodded slowly.",
+        "active_version": "1.1",
+        "versions": [
+            {
+                "version": 1,
+                "subversion": 1,
+                "version_ref": "1.1",
+                "target": "Er nickte langsam.",
+                "created_at": "2026-06-25T10:00:00Z",
+                "updated_at": "2026-06-25T10:00:00Z",
+            }
+        ],
+        "reviews": reviews,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_review_candidate_accepts_r1_1():
+    from booktx.models import TranslationReviewCandidate
+
+    c = TranslationReviewCandidate.model_validate(_review_candidate())
+    assert c.review_ref == "R1.1"
+    assert c.status == "accepted"
+
+
+@pytest.mark.parametrize(
+    "ref,pass_number,run_number",
+    [("1.1", 1, 1), ("R0.1", 1, 1), ("R1.0", 1, 1), ("R1.1", 2, 1), ("R1.1", 1, 2)],
+)
+def test_review_candidate_rejects_bad_ref_or_mismatch(
+    ref: str, pass_number: int, run_number: int
+) -> None:
+    from booktx.models import TranslationReviewCandidate
+
+    with pytest.raises(ValidationError):
+        TranslationReviewCandidate.model_validate(
+            _review_candidate(
+                review_ref=ref, pass_number=pass_number, run_number=run_number
+            )
+        )
+
+
+def test_record_rejects_duplicate_review_refs():
+    from booktx.models import StoredTranslationRecordV2
+
+    revs = [_review_candidate(), _review_candidate(run_number=1)]
+    with pytest.raises(ValidationError):
+        StoredTranslationRecordV2.model_validate(_record_with_reviews(revs))
+
+
+def test_record_rejects_review_with_missing_translation_base():
+    from booktx.models import StoredTranslationRecordV2
+
+    revs = [_review_candidate(base_ref="9.9")]
+    with pytest.raises(ValidationError):
+        StoredTranslationRecordV2.model_validate(_record_with_reviews(revs))
+
+
+def test_record_rejects_review_with_missing_review_base():
+    from booktx.models import StoredTranslationRecordV2
+
+    revs = [_review_candidate(base_kind="review", base_ref="R9.9")]
+    with pytest.raises(ValidationError):
+        StoredTranslationRecordV2.model_validate(_record_with_reviews(revs))
+
+
+def test_record_rejects_active_review_without_match():
+    from booktx.models import StoredTranslationRecordV2
+
+    with pytest.raises(ValidationError):
+        StoredTranslationRecordV2.model_validate(
+            _record_with_reviews([_review_candidate()], active_review="R5.5")
+        )
+
+
+def test_review_pass_order_helper_rejects_non_increasing_pass():
+    from booktx.models import (
+        TranslationReviewCandidate,
+        _validate_review_pass_order,
+    )
+
+    r1 = TranslationReviewCandidate.model_validate(_review_candidate())
+    # A review-based candidate whose pass is not strictly greater than its base.
+    r_same = TranslationReviewCandidate.model_validate(
+        _review_candidate(
+            pass_number=1,
+            run_number=2,
+            review_ref="R1.2",
+            base_kind="review",
+            base_ref="R1.1",
+        )
+    )
+    with pytest.raises(ValueError):
+        _validate_review_pass_order([r1, r_same])
+
+
+def test_review_graph_acyclic_helper_rejects_cycle():
+    from booktx.models import (
+        TranslationReviewCandidate,
+        _validate_review_graph_is_acyclic,
+    )
+
+    # Build a cycle the pass-order rule cannot catch (constructed directly,
+    # not via the record validator) to exercise the defensive graph check.
+    a = TranslationReviewCandidate.model_validate(
+        _review_candidate(review_ref="R1.1", base_kind="review", base_ref="R2.1")
+    )
+    b = TranslationReviewCandidate.model_validate(
+        _review_candidate(
+            pass_number=2,
+            run_number=1,
+            review_ref="R2.1",
+            base_kind="review",
+            base_ref="R1.1",
+        )
+    )
+    with pytest.raises(ValueError):
+        _validate_review_graph_is_acyclic([a, b])
+
+
+def test_record_rejects_review_pass_not_greater_than_base():
+    from booktx.models import StoredTranslationRecordV2
+
+    revs = [
+        _review_candidate(),
+        _review_candidate(
+            pass_number=1,
+            run_number=2,
+            review_ref="R1.2",
+            base_kind="review",
+            base_ref="R1.1",
+        ),
+    ]
+    with pytest.raises(ValidationError):
+        StoredTranslationRecordV2.model_validate(_record_with_reviews(revs))
+
+
+def test_record_review_example_round_trips_json():
+    from booktx.models import StoredTranslationRecordV2
+
+    payload = _record_with_reviews(
+        [
+            _review_candidate(run_number=1, review_ref="R1.1"),
+            _review_candidate(
+                pass_number=2,
+                run_number=1,
+                review_ref="R2.1",
+                base_kind="review",
+                base_ref="R1.1",
+            ),
+        ],
+        active_review="R2.1",
+    )
+    rec = StoredTranslationRecordV2.model_validate(payload)
+    round_trip = StoredTranslationRecordV2.model_validate_json(rec.model_dump_json())
+    assert [r.review_ref for r in round_trip.reviews] == ["R1.1", "R2.1"]
+    assert round_trip.active_review == "R2.1"
+
+
+def test_profile_config_without_quality_review_has_no_key():
+
+    cfg = ProfileConfig(profile="p", target_language="de")
+    dumped = cfg.model_dump(mode="json", exclude_none=True)
+    assert "quality_review" not in dumped
+
+
+def test_profile_config_with_quality_review_round_trips():
+    from booktx.models import QualityReviewConfig, ReviewPassConfig
+
+    cfg = ProfileConfig(
+        profile="p",
+        target_language="de",
+        quality_review=QualityReviewConfig(
+            enabled=True,
+            active_passes=[1, 2],
+            passes=[
+                ReviewPassConfig(pass_number=1, name="Flow", enforce="warn"),
+                ReviewPassConfig(
+                    pass_number=2,
+                    name="Polish",
+                    base="active_review",
+                    required_base_pass=1,
+                ),
+            ],
+        ),
+    )
+    dumped = cfg.model_dump(mode="json", exclude_none=True)
+    assert dumped["quality_review"]["enabled"] is True
+    assert [p["pass_number"] for p in dumped["quality_review"]["passes"]] == [1, 2]

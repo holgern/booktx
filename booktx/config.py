@@ -80,6 +80,7 @@ from booktx.models import (
     ProjectConfig,
     SourceConfig,
     TranslationIdentity,
+    TranslationReviewTask,
     TranslationStore,
     TranslationStoreV2,
     TranslationTask,
@@ -144,6 +145,12 @@ __all__ = [
     "translation_todo_markdown_path",
     "load_translation_task",
     "write_translation_task",
+    "translation_review_dir",
+    "translation_review_task_path",
+    "translation_review_source_block_path",
+    "translation_review_ingest_block_path",
+    "load_translation_review_task",
+    "write_translation_review_task",
     "find_source_file",
     "project_storage_root",
     "stored_path",
@@ -1164,6 +1171,10 @@ def _profile_todos_dir(root: Path, profile: str) -> Path:
     return profile_dir(root, profile) / "todos"
 
 
+def _profile_reviews_dir(root: Path, profile: str) -> Path:
+    return profile_dir(root, profile) / "reviews"
+
+
 def translation_todo_json_path(project: Project, todo_id: str) -> Path:
     return translation_todo_dir(project) / f"{todo_id}.json"
 
@@ -1183,6 +1194,56 @@ def write_translation_task(project: Project, task: TranslationTask) -> None:
     from booktx.io_utils import write_json_model_atomic
 
     write_json_model_atomic(translation_task_path(project, task.task_id), task)
+
+
+def translation_review_dir(project: Project) -> Path:
+    """Profile-local directory for durable review task artifacts.
+
+    Returns ``translations/<profile>/reviews/``. Raises :exc:`BooktxError` if
+    no profile is selected.
+    """
+    _require_profile_paths(project, "translation review access")
+    return profile_dir(project.root, project.profile or "") / "reviews"
+
+
+def translation_review_task_path(project: Project, review_task_id: str) -> Path:
+    safe = Path(review_task_id).name
+    if safe != review_task_id or not safe:
+        raise _err("invalid_task_id", f"Invalid review task id: {review_task_id!r}")
+    return translation_review_dir(project) / f"{safe}.json"
+
+
+def translation_review_source_block_path(project: Project, review_task_id: str) -> Path:
+    safe = Path(review_task_id).name
+    if safe != review_task_id or not safe:
+        raise _err("invalid_task_id", f"Invalid review task id: {review_task_id!r}")
+    return translation_review_dir(project) / f"{safe}.source.block.txt"
+
+
+def translation_review_ingest_block_path(project: Project, review_task_id: str) -> Path:
+    safe = Path(review_task_id).name
+    if safe != review_task_id or not safe:
+        raise _err("invalid_task_id", f"Invalid review task id: {review_task_id!r}")
+    return translation_review_dir(project) / f"{safe}.block.txt"
+
+
+def load_translation_review_task(
+    project: Project, review_task_id: str
+) -> TranslationReviewTask | None:
+    path = translation_review_task_path(project, review_task_id)
+    if not path.is_file():
+        return None
+    return TranslationReviewTask.model_validate_json(path.read_text("utf-8"))
+
+
+def write_translation_review_task(
+    project: Project, task: TranslationReviewTask
+) -> None:
+    from booktx.io_utils import write_json_model_atomic
+
+    write_json_model_atomic(
+        translation_review_task_path(project, task.review_task_id), task
+    )
 
 
 def _persist_source_config(project: Project) -> None:

@@ -1,5 +1,7 @@
 [![PyPI - Version](https://img.shields.io/pypi/v/booktx)](https://pypi.org/project/booktx/)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/booktx)
+![PyPI - Downloads](https://img.shields.io/pypi/dm/booktx)
+[![codecov](https://codecov.io/gh/holgern/booktx/graph/badge.svg?token=EFO4GQF52W)](https://codecov.io/gh/holgern/booktx)
 
 # booktx
 
@@ -298,3 +300,19 @@ booktx never decides translation policy by itself. An agent may propose context 
 ### EPUB inline XHTML records
 
 EPUB records may expose constrained inline XHTML fragments such as `<em>`, `<strong>`, `<span class="...">`, `<a href="...">`, `<sup>`, `<sub>`, or `<code>`. Translators must preserve tags and attributes around the equivalent target-language phrase and must not replace XHTML with Markdown markers.
+
+## Quality review commands
+
+Quality review is an optional workflow that improves already-accepted translations:
+
+- `booktx review status .` -- report review coverage
+- `booktx review next . --pass 1` -- create a review task for pass 1
+- `booktx review insert . --review-task-id TASK --file reviews/TASK.block.txt` -- accept review results
+- `booktx review activate . RECORD R1.2` -- manually activate a review candidate
+
+Review candidates are stored separately from translation versions in
+`translations/<profile>/reviews/`. The effective output resolves as
+`active_review (if valid) -> active_version -> missing`.
+
+Enable quality review by adding `[quality_review]` to the profile's `config.toml`.
+See `docs/profiles.md` for configuration reference.

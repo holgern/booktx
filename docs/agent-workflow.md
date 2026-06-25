@@ -118,3 +118,18 @@ Stop and ask the user whenever context questions are open or only recommended. D
 ## EPUB inline XHTML translation rule
 
 For EPUB records, preserve inline XHTML tags and attributes in the target. Translate text nodes only. Do not convert `<em>` or other inline tags to Markdown markers.
+
+## 7b. Quality review pass workflow
+
+After validation passes, optional quality review improves the accepted target:
+
+1. `booktx review status .` -- check which records still need review per pass
+2. `booktx review next . --pass 1` -- create a review task for un-reviewed records
+3. Edit the prefilled ingest block under `translations/<profile>/reviews/`
+4. `booktx review insert . --review-task-id TASK --file reviews/TASK.block.txt`
+5. Repeat for pass 2: `booktx review next . --pass 2`, review, insert
+6. Validate and build: `booktx validate . --fail-on-warnings && booktx build . --require-complete --require-reviewed`
+
+During review pass tasks, review the existing target critically. Preserve meaning,
+placeholders, protected terms, and inline XHTML. If the current target is already
+good, submit it unchanged -- booktx stores an explicit review candidate either way.

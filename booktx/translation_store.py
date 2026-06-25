@@ -10,15 +10,18 @@ from the active v2 store logic.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from hashlib import sha256
+from typing import TYPE_CHECKING, Literal
 
 from booktx.models import (
     StoredTranslationRecordV2,
     TranslationCandidate,
+    TranslationReviewCandidate,
     TranslationStore,
     TranslationStoreV2,
 )
 from booktx.record_refs import RecordRef, parse_record_ref, parse_version_ref
+from booktx.review_refs import parse_review_ref
 
 if TYPE_CHECKING:
     from booktx.progress import SourceRecordView
@@ -26,10 +29,17 @@ if TYPE_CHECKING:
 __all__ = [
     "MigrationResult",
     "active_candidate",
+    "active_review_candidate",
+    "effective_target_candidate",
     "ensure_store_record",
     "find_candidate",
+    "find_review_candidate",
     "migrate_legacy_store",
     "legacy_store_to_v2",
+    "resolve_review_base",
+    "review_candidate_is_stale",
+    "review_chain_is_stale",
+    "sha256_text",
     "upsert_translation_version",
 ]
 
@@ -169,6 +179,100 @@ def active_candidate(record: StoredTranslationRecordV2) -> TranslationCandidate 
     if record.active_version is None:
         return None
     return find_candidate(record, record.active_version)
+
+
+def sha256_text(text: str) -> str:
+    """Return the canonical SHA256 hex digest for a target/base text."""
+    return sha256(text.encode("utf-8")).hexdigest()
+
+
+def find_review_candidate(
+    record: StoredTranslationRecordV2,
+    review_ref: str,
+) -> TranslationReviewCandidate | None:
+    """Return the matching review candidate, if present."""
+    normalized = parse_review_ref(review_ref).review_ref
+    for candidate in record.reviews:
+        if candidate.review_ref == normalized:
+            return candidate
+    return None
+
+
+def resolve_review_base(
+    record: StoredTranslationRecordV2,
+    base_kind: Literal["translation", "review"],
+    base_ref: str,
+) -> TranslationCandidate | TranslationReviewCandidate | None:
+    """Resolve the base candidate a review was derived from."""
+    if base_kind == "translation":
+        return find_candidate(record, base_ref)
+    return find_review_candidate(record, base_ref)
+
+
+def review_candidate_is_stale(
+    record: StoredTranslationRecordV2,
+    review: TranslationReviewCandidate,
+) -> bool:
+    """Return True when the direct base of a review is missing or drifted."""
+    base = resolve_review_base(record, review.base_kind, review.base_ref)
+    if base is None:
+        return True
+    return sha256_text(base.target) != review.base_target_sha256
+
+
+def review_chain_is_stale(
+    record: StoredTranslationRecordV2,
+    review_ref: str,
+) -> bool:
+    """Return True when any base in the review derivation chain is missing or drifted.
+
+    Walks from ``review_ref`` back to the translation base, rejecting missing
+    bases, target-hash mismatches, and cycles.
+    """
+    seen: set[str] = set()
+    current = find_review_candidate(record, review_ref)
+    while current is not None:
+        if current.review_ref in seen:
+            return True
+        seen.add(current.review_ref)
+        if review_candidate_is_stale(record, current):
+            return True
+        if current.base_kind == "translation":
+            return False
+        current = find_review_candidate(record, current.base_ref)
+    return True
+
+
+def active_review_candidate(
+    record: StoredTranslationRecordV2,
+) -> TranslationReviewCandidate | None:
+    """Return the usable active review candidate, or None if unusable.
+
+    A review is usable only when present, accepted, and chain-valid. Stale,
+    rejected, cyclic, or invalid-pass-order active reviews are not returned.
+    """
+    if record.active_review is None:
+        return None
+    candidate = find_review_candidate(record, record.active_review)
+    if candidate is None or candidate.status != "accepted":
+        return None
+    if review_chain_is_stale(record, candidate.review_ref):
+        return None
+    return candidate
+
+
+def effective_target_candidate(
+    record: StoredTranslationRecordV2,
+) -> TranslationCandidate | TranslationReviewCandidate | None:
+    """Resolve the effective output target for a record.
+
+    Prefers the active review candidate when present and chain-valid;
+    otherwise falls back to the active translation version.
+    """
+    review = active_review_candidate(record)
+    if review is not None:
+        return review
+    return active_candidate(record)
 
 
 def upsert_translation_version(

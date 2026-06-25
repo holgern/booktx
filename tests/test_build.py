@@ -18,11 +18,25 @@ from booktx.config import (
     find_source_file,
     init_project,
     load_project,
+    write_profile_config,
     write_translation_store,
+    write_translation_version_ledger,
 )
 from booktx.markdown_io import extract_markdown
-from booktx.models import StoredTranslationRecord, TranslationStore
+from booktx.models import (
+    QualityReviewConfig,
+    ReviewPassConfig,
+    StoredTranslationRecord,
+    StoredTranslationRecordV2,
+    TranslationCandidate,
+    TranslationStore,
+    TranslationStoreV2,
+    TranslationSubversionLedgerEntry,
+    TranslationTrackLedgerEntry,
+    TranslationVersionLedger,
+)
 from booktx.progress import source_record_sha256
+from booktx.translation_store import sha256_text
 
 runner = CliRunner()
 
@@ -317,3 +331,185 @@ def test_build_epub_fails_on_source_sha_mismatch(tmp_path: Path):
 
     with pytest.raises(BuildError, match="Source EPUB SHA256 mismatch"):
         build_project(proj)
+
+
+# --- build --require-reviewed ------------------------------------------------
+
+
+def _write_v2_store_identity(proj, chunks, *, reviews=None, active_review=None):
+    """Write a v2 identity store.
+
+    ``reviews`` and ``active_review`` are mappings keyed by record id so a
+    review can be attached to a single record. A scalar ``active_review``
+    string is applied to every record for backward compatibility.
+    """
+    records = {}
+    for chunk in chunks:
+        for record in chunk.records:
+            rec_reviews = (
+                reviews.get(record.id, [])
+                if isinstance(reviews, dict)
+                else (reviews or [])
+            )
+            rec_active_review = (
+                active_review.get(record.id)
+                if isinstance(active_review, dict)
+                else active_review
+            )
+            records[record.id] = StoredTranslationRecordV2(
+                chunk_id=int(chunk.chunk_id),
+                part_id=int(record.id.split("-")[1]),
+                source_sha256=source_record_sha256(record.source),
+                source=record.source,
+                active_version="1.1",
+                active_review=rec_active_review,
+                versions=[
+                    TranslationCandidate(
+                        version=1,
+                        subversion=1,
+                        version_ref="1.1",
+                        target=record.source,
+                        created_at="2026-06-22T12:00:00Z",
+                        updated_at="2026-06-22T12:00:00Z",
+                    )
+                ],
+                reviews=rec_reviews,
+            )
+    write_translation_store(proj, TranslationStoreV2(records=records))
+    write_translation_version_ledger(
+        proj,
+        TranslationVersionLedger(
+            active_version="1.1",
+            tracks={
+                "1": TranslationTrackLedgerEntry(
+                    version=1,
+                    actor="user:test",
+                    harness="pi",
+                    model="human",
+                    created_at="2026-06-22T12:00:00Z",
+                    updated_at="2026-06-22T12:00:00Z",
+                    subversions={
+                        "1": TranslationSubversionLedgerEntry(
+                            version=1,
+                            subversion=1,
+                            version_ref="1.1",
+                            context_sha256="a" * 64,
+                            created_at="2026-06-22T12:00:00Z",
+                            updated_at="2026-06-22T12:00:00Z",
+                        )
+                    },
+                )
+            },
+        ),
+    )
+
+
+def _enable_quality_review(proj, *, active_passes=(1,), enforce="warn"):
+    cfg = proj.profile_config.model_copy(
+        update={
+            "quality_review": QualityReviewConfig(
+                enabled=True,
+                active_passes=list(active_passes),
+                passes=[
+                    ReviewPassConfig(pass_number=p, enforce=enforce)
+                    for p in active_passes
+                ],
+            )
+        }
+    )
+    write_profile_config(proj, cfg)
+    return load_project(proj.root)
+
+
+def test_build_require_reviewed_fails_on_missing_review(tmp_path: Path):
+    proj = init_project(tmp_path / "book", target_language="de")
+    (proj.source_dir / "book.md").write_text(
+        "# Hello\n\nAlice ran fast.\n", encoding="utf-8"
+    )
+    find_source_file(proj)
+    proj = load_project(proj.root)
+    chunks = _write_source_chunks_markdown(proj, "# Hello\n\nAlice ran fast.\n")
+    _write_v2_store_identity(proj, chunks)
+    proj = _enable_quality_review(proj, enforce="warn")
+    # require_reviewed treats the missing pass-1 review as an error even when
+    # the pass is configured as a warning.
+    with pytest.raises(BuildError, match="missing_review_candidate"):
+        build_project(proj, require_reviewed=True)
+
+
+def test_build_without_require_reviewed_succeeds_with_warn_coverage_gap(tmp_path: Path):
+    proj = init_project(tmp_path / "book", target_language="de")
+    (proj.source_dir / "book.md").write_text(
+        "# Hello\n\nAlice ran fast.\n", encoding="utf-8"
+    )
+    find_source_file(proj)
+    proj = load_project(proj.root)
+    chunks = _write_source_chunks_markdown(proj, "# Hello\n\nAlice ran fast.\n")
+    _write_v2_store_identity(proj, chunks)
+    proj = _enable_quality_review(proj, enforce="warn")
+    # A warn-level coverage gap does not fail an ordinary build.
+    result = build_project(proj)
+    assert result.output_path.is_file()
+
+
+def test_build_require_reviewed_fails_on_stale_active_review(tmp_path: Path):
+    from booktx.models import TranslationReviewCandidate
+
+    proj = init_project(tmp_path / "book", target_language="de")
+    (proj.source_dir / "book.md").write_text(
+        "# Hello\n\nAlice ran fast.\n", encoding="utf-8"
+    )
+    find_source_file(proj)
+    proj = load_project(proj.root)
+    chunks = _write_source_chunks_markdown(proj, "# Hello\n\nAlice ran fast.\n")
+    record = chunks[0].records[0]
+    review = TranslationReviewCandidate(
+        pass_number=1,
+        run_number=1,
+        review_ref="R1.1",
+        base_kind="translation",
+        base_ref="1.1",
+        base_target_sha256=sha256_text("different-baseline"),
+        target=record.source,
+        target_sha256=sha256_text(record.source),
+        created_at="2026-06-22T12:00:00Z",
+        updated_at="2026-06-22T12:00:00Z",
+    )
+    _write_v2_store_identity(
+        proj, chunks, reviews={record.id: [review]}, active_review={record.id: "R1.1"}
+    )
+    proj = _enable_quality_review(proj, enforce="warn")
+    with pytest.raises(BuildError, match="active_review_base_drift"):
+        build_project(proj, require_reviewed=True)
+
+
+def test_build_uses_active_review_output_when_valid(tmp_path: Path):
+    from booktx.models import TranslationReviewCandidate
+
+    proj = init_project(tmp_path / "book", target_language="de")
+    (proj.source_dir / "book.md").write_text(
+        "# Hello\n\nAlice ran fast.\n", encoding="utf-8"
+    )
+    find_source_file(proj)
+    proj = load_project(proj.root)
+    chunks = _write_source_chunks_markdown(proj, "# Hello\n\nAlice ran fast.\n")
+    record = next(r for c in chunks for r in c.records if "ran fast" in r.source)
+    polished = record.source.replace("ran fast", "ran sehr schnell")
+    review = TranslationReviewCandidate(
+        pass_number=1,
+        run_number=1,
+        review_ref="R1.1",
+        base_kind="translation",
+        base_ref="1.1",
+        base_target_sha256=sha256_text(record.source),
+        target=polished,
+        target_sha256=sha256_text(polished),
+        created_at="2026-06-22T12:00:00Z",
+        updated_at="2026-06-22T12:00:00Z",
+    )
+    _write_v2_store_identity(
+        proj, chunks, reviews={record.id: [review]}, active_review={record.id: "R1.1"}
+    )
+    result = build_project(proj)
+    out = result.output_path.read_text("utf-8")
+    assert "ran sehr schnell" in out

@@ -191,6 +191,7 @@ identity_app = typer.Typer(
 )
 version_app = typer.Typer(help="Inspect and manage translation version tracks.")
 profile_app = typer.Typer(help="Manage isolated translation profiles.")
+review_app = typer.Typer(help="Quality review pass workflow.")
 app.add_typer(context_app, name="context")
 app.add_typer(translate_app, name="translate")
 app.add_typer(translate_app, name="translation")
@@ -202,6 +203,7 @@ app.add_typer(model_app, name="model")
 app.add_typer(identity_app, name="identity")
 app.add_typer(version_app, name="version")
 app.add_typer(profile_app, name="profile")
+app.add_typer(review_app, name="review")
 
 
 def _die(message: str, code: int = 1) -> None:
@@ -3915,13 +3917,21 @@ def translation_compare(
     if stored is None:
         _die(f"record {selected['id']} has no stored translations")
         return
+    from booktx.translation_store import find_review_candidate
+
     requested = [item.strip() for item in versions.split(",") if item.strip()]
     payload = {"record_ref": selected["id"], "comparisons": []}
-    for version_ref in requested:
-        candidate = find_candidate(stored, version_ref)
+    for ref in requested:
+        if ref.startswith("R"):
+            candidate = find_review_candidate(stored, ref)
+            kind = "review"
+        else:
+            candidate = find_candidate(stored, ref)
+            kind = "translation"
         payload["comparisons"].append(
             {
-                "version_ref": version_ref,
+                "ref": ref,
+                "kind": kind,
                 "target": candidate.target if candidate is not None else None,
                 "status": candidate.status if candidate is not None else None,
             }
@@ -3930,7 +3940,7 @@ def translation_compare(
         console.print_json(json.dumps(payload, ensure_ascii=False))
         return
     for item in payload["comparisons"]:
-        console.print(f"{item['version_ref']}: {item['target'] or '<missing>'}")
+        console.print(f"{item['ref']} {item['kind']}: {item['target'] or '<missing>'}")
 
 
 @translate_app.command(name="activate")
@@ -4192,6 +4202,11 @@ def build(
         "--require-complete",
         help="Fail when any record is untranslated or invalid.",
     ),
+    require_reviewed: bool = typer.Option(
+        False,
+        "--require-reviewed",
+        help="Fail when required review coverage is missing or stale.",
+    ),
 ) -> None:
     """Rebuild the translated document into ``output/``."""
     try:
@@ -4199,7 +4214,11 @@ def build(
             project_dir, profile=profile, require_profile=True
         )
         proj = runtime.project
-        result = build_project(proj, require_complete=require_complete)
+        result = build_project(
+            proj,
+            require_complete=require_complete,
+            require_reviewed=require_reviewed,
+        )
     except BooktxError as exc:
         _handle_booktx_error(exc)
         return
@@ -4344,6 +4363,212 @@ def _main(
     if version:
         console.print(__version__)
         raise typer.Exit
+
+
+# --- review command group ------------------------------------------------
+
+
+@review_app.command(name="status")
+def review_status(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    """Report review coverage by pass."""
+    try:
+        proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
+        return
+    from booktx.config import load_translation_store
+    from booktx.review_status import compute_review_snapshot
+
+    cfg = (
+        proj.profile_config.quality_review if proj.profile_config is not None else None
+    )
+    store = load_translation_store(proj)
+    snapshot = compute_review_snapshot(store, cfg)
+    import json
+
+    if as_json:
+        console.print_json(
+            json.dumps(snapshot.model_dump(mode="json"), ensure_ascii=False)
+        )
+        return
+    if not snapshot.enabled:
+        console.print("quality review: disabled")
+        return
+    console.print("quality review: enabled")
+    console.print(f"active passes: {', '.join(str(p) for p in snapshot.active_passes)}")
+    for p in snapshot.passes:
+        console.print(f"pass {p.pass_number} {p.name}".rstrip())
+        console.print(f"  eligible base records: {p.eligible_records}")
+        console.print(f"  reviewed records: {p.reviewed_records}")
+        console.print(f"  missing review: {p.missing_review_records}")
+        console.print(f"  stale review: {p.stale_review_records}")
+        if p.blocked_records:
+            console.print(f"  blocked waiting for prior pass: {p.blocked_records}")
+
+
+@review_app.command(name="next")
+def review_next(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    pass_number: int = typer.Option(..., "--pass", help="Review pass number."),
+    chapter: str | None = typer.Option(None, "--chapter", help="Optional chapter id."),
+    max_words: int = typer.Option(
+        900, "--max-words", help="Maximum source words to return."
+    ),
+) -> None:
+    """Create the next durable review task for a pass."""
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
+    cfg = (
+        proj.profile_config.quality_review if proj.profile_config is not None else None
+    )
+    if cfg is None or not cfg.enabled:
+        _die("quality review is not enabled for this profile")
+        return
+    if pass_number not in cfg.active_passes:
+        _die(f"pass {pass_number} is not in active_passes {cfg.active_passes}")
+        return
+    _require_chunks(proj)
+    _require_no_source_drift(proj)
+    from booktx.config import load_translation_store
+    from booktx.review_tasks import create_review_task, select_review_records
+
+    bundle = _project_status_snapshot(proj)
+    selected_chapter = _selected_chapter(bundle, chapter)
+    if selected_chapter is None:
+        console.print("No eligible records for review.")
+        raise typer.Exit(code=1)
+    store = load_translation_store(proj)
+    selected = select_review_records(
+        bundle,
+        store.records,
+        cfg,
+        pass_number=pass_number,
+        chapter_id=selected_chapter.chapter_id,
+        max_words=max_words,
+    )
+    if not selected:
+        console.print("No records need review for this pass.")
+        raise typer.Exit(code=1)
+    task = create_review_task(
+        proj, bundle, cfg, selected, pass_number=pass_number, chapter=selected_chapter
+    )
+    console.print(f"review task: {task.review_task_id}")
+    console.print(
+        f"records: {task.record_count}  pass: R{task.pass_number} {task.pass_name}".rstrip()
+    )
+    console.print(
+        f"submit: booktx review insert . --review-task-id {task.review_task_id} "
+        f"--file reviews/{task.review_task_id}.block.txt --format block"
+    )
+
+
+@review_app.command(name="insert")
+def review_insert(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    review_task_id: str = typer.Option(..., "--review-task-id", help="Review task id."),
+    file: Path = typer.Option(..., "--file", help="Review block submission file."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    output_format: str = typer.Option(
+        "block", "--format", help="Submission format: block."
+    ),
+    activate: bool = typer.Option(False, "--activate", help="Force activation."),
+    no_activate: bool = typer.Option(False, "--no-activate", help="Do not activate."),
+) -> None:
+    """Parse a review task submission and create review candidates."""
+    try:
+        proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
+        return
+    from booktx.acceptance import SubmissionValidationError
+    from booktx.config import load_translation_review_task
+    from booktx.review_acceptance import SubmittedReview, accept_review_submission
+    from booktx.submissions import parse_block_submission
+
+    task = load_translation_review_task(proj, review_task_id)
+    if task is None:
+        _die(f"review task not found: {review_task_id}")
+        return
+    text = file.read_text("utf-8")
+    parsed = parse_block_submission(text)
+    submitted = [SubmittedReview(id=r.id, target=r.target) for r in parsed.records]
+    bundle = _project_status_snapshot(proj)
+    cfg = (
+        proj.profile_config.quality_review if proj.profile_config is not None else None
+    )
+    try:
+        result = accept_review_submission(
+            proj,
+            task,
+            submitted,
+            bundle=bundle,
+            quality_cfg=cfg,
+            activate=activate,
+            no_activate=no_activate,
+        )
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
+        return
+    except SubmissionValidationError as exc:
+        _die(
+            "review submission failed validation: "
+            + "; ".join(f.message for f in exc.findings)
+        )
+        return
+    console.print(f"accepted {result.accepted_records} review candidate(s)")
+    if result.activated:
+        console.print(f"activated: {', '.join(result.review_refs)}")
+    console.print("next: booktx validate .")
+
+
+@review_app.command(name="activate")
+def review_activate(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    record_ref: str = typer.Argument(..., help="Record ref such as 74@38."),
+    review_ref: str = typer.Argument(..., help="Review ref such as R1.2."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+) -> None:
+    """Activate an existing review candidate for a single record."""
+    try:
+        proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
+        return
+    from booktx.config import load_translation_store, write_translation_store
+    from booktx.translation_store import find_review_candidate, review_chain_is_stale
+
+    store = load_translation_store(proj)
+    record_id = parse_record_ref(record_ref).canonical_id
+    stored = store.records.get(record_id)
+    if stored is None:
+        _die(f"record {record_id} has no stored translations")
+        return
+    candidate = find_review_candidate(stored, review_ref)
+    if candidate is None:
+        _die(f"record {record_id} has no review {review_ref}")
+        return
+    if candidate.status != "accepted":
+        _die(f"review {review_ref} is {candidate.status!r}, not accepted")
+        return
+    if review_chain_is_stale(stored, candidate.review_ref):
+        _die(f"review {review_ref} has a stale derivation chain")
+        return
+    stored.active_review = candidate.review_ref
+    write_translation_store(proj, store)
+    console.print(f"{record_id} -> {candidate.review_ref}")
 
 
 def main() -> None:

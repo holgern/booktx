@@ -38,6 +38,7 @@ from booktx.config import (
     _profile_ledger_path,
     _profile_output_dir,
     _profile_reports_dir,
+    _profile_reviews_dir,
     _profile_store_path,
     _profile_tasks_dir,
     _profile_translated_dir,
@@ -345,6 +346,7 @@ def migrate_current_project(
         _profile_translated_dir(project_root, profile_name),
         _profile_reports_dir(project_root, profile_name),
         _profile_output_dir(project_root, profile_name),
+        _profile_reviews_dir(project_root, profile_name),
     ):
         path.mkdir(parents=True, exist_ok=True)
 

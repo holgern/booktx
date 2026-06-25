@@ -319,3 +319,26 @@ Recommended prompt: I reviewed the source and recommend the following context an
 ## EPUB inline XHTML records
 
 For EPUB records, the source may contain inline XHTML fragments such as `<em>`, `<strong>`, `<span class="...">`, `<a href="...">`, `<sup>`, `<sub>`, or `<code>`. Translate only the human-readable text nodes. Preserve the inline tags and attributes around the equivalent target-language phrase. Do not replace XHTML with Markdown markers. Do not invent new tags or attributes. Keep opaque tags such as `<code>...</code>` unchanged.
+
+## Quality review workflow
+
+Quality review improves already-accepted translations without overwriting the
+first-pass output:
+
+1. Enable quality review in the profile `config.toml` (see `docs/profiles.md`)
+2. `booktx review status .` -- check review coverage per pass
+3. `booktx review next . --pass 1` -- create a review task for pass 1
+4. Edit the ingest block under `translations/<profile>/reviews/`
+5. `booktx review insert . --review-task-id TASK --file reviews/TASK.block.txt --format block`
+6. Repeat for pass 2 if configured
+7. `booktx validate . --fail-on-warnings` (# both passes
+8. `booktx build . --require-complete --require-reviewed`
+
+During review, do not retranslate freely. Review the existing target and improve
+only where quality can be meaningfully raised. If the target is already good,
+submit it unchanged so booktx records an explicit review candidate.
+
+Review candidates are stored in `reviews[]` under each record in the translation
+store. The effective output uses the `active_review` when valid, falling back
+to the `active_version`. Use `booktx translation compare . RECORD --versions 1.1,R1.1,R2.1`
+to inspect the full chain.

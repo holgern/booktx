@@ -26,11 +26,16 @@ from booktx.config import (
     project_source_sha256,
     translation_ingest_block_path,
     translation_ingest_path,
+    translation_review_dir,
+    translation_review_ingest_block_path,
+    translation_review_source_block_path,
+    translation_review_task_path,
     translation_store_path,
     translation_task_path,
     translation_task_source_block_path,
     translation_version_ledger_path,
     write_identity,
+    write_profile_config,
     write_translation_store,
     write_translation_task,
     write_translation_version_ledger,
@@ -455,3 +460,111 @@ def test_profile_config_kind_roundtrips_through_toml(tmp_path: Path):
     # Normal profiles continue to serialize as translation.
     create_profile(proj.root, "de_default", target_language="de")
     assert load_profile_config(proj.root, "de_default").kind == "translation"
+
+
+def test_profile_config_quality_review_omitted_when_unset(tmp_path: Path):
+    """A profile created without quality_review must not gain a table on write."""
+    proj = init_source_project(tmp_path / "book")
+    create_profile(proj.root, "de_default", target_language="de")
+    cfg = load_profile_config(proj.root, "de_default")
+    assert cfg.quality_review is None
+    # Re-writing must not introduce a [quality_review] table.
+    write_profile_config(proj.root, cfg)
+    from booktx.config import profile_config_path
+
+    raw = profile_config_path(proj.root, "de_default").read_text("utf-8")
+    assert "quality_review" not in raw
+    # And it still loads back clean.
+    assert load_profile_config(proj.root, "de_default").quality_review is None
+
+
+def test_profile_config_quality_review_roundtrips_when_set(tmp_path: Path):
+    from booktx.models import QualityReviewConfig, ReviewPassConfig
+
+    proj = init_source_project(tmp_path / "book")
+    create_profile(proj.root, "de_default", target_language="de")
+    cfg = load_profile_config(proj.root, "de_default")
+    cfg = cfg.model_copy(
+        update={
+            "quality_review": QualityReviewConfig(
+                enabled=True,
+                active_passes=[1, 2],
+                passes=[
+                    ReviewPassConfig(pass_number=1, name="Flow", enforce="warn"),
+                    ReviewPassConfig(
+                        pass_number=2,
+                        name="Polish",
+                        base="active_review",
+                        required_base_pass=1,
+                        enforce="error",
+                    ),
+                ],
+            )
+        }
+    )
+    write_profile_config(proj.root, cfg)
+    loaded = load_profile_config(proj.root, "de_default")
+    assert loaded.quality_review is not None
+    assert loaded.quality_review.enabled is True
+    assert loaded.quality_review.active_passes == [1, 2]
+    assert [p.pass_number for p in loaded.quality_review.passes] == [1, 2]
+    assert loaded.quality_review.passes[1].base == "active_review"
+
+
+def test_review_path_helpers_resolve_profile_local(tmp_path: Path):
+    from booktx.models import TranslationReviewTask, TranslationReviewTaskRecord
+
+    proj = init_source_project(tmp_path / "book")
+    create_profile(proj.root, "de_default", target_language="de")
+    loaded = load_project(proj.root)
+    # Select the profile so path helpers resolve.
+    from booktx.config import select_profile
+
+    select_profile(loaded.root, "de_default")
+    proj2 = load_project(loaded.root)
+    rid = "btr-20260625T120000Z-0002-r1-a1b2c3d4"
+    assert translation_review_dir(proj2).name == "reviews"
+    assert translation_review_task_path(proj2, rid).name == f"{rid}.json"
+    assert (
+        translation_review_source_block_path(proj2, rid).name
+        == f"{rid}.source.block.txt"
+    )
+    assert translation_review_ingest_block_path(proj2, rid).name == f"{rid}.block.txt"
+    # write + load round-trip
+    task = TranslationReviewTask(
+        review_task_id=rid,
+        profile="de_default",
+        chapter_id="0002",
+        pass_number=1,
+        source_language="en",
+        target_language="de",
+        before_records=2,
+        after_records=2,
+        source_words=10,
+        record_count=1,
+        created_at="t",
+        records=[
+            TranslationReviewTaskRecord(
+                id="0002-000017",
+                chunk_id="0002",
+                source="src",
+                base_kind="translation",
+                base_ref="1.1",
+                base_target="t",
+                base_target_sha256="h",
+                review_ref="R1.1",
+                pass_number=1,
+                review_window_sha256="w",
+            )
+        ],
+    )
+    from booktx.config import (
+        load_translation_review_task,
+        write_translation_review_task,
+    )
+
+    translation_review_dir(proj2).mkdir(parents=True, exist_ok=True)
+    write_translation_review_task(proj2, task)
+    loaded_task = load_translation_review_task(proj2, rid)
+    assert loaded_task is not None
+    assert loaded_task.records[0].review_ref == "R1.1"

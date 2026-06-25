@@ -679,3 +679,318 @@ def test_validate_accepts_plain_v1_records_without_xhtml():
     )
 
     assert not [f for f in findings if f.rule.startswith("inline_xhtml_")]
+
+
+# --- effective review output and review-coverage findings ----------------
+
+
+def _store_with_review(
+    tmp_path: Path, *, reviews, active_review=None, active_version="1.1"
+):
+    """Build a one-chunk project backed by a v2 store with review candidates."""
+
+    proj = init_project(tmp_path / "book", target_language="de")
+    proj.chunks_dir.mkdir(parents=True, exist_ok=True)
+    source = _src_chunk()
+    (proj.chunks_dir / "0001.json").write_text(
+        source.model_dump_json(), encoding="utf-8"
+    )
+    base_target = "__NAME_001__ sah __NAME_002__ an."
+    versions = [
+        TranslationCandidate(
+            version=1,
+            subversion=1,
+            version_ref="1.1",
+            target=base_target,
+            created_at="2026-06-22T12:00:00Z",
+            updated_at="2026-06-22T12:00:00Z",
+        )
+    ]
+    write_translation_store(
+        proj,
+        TranslationStoreV2(
+            records={
+                "0001-000001": StoredTranslationRecordV2(
+                    chunk_id=1,
+                    part_id=1,
+                    source_sha256=source_record_sha256(source.records[0].source),
+                    source=source.records[0].source,
+                    active_version=active_version,
+                    active_review=active_review,
+                    versions=versions,
+                    reviews=reviews,
+                )
+            }
+        ),
+    )
+    # A v2 store requires the translation version to exist in the ledger when
+    # the effective output falls back to the active translation version.
+    write_translation_version_ledger(
+        proj,
+        TranslationVersionLedger(
+            active_version="1.1",
+            tracks={
+                "1": TranslationTrackLedgerEntry(
+                    version=1,
+                    actor="user:test",
+                    harness="pi",
+                    model="human",
+                    created_at="2026-06-22T12:00:00Z",
+                    updated_at="2026-06-22T12:00:00Z",
+                    subversions={
+                        "1": TranslationSubversionLedgerEntry(
+                            version=1,
+                            subversion=1,
+                            version_ref="1.1",
+                            context_sha256="a" * 64,
+                            created_at="2026-06-22T12:00:00Z",
+                            updated_at="2026-06-22T12:00:00Z",
+                        )
+                    },
+                )
+            },
+        ),
+    )
+    return load_project(proj.root), base_target
+
+
+def _review_candidate(
+    *, review_ref="R1.1", target, base_kind="translation", base_ref="1.1", base_target
+):
+    from booktx.models import TranslationReviewCandidate
+    from booktx.translation_store import sha256_text
+
+    pass_number = int(review_ref.split("R")[1].split(".")[0])
+    run_number = int(review_ref.split(".")[1])
+    return TranslationReviewCandidate(
+        pass_number=pass_number,
+        run_number=run_number,
+        review_ref=review_ref,
+        base_kind=base_kind,
+        base_ref=base_ref,
+        base_target_sha256=sha256_text(base_target),
+        target=target,
+        target_sha256=sha256_text(target),
+        created_at="2026-06-22T12:00:00Z",
+        updated_at="2026-06-22T12:00:00Z",
+    )
+
+
+def test_effective_output_uses_active_review_when_valid(tmp_path: Path):
+    from booktx.validate import load_effective_translated_chunks
+
+    base = "__NAME_001__ sah __NAME_002__ an."
+    polished = "__NAME_001__ sah __NAME_002__ hier an."
+    reviews = [_review_candidate(target=polished, base_target=base)]
+    proj, _ = _store_with_review(tmp_path, reviews=reviews, active_review="R1.1")
+    effective = load_effective_translated_chunks(proj)
+    chunk = effective.chunks["0001"]
+    assert chunk.records[0].target == polished
+
+
+def test_effective_output_falls_back_to_version_when_review_stale(tmp_path: Path):
+    from booktx.validate import load_effective_translated_chunks
+
+    reviews = [_review_candidate(target="polished-but-stale", base_target="different")]
+    proj, base_target = _store_with_review(
+        tmp_path, reviews=reviews, active_review="R1.1"
+    )
+    effective = load_effective_translated_chunks(proj)
+    # Stale active review falls back to the active translation version.
+    assert effective.chunks["0001"].records[0].target == base_target
+    rules = {f.rule for f in effective.findings}
+    assert "active_review_base_drift" in rules
+
+
+def test_effective_output_reports_not_accepted_active_review(tmp_path: Path):
+    from booktx.validate import load_effective_translated_chunks
+
+    base = "__NAME_001__ sah __NAME_002__ an."
+    review = _review_candidate(target="polished", base_target=base)
+    review = review.model_copy(update={"status": "rejected"})
+    proj, _ = _store_with_review(tmp_path, reviews=[review], active_review="R1.1")
+    effective = load_effective_translated_chunks(proj)
+    rules = {f.rule for f in effective.findings}
+    # The selected review is rejected: output falls back to the version and the
+    # unusable active_review is reported as an error.
+    assert "active_review_not_accepted" in rules
+    assert effective.chunks["0001"].records[0].target == base
+
+
+def test_review_coverage_findings_missing_pass_when_enforced():
+    from booktx.models import QualityReviewConfig, ReviewPassConfig
+    from booktx.validate import Severity, review_coverage_findings
+
+    base = "__NAME_001__ sah __NAME_002__ an."
+    rec = StoredTranslationRecordV2(
+        chunk_id=1,
+        part_id=1,
+        source_sha256="x",
+        source="src",
+        active_version="1.1",
+        versions=[
+            TranslationCandidate(
+                version=1,
+                subversion=1,
+                version_ref="1.1",
+                target=base,
+                created_at="t",
+                updated_at="t",
+            )
+        ],
+    )
+    cfg = QualityReviewConfig(
+        enabled=True,
+        active_passes=[1],
+        passes=[
+            ReviewPassConfig(pass_number=1, enforce="error"),
+        ],
+    )
+    findings = review_coverage_findings(rec, cfg, "0001", "0001-000001")
+    rules = {f.rule for f in findings}
+    assert "missing_review_candidate" in rules
+    assert all(f.severity == Severity.ERROR for f in findings)
+
+
+def test_review_coverage_findings_off_when_enforce_off():
+    from booktx.models import QualityReviewConfig, ReviewPassConfig
+    from booktx.validate import review_coverage_findings
+
+    base = "x"
+    rec = StoredTranslationRecordV2(
+        chunk_id=1,
+        part_id=1,
+        source_sha256="x",
+        source="src",
+        active_version="1.1",
+        versions=[
+            TranslationCandidate(
+                version=1,
+                subversion=1,
+                version_ref="1.1",
+                target=base,
+                created_at="t",
+                updated_at="t",
+            )
+        ],
+    )
+    cfg = QualityReviewConfig(
+        enabled=True,
+        active_passes=[1],
+        passes=[
+            ReviewPassConfig(pass_number=1, enforce="off"),
+        ],
+    )
+    assert review_coverage_findings(rec, cfg, "0001", "0001-000001") == []
+
+
+def test_review_coverage_findings_force_error_overrides_enforce():
+    from booktx.models import QualityReviewConfig, ReviewPassConfig
+    from booktx.validate import Severity, review_coverage_findings
+
+    base = "x"
+    rec = StoredTranslationRecordV2(
+        chunk_id=1,
+        part_id=1,
+        source_sha256="x",
+        source="src",
+        active_version="1.1",
+        versions=[
+            TranslationCandidate(
+                version=1,
+                subversion=1,
+                version_ref="1.1",
+                target=base,
+                created_at="t",
+                updated_at="t",
+            )
+        ],
+    )
+    cfg = QualityReviewConfig(
+        enabled=True,
+        active_passes=[1],
+        passes=[
+            ReviewPassConfig(pass_number=1, enforce="off"),
+        ],
+    )
+    findings = review_coverage_findings(
+        rec, cfg, "0001", "0001-000001", force_error=True
+    )
+    assert findings and all(f.severity == Severity.ERROR for f in findings)
+
+
+def test_review_coverage_findings_blocked_when_required_prior_pass_missing():
+    from booktx.models import QualityReviewConfig, ReviewPassConfig
+    from booktx.validate import review_coverage_findings
+
+    base = "x"
+    rec = StoredTranslationRecordV2(
+        chunk_id=1,
+        part_id=1,
+        source_sha256="x",
+        source="src",
+        active_version="1.1",
+        versions=[
+            TranslationCandidate(
+                version=1,
+                subversion=1,
+                version_ref="1.1",
+                target=base,
+                created_at="t",
+                updated_at="t",
+            )
+        ],
+    )
+    cfg = QualityReviewConfig(
+        enabled=True,
+        active_passes=[1, 2],
+        passes=[
+            ReviewPassConfig(pass_number=1, enforce="error"),
+            ReviewPassConfig(
+                pass_number=2,
+                enforce="error",
+                base="active_review",
+                required_base_pass=1,
+            ),
+        ],
+    )
+    findings = review_coverage_findings(rec, cfg, "0001", "0001-000001")
+    rules = {f.rule for f in findings}
+    # pass 1 is missing, pass 2 is blocked behind it.
+    assert "missing_review_candidate" in rules
+    assert "review_pass_blocked" in rules
+
+
+def test_review_coverage_findings_satisfied_when_review_present():
+    from booktx.models import QualityReviewConfig, ReviewPassConfig
+    from booktx.validate import review_coverage_findings
+
+    base = "x"
+    reviews = [_review_candidate(target="polished", base_target=base)]
+    rec = StoredTranslationRecordV2(
+        chunk_id=1,
+        part_id=1,
+        source_sha256="x",
+        source="src",
+        active_version="1.1",
+        active_review="R1.1",
+        versions=[
+            TranslationCandidate(
+                version=1,
+                subversion=1,
+                version_ref="1.1",
+                target=base,
+                created_at="t",
+                updated_at="t",
+            )
+        ],
+        reviews=reviews,
+    )
+    cfg = QualityReviewConfig(
+        enabled=True,
+        active_passes=[1],
+        passes=[
+            ReviewPassConfig(pass_number=1, enforce="error"),
+        ],
+    )
+    assert review_coverage_findings(rec, cfg, "0001", "0001-000001") == []

@@ -164,3 +164,23 @@ booktx version show ./book --profile de_gpt5_5 1.2 --json
 ## Context question lifecycle
 
 Questions start as `open`. Agents may store draft defaults with `context recommend`, which sets `recommended` but does not answer the question or change style policy. User-approved decisions are recorded with `context approve`, which stores `answer_source=user`, approval metadata, and applies style updates. Required dynamic questions can be added with `context add-question --required` after source review. Use `context questionnaire --stdout` to show a user-facing approval form. `context mark-ready --force --reason ...` is only for emergency or migration cases.
+
+## Review commands (`booktx review`)
+
+- `booktx review status .` -- report review coverage by pass (eligible/reviewed/missing/stale/blocked)
+- `booktx review next . --pass 1` -- create the next durable review task for a pass
+- `booktx review insert . --review-task-id TASK --file reviews/TASK.block.txt --format block` -- parse and accept a review submission
+- `booktx review activate . RECORD R1.2` -- manually activate an existing review candidate for a record
+
+Profile quality review must be enabled in `config.toml` for review commands to work:
+
+```toml
+[quality_review]
+enabled = true
+active_passes = [1]
+
+[[quality_review.passes]]
+pass_number = 1
+name = "Flow review"
+enforce = "warn"
+```

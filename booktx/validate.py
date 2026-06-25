@@ -45,10 +45,24 @@ from booktx.context import (
     render_context_markdown,
 )
 from booktx.epub_manifest import load_epub_template_from_manifest
-from booktx.models import Chunk, Placeholder, Record, TranslatedChunk, TranslatedRecord
+from booktx.models import (
+    Chunk,
+    Placeholder,
+    QualityReviewConfig,
+    Record,
+    StoredTranslationRecordV2,
+    TranslatedChunk,
+    TranslatedRecord,
+    TranslationReviewCandidate,
+)
 from booktx.placeholders import TOKEN_RE, collect_tokens
 from booktx.progress import source_record_sha256
-from booktx.translation_store import active_candidate
+from booktx.translation_store import (
+    active_candidate,
+    effective_target_candidate,
+    find_review_candidate,
+    review_chain_is_stale,
+)
 from booktx.versioning import lookup_version
 
 __all__ = [
@@ -62,6 +76,7 @@ __all__ = [
     "load_effective_translated_chunks",
     "validate_project",
     "validate_chunk_pair",
+    "review_coverage_findings",
     "write_report",
 ]
 
@@ -538,6 +553,172 @@ def load_validation_context(
 # --- project-level validation -----------------------------------------------
 
 
+def _active_review_usability_finding(
+    stored: StoredTranslationRecordV2,
+    chunk_id: str,
+    record_id: str,
+) -> Finding | None:
+    """Return an ERROR finding when an active_review cannot be used safely.
+
+    A set-but-unusable active_review means the selected output would silently
+    fall back to the active translation version, which is a data-corruption
+    risk. Missing, rejected, stale, cyclic, or invalid-pass-order reviews are
+    reported as errors regardless of the pass ``enforce`` setting.
+    """
+    if stored.active_review is None:
+        return None
+    review = find_review_candidate(stored, stored.active_review)
+    if review is None:
+        return Finding(
+            chunk_id=chunk_id,
+            severity=Severity.ERROR,
+            rule="active_review_missing",
+            message=(
+                f"store record {record_id} active_review {stored.active_review!r} "
+                "has no matching review candidate"
+            ),
+            record_id=record_id,
+        )
+    if review.status != "accepted":
+        return Finding(
+            chunk_id=chunk_id,
+            severity=Severity.ERROR,
+            rule="active_review_not_accepted",
+            message=(
+                f"active review {review.review_ref} for record {record_id} "
+                f"is {review.status!r}, not accepted"
+            ),
+            record_id=record_id,
+        )
+    if review_chain_is_stale(stored, review.review_ref):
+        return Finding(
+            chunk_id=chunk_id,
+            severity=Severity.ERROR,
+            rule="active_review_base_drift",
+            message=(
+                f"active review {review.review_ref} for record {record_id} "
+                "has a stale or missing derivation chain"
+            ),
+            record_id=record_id,
+        )
+    return None
+
+
+def _accepted_review_for_pass(
+    stored: StoredTranslationRecordV2,
+    pass_number: int,
+) -> TranslationReviewCandidate | None:
+    """Return an accepted, chain-valid review candidate for a pass, if any."""
+    for review in stored.reviews:
+        if review.pass_number != pass_number:
+            continue
+        if review.status != "accepted":
+            continue
+        if review_chain_is_stale(stored, review.review_ref):
+            continue
+        return review
+    return None
+
+
+def _stale_or_rejected_review_for_pass(
+    stored: StoredTranslationRecordV2,
+    pass_number: int,
+) -> TranslationReviewCandidate | None:
+    """Return a stale, rejected, or superseded review for a pass, if any."""
+    for review in stored.reviews:
+        if review.pass_number != pass_number:
+            continue
+        if review.status == "accepted" and not review_chain_is_stale(
+            stored, review.review_ref
+        ):
+            continue
+        return review
+    return None
+
+
+def review_coverage_findings(
+    stored: StoredTranslationRecordV2,
+    quality_cfg: QualityReviewConfig,
+    chunk_id: str,
+    record_id: str,
+    *,
+    force_error: bool = False,
+) -> list[Finding]:
+    """Per-pass review-coverage findings for one record.
+
+    ``force_error`` (used by ``build --require-reviewed``) treats every coverage
+    gap as an ERROR regardless of the pass ``enforce`` setting. Otherwise gaps
+    are emitted only when ``enforce`` is ``warn`` or ``error`` and the severity
+    follows ``enforce``.
+    """
+    findings: list[Finding] = []
+    if not quality_cfg.enabled:
+        return findings
+    # Only records with an accepted active translation version are eligible.
+    active = active_candidate(stored)
+    if active is None or active.status != "accepted":
+        return findings
+    pass_cfg_by_number = {p.pass_number: p for p in quality_cfg.passes}
+    for pass_number in quality_cfg.active_passes:
+        pcfg = pass_cfg_by_number.get(pass_number)
+        enforce = pcfg.enforce if pcfg is not None else "off"
+        if force_error:
+            severity = Severity.ERROR
+        else:
+            if enforce == "off":
+                continue
+            severity = Severity.ERROR if enforce == "error" else Severity.WARN
+        # Blocked by a missing required prior pass?
+        required = pcfg.required_base_pass if pcfg is not None else None
+        if (
+            required is not None
+            and required != pass_number
+            and _accepted_review_for_pass(stored, required) is None
+        ):
+            findings.append(
+                Finding(
+                    chunk_id=chunk_id,
+                    severity=severity,
+                    rule="review_pass_blocked",
+                    message=(
+                        f"record {record_id} pass {pass_number} blocked: "
+                        f"required pass {required} is missing"
+                    ),
+                    record_id=record_id,
+                )
+            )
+            continue
+        if _accepted_review_for_pass(stored, pass_number) is not None:
+            continue
+        if _stale_or_rejected_review_for_pass(stored, pass_number) is not None:
+            findings.append(
+                Finding(
+                    chunk_id=chunk_id,
+                    severity=severity,
+                    rule="stale_review_candidate",
+                    message=(
+                        f"record {record_id} has only a stale review "
+                        f"for pass {pass_number}"
+                    ),
+                    record_id=record_id,
+                )
+            )
+        else:
+            findings.append(
+                Finding(
+                    chunk_id=chunk_id,
+                    severity=severity,
+                    rule="missing_review_candidate",
+                    message=(
+                        f"record {record_id} is missing an accepted review "
+                        f"for pass {pass_number}"
+                    ),
+                    record_id=record_id,
+                )
+            )
+    return findings
+
+
 def load_effective_translated_chunks(  # noqa: C901
     project: Project,
     *,
@@ -629,6 +810,12 @@ def load_effective_translated_chunks(  # noqa: C901
         )
         ledger = None
 
+    quality_cfg = (
+        project.profile_config.quality_review
+        if project.profile_config is not None
+        else None
+    )
+
     if store is not None:
         for record_id, stored in store.records.items():
             chunk_id = f"{stored.chunk_id:04d}"
@@ -711,7 +898,16 @@ def load_effective_translated_chunks(  # noqa: C901
                 )
                 continue
 
-            candidate = active_candidate(stored)
+            # Effective output prefers a chain-valid active review candidate
+            # over the active translation version. A set-but-unusable
+            # active_review is reported as an error because the selected
+            # output would otherwise fall back silently.
+            review_finding = _active_review_usability_finding(
+                stored, chunk_id, record_id
+            )
+            if review_finding is not None:
+                findings.append(review_finding)
+            candidate = effective_target_candidate(stored)
             if candidate is None:
                 findings.append(
                     Finding(
@@ -726,37 +922,40 @@ def load_effective_translated_chunks(  # noqa: C901
                     )
                 )
                 continue
-            if ledger is not None and (raw_store_version == 2 or ledger.tracks):
-                try:
-                    lookup_version(ledger, candidate.version_ref)
-                except Exception:
+            # Review candidates are not registered in the translation version
+            # ledger and are only returned when already accepted and valid.
+            if not isinstance(candidate, TranslationReviewCandidate):
+                if ledger is not None and (raw_store_version == 2 or ledger.tracks):
+                    try:
+                        lookup_version(ledger, candidate.version_ref)
+                    except Exception:
+                        findings.append(
+                            Finding(
+                                chunk_id=chunk_id,
+                                severity=Severity.ERROR,
+                                rule="missing_ledger_version",
+                                message=(
+                                    f"store record {record_id} references version "
+                                    f"{candidate.version_ref} missing from the ledger"
+                                ),
+                                record_id=record_id,
+                            )
+                        )
+                        continue
+                if candidate.status != "accepted":
                     findings.append(
                         Finding(
                             chunk_id=chunk_id,
                             severity=Severity.ERROR,
-                            rule="missing_ledger_version",
+                            rule="active_version_not_accepted",
                             message=(
-                                f"store record {record_id} references version "
-                                f"{candidate.version_ref} missing from the ledger"
+                                f"active version {candidate.version_ref} for record "
+                                f"{record_id} is not accepted"
                             ),
                             record_id=record_id,
                         )
                     )
                     continue
-            if candidate.status != "accepted":
-                findings.append(
-                    Finding(
-                        chunk_id=chunk_id,
-                        severity=Severity.ERROR,
-                        rule="active_version_not_accepted",
-                        message=(
-                            f"active version {candidate.version_ref} for record "
-                            f"{record_id} is not accepted"
-                        ),
-                        record_id=record_id,
-                    )
-                )
-                continue
 
             translated_rec = TranslatedRecord(id=record_id, target=candidate.target)
             record_findings = validate_record_pair(
@@ -767,8 +966,18 @@ def load_effective_translated_chunks(  # noqa: C901
                 continue
             store_records.setdefault(chunk_id, {})[record_id] = translated_rec
 
+            if quality_cfg is not None:
+                findings.extend(
+                    review_coverage_findings(stored, quality_cfg, chunk_id, record_id)
+                )
+
             for inactive in stored.versions:
-                if inactive.version_ref == candidate.version_ref:
+                # Skip the active translation version (validated above as the
+                # effective or fallback target). When the effective output is
+                # a review candidate, every translation version is inactive.
+                if stored.active_version is not None and (
+                    inactive.version_ref == stored.active_version
+                ):
                     continue
                 if ledger is not None and (raw_store_version == 2 or ledger.tracks):
                     try:

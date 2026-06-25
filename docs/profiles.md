@@ -220,3 +220,69 @@ legacy `config.toml` is removed only after all moves succeed.
   Run `booktx profile migrate-current` first.
 - **`migration_target_exists`**: the destination profile directory already
   exists and is non-empty. Remove it or pick a new profile name.
+
+## Quality review configuration
+
+Add a `[quality_review]` table to the profile `config.toml`:
+
+```toml
+[quality_review]
+enabled = true
+active_passes = [1]
+require_all_active_passes = true
+
+[[quality_review.passes]]
+pass_number = 1
+name = "Flow review"
+enabled = true
+mode = "after_chapter"
+enforce = "warn"
+base = "active_translation"
+before_records = 2
+after_records = 2
+batch_words = 900
+instructions = "Improve reading flow and pronoun continuity."
+```
+
+Two-pass example:
+
+```toml
+[quality_review]
+enabled = true
+active_passes = [1, 2]
+
+[[quality_review.passes]]
+pass_number = 1
+name = "Flow review"
+base = "active_translation"
+enforce = "warn"
+
+[[quality_review.passes]]
+pass_number = 2
+name = "Final polish"
+base = "active_review"
+required_base_pass = 1
+enforce = "error"
+instructions = "Polish final prose. Prefer minimal edits."
+```
+
+Fields:
+
+- `enabled` -- enable or disable quality review for this profile
+- `active_passes` -- which passes are currently active (reported by `review status`)
+- `require_all_active_passes` -- when true, validation reports missing active passes
+
+Per-pass fields:
+
+- `pass_number` -- unique pass identifier (1, 2, ...)
+- `name` -- human-readable label
+- `enabled` -- enable or disable this specific pass
+- `mode` -- `manual`, `after_chapter`, or `before_build`
+- `enforce` -- `off` (no findings), `warn` (warning), `error` (blocking)
+- `base` -- `active_translation` (first-pass version) or `active_review` (prior review)
+- `required_base_pass` -- pass that must be completed first (for chaining)
+- `before_records` / `after_records` -- neighbor context window size
+- `batch_words` -- maximum source words per review task
+- `instructions` -- prompt for the reviewing agent
+
+Pass-through profiles must not set `[quality_review]`.
