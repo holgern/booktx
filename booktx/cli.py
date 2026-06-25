@@ -31,6 +31,7 @@ from rich.table import Table
 from booktx import __version__
 from booktx.acceptance import (
     SubmissionValidationError,
+    SubmittedRecord,
     accept_one_record,
     accept_translation_records,
 )
@@ -116,6 +117,7 @@ from booktx.models import (
     TranslatedRecord,
     TranslationCandidate,
     TranslationIdentity,
+    TranslationReviewCandidate,
     TranslationStore,
     TranslationTask,
 )
@@ -153,6 +155,7 @@ from booktx.translation_store import (
 from booktx.validate import (
     Finding,
     Severity,
+    ValidationReport,
     strict_load_translated,
     validate_chunk_pair,
     validate_project,
@@ -4055,7 +4058,9 @@ def translation_compare(
     payload = {"record_ref": selected["id"], "comparisons": []}
     for ref in requested:
         if ref.startswith("R"):
-            candidate = find_review_candidate(stored, ref)
+            candidate: TranslationCandidate | TranslationReviewCandidate | None = (
+                find_review_candidate(stored, ref)
+            )
             kind = "review"
         else:
             candidate = find_candidate(stored, ref)
@@ -4270,7 +4275,9 @@ def validate(
         raise typer.Exit(code=1)
 
 
-def _staged_preflight_check(proj, submitted_records, submitted_ids: set[str]) -> None:
+def _staged_preflight_check(
+    proj: Project, submitted_records: list[SubmittedRecord], submitted_ids: set[str]
+) -> None:
     """Run EPUB inline-XHTML preflight on staged submitted records.
 
     Layers submitted records on top of current effective translations and
@@ -4315,9 +4322,11 @@ def _staged_preflight_check(proj, submitted_records, submitted_ids: set[str]) ->
         # in effective translations (new submissions).
         existing_ids = {r.id for r in staged_records}
         source_ids = {r.id for r in source_chunk.records}
-        for rec in submitted_records:
-            if rec.id in source_ids and rec.id not in existing_ids:
-                staged_records.append(TranslatedRecord(id=rec.id, target=rec.target))
+        for submitted_rec in submitted_records:
+            if submitted_rec.id in source_ids and submitted_rec.id not in existing_ids:
+                staged_records.append(
+                    TranslatedRecord(id=submitted_rec.id, target=submitted_rec.target)
+                )
         if staged_records:
             staged_chunks[chunk_id] = TranslatedChunk(
                 records=staged_records, chunk_id=chunk_id
@@ -4350,7 +4359,7 @@ def _staged_preflight_check(proj, submitted_records, submitted_ids: set[str]) ->
         raise typer.Exit(code=1)
 
 
-def _render_validate_findings(report) -> None:
+def _render_validate_findings(report: ValidationReport) -> None:
     if not report.findings:
         return
     for f in report.findings:

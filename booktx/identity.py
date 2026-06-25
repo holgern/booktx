@@ -20,6 +20,7 @@ from booktx.config import (
 )
 from booktx.context import context_path, load_context
 from booktx.path_display import display_path
+from booktx.runtime import RuntimeMode
 from booktx.versioning import canonical_json_sha256, resolve_identity
 
 __all__ = [
@@ -39,7 +40,7 @@ def _relative(path: Path, root: Path) -> str:
 def context_identity_payload(
     proj: Project,
     *,
-    mode=None,
+    mode: RuntimeMode | None = None,
 ) -> dict[str, Any]:
     path = context_path(proj)
     rel_path = (
@@ -113,7 +114,9 @@ def store_identity_payload(proj: Project) -> dict[str, Any]:
     }
 
 
-def identity_payload(proj: Project, *, mode=None) -> dict[str, Any]:
+def identity_payload(
+    proj: Project, *, mode: RuntimeMode | None = None
+) -> dict[str, Any]:
     identity = resolve_identity(proj)
     active_version = None
     try:

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from booktx.config import (
+    Project,
     _err,
     load_profile_config,
     load_profile_root_marker,
@@ -37,7 +38,7 @@ class RuntimeMode:
 
 @dataclass(frozen=True, slots=True)
 class RuntimeContext:
-    project: object
+    project: Project
     mode: RuntimeMode
 
 

@@ -167,20 +167,22 @@ def _validate_submitted(
     source_chunks = bundle.index.source_chunks
     allowed_ids = {record.id for record in task.records} if task is not None else None
 
+    task_context_view_path = (
+        task.context_view_path
+        if task is not None and task.context_view_path is not None
+        else None
+    )
+
     try:
         context = load_validation_context(
             proj,
-            context_view_path=(
-                task.context_view_path
-                if task is not None and task.context_view_path is not None
-                else None
-            ),
+            context_view_path=task_context_view_path,
         )
     except FileNotFoundError as exc:
         raise _err(
             "missing_task_context_view",
             "task context view is missing: "
-            f"{task.context_view_path}. Recreate the task or restore the snapshot.",
+            f"{task_context_view_path}. Recreate the task or restore the snapshot.",
         ) from exc
     except ValueError as exc:
         raise _err(

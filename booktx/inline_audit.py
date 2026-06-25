@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Any
 
 from booktx.config import Project
 from booktx.epub_inline_xhtml import (
@@ -248,7 +249,7 @@ def safe_migrated_target(source: str, target: str) -> str | None:
 
 def migrate_inline_xhtml(
     project: Project, *, write_safe: bool = False
-) -> dict[str, object]:
+) -> dict[str, Any]:
     chunks = load_source_chunks(project)
     effective = load_effective_translated_chunks(project)
     translated_by_chunk = {

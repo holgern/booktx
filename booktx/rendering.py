@@ -11,13 +11,13 @@ on the CLI module (which would create a circular import).
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 
 from booktx.config import resolve_stored_path
 from booktx.path_display import display_path
-from booktx.tasks import task_paths
+from booktx.tasks import TaskPathDisplay, task_paths
 
 if TYPE_CHECKING:
     from booktx.config import Project
@@ -154,14 +154,14 @@ def _print_task_header(
         console.print(f"context file: {context_display_path}")
 
 
-def _render_json_output(payload: dict) -> None:
+def _render_json_output(payload: dict[str, Any]) -> None:
     """Render task as JSON."""
     console.print_json(json.dumps(payload, ensure_ascii=False))
 
 
 def _render_tsv_output(
     task: TranslationTask,
-    display,
+    display: TaskPathDisplay,
     json_submit: str,
 ) -> None:
     """Render task as TSV."""
@@ -175,7 +175,7 @@ def _render_tsv_output(
 
 def _render_block_output(
     task: TranslationTask,
-    display,
+    display: TaskPathDisplay,
     block_submit: str,
     view_sources: str,
     block_stdin: str,
@@ -232,7 +232,7 @@ def _render_block_output(
 
 def _render_default_output(
     task: TranslationTask,
-    display,
+    display: TaskPathDisplay,
     json_submit: str,
     context_display_path: str | None,
 ) -> None:
