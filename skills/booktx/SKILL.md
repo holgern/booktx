@@ -257,7 +257,8 @@ Use commands instead:
 booktx translate insert ...
 booktx translation activate ...
 booktx translate export ...
-booktx validate ...
+booktx check . --chapter CHAPTER --fail-on-warnings
+booktx validate . --profile PROFILE
 ```
 
 ## Bounded multi-chapter runs
@@ -271,16 +272,27 @@ booktx translate todo-status . --profile PROFILE --latest
 booktx translate todo-resume . --profile PROFILE --latest --format block
 ```
 
+## Single large chapters
+
+If a user asks to complete a chapter and that chapter has more than the safe
+task budget, do not use a giant `translate next --unit chapter` task. Let
+booktx create/reuse a single-chapter todo, or create it explicitly:
+
+```bash
+booktx translate todo-next . --profile PROFILE --start-chapter CHAPTER --chapters 1 --batch-words 800 --write
+booktx translate todo-resume . --profile PROFILE --latest --format block
+```
+
+Only force a giant chapter task with `--force-chapter` when explicitly requested.
+
+After each completed chapter, always run `booktx check` before adding the
+chapter note:
+
+```bash
+booktx check . --profile PROFILE --chapter CHAPTER --fail-on-warnings
+```
+
 Read the generated todo markdown and follow its loop. Stop only when the todo
-goal is complete or a stop condition occurs. Report partial progress if context
-budget runs low.
-
-The todo files are run-control artifacts under `translations/<profile>/todos/`.
-They are NOT translation submissions. `--max-run-words` is advisory only.
-
-When a user says "continue with two more chapters", continue the latest
-incomplete todo if one exists; otherwise create a new todo. Do not silently
-start from the wrong profile or outside the todo's planned chapters.
 Do not use old profile-state paths in a profile project:
 
 ```text

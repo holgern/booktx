@@ -1,0 +1,8 @@
+{
+  "schema": "booktx.profile-root.v1",
+  "profile": "de_default",
+  "source_id": "unavailable",
+  "target_language": "de",
+  "target_locale": "de",
+  "mode_hint": "profile-root"
+}

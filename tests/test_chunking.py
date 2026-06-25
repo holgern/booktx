@@ -218,3 +218,44 @@ def test_segment_preserves_placeholder_tokens():
         "__NAME_001__ met __NAME_002__.",
         "Then __TAG_001__ stayed.",
     ]
+
+
+def test_segment_propagates_plain_source_markup_by_default():
+    spans = [ProseSpan(text="Hello world.", placeholders=[], protected_terms=[])]
+    records = segment_spans(spans, language="en")
+    assert records[0].source_markup == "plain:v1"
+
+
+def test_segment_propagates_epub_inline_source_markup_to_records():
+    # Defense-in-depth: ProseSpan.source_markup flows into Record.source_markup
+    # so record-level validation can see EPUB inline XHTML records on new
+    # extractions. The EPUB span manifest remains the build authority.
+    spans = [
+        ProseSpan(
+            text="Don\u2019t you <i>feel</i> it?",
+            placeholders=[],
+            protected_terms=[],
+            source_markup="epub-inline-xhtml:v1",
+        )
+    ]
+    records = segment_spans(spans, language="en")
+    assert all(r.source_markup == "epub-inline-xhtml:v1" for r in records)
+
+
+def test_pack_chunks_emits_schema_v3_for_epub_inline_records():
+    spans = [
+        ProseSpan(
+            text="Don\u2019t you <i>feel</i> it?",
+            placeholders=[],
+            protected_terms=[],
+            source_markup="epub-inline-xhtml:v1",
+        )
+    ]
+    chunks = spans_to_chunks(spans, source_language="en", chunk_size=50)
+    assert chunks[0].schema_version == 3
+
+
+def test_pack_chunks_keeps_schema_v2_for_plain_records():
+    spans = [ProseSpan(text="Plain sentence.", placeholders=[], protected_terms=[])]
+    chunks = spans_to_chunks(spans, source_language="en", chunk_size=50)
+    assert chunks[0].schema_version == 2

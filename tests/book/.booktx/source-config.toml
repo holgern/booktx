@@ -1,0 +1,5 @@
+version = 1
+source_language = "en"
+source_file = ""
+format = "markdown"
+chunk_size = 50

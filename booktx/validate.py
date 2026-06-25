@@ -26,6 +26,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from booktx.chunking import RECORD_ID_SCHEME
 from booktx.config import (
@@ -1081,8 +1082,67 @@ def _context_render_drift_finding(
     )
 
 
+def _resolve_validation_scope(
+    project: Project,
+    *,
+    chapter_id: str | None = None,
+    record_ids: set[str] | None = None,
+    task_id: str | None = None,
+) -> tuple[str | None, set[str] | None]:
+    """Resolve a validation scope from chapter/record/task filters.
+
+    ``task_id`` expands to the task's chapter and record ids so a bounded
+    task run scopes validation to just those records. Explicit ``chapter_id``
+    and ``record_ids`` are passed through.
+    """
+    if task_id is None:
+        return chapter_id, record_ids
+    from booktx.config import load_translation_task
+
+    task = load_translation_task(project, task_id)
+    if task is None:
+        return chapter_id, record_ids
+    task_records = {record.id for record in task.records}
+    merged_records = task_records | (record_ids or set())
+    resolved_chapter = chapter_id or task.chapter_id or None
+    return resolved_chapter, merged_records or None
+
+
+def epub_preflight_findings_as_validation_findings(
+    preflight_findings: list[Any],
+) -> list[Finding]:
+    """Convert EPUB preflight findings into validation Findings with location."""
+    findings: list[Finding] = []
+    for pf in preflight_findings:
+        findings.append(
+            Finding(
+                chunk_id=pf.chunk_id or "epub-preflight",
+                severity=pf.severity,
+                rule=pf.rule,
+                message=_format_preflight_message(pf),
+                record_id=pf.record_id,
+            )
+        )
+    return findings
+
+
+def _format_preflight_message(pf: Any) -> str:
+    """Render a preflight finding message with source/target context."""
+    parts = [pf.message]
+    if pf.source or pf.target:
+        parts.append(f"source: {pf.source}")
+        parts.append(f"target: {pf.target}")
+    return " | ".join(parts)
+
+
 def validate_project(
-    project: Project, *, all_versions_strict: bool = False
+    project: Project,
+    *,
+    all_versions_strict: bool = False,
+    chapter_id: str | None = None,
+    record_ids: set[str] | None = None,
+    task_id: str | None = None,
+    require_complete: bool = False,
 ) -> ValidationReport:
     """Validate every translated chunk in ``project``.
 
@@ -1190,6 +1250,27 @@ def validate_project(
         all_versions_strict=all_versions_strict,
     )
     report.findings.extend(effective.findings)
+
+    # Resolve task_id scope into chapter/record filters so a bounded task run
+    # does not get blocked by unrelated chapters.
+    resolved_chapter, resolved_record_ids = _resolve_validation_scope(
+        project, chapter_id=chapter_id, record_ids=record_ids, task_id=task_id
+    )
+    if new_epub_pipeline:
+        from booktx.epub_preflight import validate_epub_inline_preflight
+
+        report.findings.extend(
+            epub_preflight_findings_as_validation_findings(
+                validate_epub_inline_preflight(
+                    project,
+                    chapter_id=resolved_chapter,
+                    record_ids=resolved_record_ids,
+                    require_complete=require_complete,
+                    source_chunks=source_chunks,
+                    effective_chunks=effective.chunks,
+                )
+            )
+        )
 
     if context is not None:
         drift_finding = _context_render_drift_finding(project, context)

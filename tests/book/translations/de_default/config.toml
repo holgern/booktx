@@ -1,0 +1,12 @@
+version = 1
+kind = "translation"
+profile = "de_default"
+source_language = "en"
+target_language = "de"
+target_locale = "de"
+output_filename = "book.de.md"
+
+[identity]
+actor = "user:unknown"
+harness = "booktx"
+model = "human"

@@ -12,12 +12,14 @@ from booktx.status import StatusBundle
 from booktx.tasks import create_translation_task, select_translation_record_ids
 from booktx.todo_status import (
     build_todo_status,
+    find_incomplete_todo_for_chapter,
     latest_incomplete_todo,
     load_translation_todo,
 )
 from booktx.validate import validate_project
 
 __all__ = [
+    "ensure_single_chapter_todo",
     "resolve_translation_todo",
     "resume_translation_todo",
 ]
@@ -56,7 +58,15 @@ def resume_translation_todo(
 ) -> TranslationTask:
     """Create the next bounded translation task pinned to the todo's chapter set."""
     todo = resolve_translation_todo(project, bundle, todo_id=todo_id, latest=latest)
-    report = validate_project(project)
+    # Scope validation to the todo's current chapter so unrelated-chapter
+    # preflight errors do not block a bounded run.
+    scope_chapter = None
+    for ch in todo.chapters:
+        live = bundle.index.chapters_by_id.get(ch.chapter_id)
+        if live is not None and live.records_remaining > 0:
+            scope_chapter = ch.chapter_id
+            break
+    report = validate_project(project, chapter_id=scope_chapter)
     status = build_todo_status(
         project,
         todo,
@@ -135,3 +145,34 @@ def resume_translation_todo(
         requested_max_words=todo.batch_words,
         todo_id=todo.todo_id,
     )
+
+
+def ensure_single_chapter_todo(
+    project: Project,
+    bundle: StatusBundle,
+    *,
+    chapter_id: str,
+    batch_words: int,
+    max_run_words: int | None = None,
+) -> TranslationTodo:
+    """Create or reuse a single-chapter todo for an oversized chapter.
+
+    Looks up an existing incomplete todo for the chapter first (prevents
+    duplicates on retry). If none exists, builds a new one with ``chapters=1``
+    and writes it to disk.
+    """
+    from booktx.agent_todo import build_translation_todo, write_translation_todo
+
+    existing = find_incomplete_todo_for_chapter(project, bundle, chapter_id)
+    if existing is not None:
+        return existing
+    todo = build_translation_todo(
+        project,
+        bundle,
+        chapters=1,
+        batch_words=batch_words,
+        max_run_words=max_run_words,
+        start_chapter=chapter_id,
+    )
+    write_translation_todo(project, todo)
+    return todo

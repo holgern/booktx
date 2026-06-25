@@ -14,8 +14,13 @@ from booktx.epub_inline_xhtml import (
     strip_inline_xhtml,
 )
 from booktx.io_utils import write_text_atomic
+from booktx.models import Chunk, Record, TranslatedChunk, TranslatedRecord
 from booktx.progress import load_source_chunks
-from booktx.validate import load_effective_translated_chunks, validate_record_pair
+from booktx.validate import (
+    _resolve_validation_scope,
+    load_effective_translated_chunks,
+    validate_record_pair,
+)
 
 
 @dataclass(slots=True)
@@ -40,7 +45,68 @@ class InlineAuditResult:
         }
 
 
-def audit_inline_xhtml(project: Project) -> InlineAuditResult:
+def _collect_inline_record_ids(
+    project: Project,
+    chunks: list[Chunk],
+    effective_chunks: dict[str, TranslatedChunk],
+    resolved_chapter: str | None,
+    resolved_record_ids: set[str] | None,
+) -> tuple[dict[str, str], set[str]]:
+    """Collect (record_id -> chunk_id, all_inline_ids) using manifest + markup.
+
+    Uses the EPUB span manifest as the primary authority so old projects
+    without record-level source_markup are still audited.
+    """
+    from booktx.epub_preflight import assemble_epub_replacements
+
+    inline_record_ids: set[str] = set()
+    inline_record_chunk: dict[str, str] = {}
+    try:
+        assembled = assemble_epub_replacements(
+            project,
+            source_chunks={c.chunk_id: c for c in chunks},
+            effective_chunks=effective_chunks,
+        )
+    except Exception:  # noqa: BLE001 - audit must not crash on a bad manifest
+        assembled = []
+    for span in assembled:
+        if span.span_ref.source_markup != INLINE_XHTML_CODEC:
+            continue
+        if resolved_chapter and span.chapter_id != resolved_chapter:
+            continue
+        for record in span.records:
+            if resolved_record_ids and record.id not in resolved_record_ids:
+                continue
+            inline_record_ids.add(record.id)
+            inline_record_chunk[record.id] = record.id.split("-", 1)[0]
+    # Defense-in-depth: also pick up records with explicit source_markup.
+    for chunk in chunks:
+        for source in chunk.records:
+            if source.source_markup == INLINE_XHTML_CODEC:
+                if resolved_chapter:
+                    continue
+                if resolved_record_ids and source.id not in resolved_record_ids:
+                    continue
+                inline_record_ids.add(source.id)
+                inline_record_chunk.setdefault(source.id, chunk.chunk_id)
+    return inline_record_chunk, inline_record_ids
+
+
+def audit_inline_xhtml(
+    project: Project,
+    *,
+    chapter_id: str | None = None,
+    task_id: str | None = None,
+) -> InlineAuditResult:
+    """Audit active translations for required EPUB inline XHTML semantics.
+
+    Uses the EPUB span manifest (the authority) and/or propagated
+    ``Record.source_markup`` to identify inline-source records, so old
+    projects without record-level markup are still audited.
+    """
+
+    from booktx.epub_preflight import validate_epub_inline_preflight
+
     chunks = load_source_chunks(project)
     effective = load_effective_translated_chunks(project)
     targets = {
@@ -48,41 +114,82 @@ def audit_inline_xhtml(project: Project) -> InlineAuditResult:
         for chunk in effective.chunks.values()
         for record in chunk.records
     }
+    resolved_chapter, resolved_record_ids = _resolve_validation_scope(
+        project, chapter_id=chapter_id, record_ids=None, task_id=task_id
+    )
+    inline_record_chunk, inline_record_ids = _collect_inline_record_ids(
+        project, chunks, effective.chunks, resolved_chapter, resolved_record_ids
+    )
     result = InlineAuditResult()
-    for chunk in chunks:
-        for source in chunk.records:
-            if source.source_markup != INLINE_XHTML_CODEC:
-                continue
-            result.records_with_inline_source += 1
-            target = targets.get(source.id)
-            if target is None:
-                result.needs_review += 1
-                result.findings.append(
-                    {"record_id": source.id, "rule": "missing_target"}
-                )
-                continue
-            findings = validate_record_pair(source, target, chunk.chunk_id)
-            errors = [finding for finding in findings if finding.severity == "error"]
-            if not errors:
-                result.valid_active_targets += 1
-                continue
-            result.needs_review += 1
-            rules = {finding.rule for finding in errors}
-            if "inline_xhtml_preserved" in rules:
-                result.missing_inline_tags += 1
-            if "inline_xhtml_parseable" in rules:
-                result.invalid_xhtml_targets += 1
-            if "inline_xhtml_opaque_preserved" in rules:
-                result.opaque_changed += 1
-            for finding in errors:
-                result.findings.append(
-                    {
-                        "record_id": source.id,
-                        "rule": finding.rule,
-                        "message": finding.message,
-                    }
-                )
+    result.records_with_inline_source = len(inline_record_ids)
+
+    # Use the span-level preflight for build-grade findings.
+    preflight_findings = validate_epub_inline_preflight(
+        project,
+        chapter_id=resolved_chapter,
+        record_ids=resolved_record_ids,
+        source_chunks={c.chunk_id: c for c in chunks},
+        effective_chunks=effective.chunks,
+    )
+    for pf in preflight_findings:
+        rules = {pf.rule}
+        if "inline_xhtml_preserved" in rules:
+            result.missing_inline_tags += 1
+        if "inline_xhtml_parseable" in rules:
+            result.invalid_xhtml_targets += 1
+        if "inline_xhtml_opaque_preserved" in rules:
+            result.opaque_changed += 1
+        result.needs_review += 1
+        result.findings.append(
+            {"record_id": pf.record_id, "rule": pf.rule, "message": pf.message}
+        )
+    # Per-record validation for record-level findings (existing markup).
+    _audit_inline_records(
+        result, inline_record_ids, inline_record_chunk, chunks, targets
+    )
     return result
+
+
+def _audit_inline_records(
+    result: InlineAuditResult,
+    inline_record_ids: set[str],
+    inline_record_chunk: dict[str, str],
+    chunks: list[Chunk],
+    targets: dict[str, TranslatedRecord],
+) -> None:
+    """Validate each inline-source record and update the audit result."""
+    source_by_id: dict[str, Record] = {}
+    for chunk in chunks:
+        for rec in chunk.records:
+            source_by_id[rec.id] = rec
+    for record_id in sorted(inline_record_ids):
+        source_rec = source_by_id.get(record_id)
+        if source_rec is None:
+            continue
+        target = targets.get(record_id)
+        if target is None:
+            result.needs_review += 1
+            result.findings.append({"record_id": record_id, "rule": "missing_target"})
+            continue
+        chunk_id = inline_record_chunk.get(record_id, record_id.split("-", 1)[0])
+        findings = validate_record_pair(source_rec, target, chunk_id)
+        errors = [f for f in findings if f.severity == "error"]
+        if not errors:
+            result.valid_active_targets += 1
+            continue
+        result.needs_review += 1
+        rules = {f.rule for f in errors}
+        if "inline_xhtml_preserved" in rules:
+            result.missing_inline_tags += 1
+        if "inline_xhtml_parseable" in rules:
+            result.invalid_xhtml_targets += 1
+        if "inline_xhtml_opaque_preserved" in rules:
+            result.opaque_changed += 1
+        for f in errors:
+            result.findings.append(
+                {"record_id": record_id, "rule": f.rule, "message": f.message}
+            )
+    return
 
 
 def _single_full_wrapper(source: str) -> tuple[str, tuple[tuple[str, str], ...]] | None:

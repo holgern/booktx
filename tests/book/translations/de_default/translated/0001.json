@@ -1,0 +1,11 @@
+{
+  "chunk_id": "0001",
+  "records": [
+    { "id": "0001-000001", "target": "Chapter One" },
+    { "id": "0001-000002", "target": "Hallo Welt." },
+    { "id": "0001-000003", "target": "A second sentence." },
+    { "id": "0001-000004", "target": "Run <code>pip install</code> now." },
+    { "id": "0001-000005", "target": "Chapter Two" },
+    { "id": "0001-000006", "target": "The end." }
+  ]
+}

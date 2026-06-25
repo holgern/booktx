@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 from booktx.chunking import ProseSpan
 from booktx.config import (
@@ -196,6 +197,35 @@ def _build_markdown(
     return BuildResult(output_path=out_path, format="markdown", span_count=len(spans))
 
 
+def _format_inline_xhtml_build_error(span: Any, message: str) -> str:
+    """Format an EPUB inline-XHTML build error with chapter/record location.
+
+    Build is a fallback for what validate/check should catch first; the message
+    points the user at the scoped check command.
+    """
+    from booktx.command_hints import check_command
+
+    parts = [message]
+    location = []
+    if getattr(span, "chapter_id", ""):
+        location.append(f"chapter {span.chapter_id}")
+    if getattr(span, "chapter_title", ""):
+        location.append(span.chapter_title)
+    records = getattr(span, "records", [])
+    if records:
+        location.append(f"record {records[0].id}")
+    span_ref = getattr(span, "span_ref", None)
+    if span_ref is not None:
+        if getattr(span_ref, "block_id", ""):
+            location.append(f"block {span_ref.block_id}")
+        if getattr(span_ref, "document_href", ""):
+            location.append(f"href {span_ref.document_href}")
+    if location:
+        parts.append("at " + ", ".join(location))
+    parts.append(f"Run: {check_command(None, chapter_id=span.chapter_id)}")
+    return " ".join(parts)
+
+
 def _build_epub(
     project: Project,
     *,
@@ -232,76 +262,27 @@ def _build_epub(
     except ValueError as exc:
         raise BuildError(str(exc)) from exc
 
-    chunks = _load_chunks(project)
     translated = _load_translated(project, require_reviewed=require_reviewed)
-    flat_records = [record for chunk in chunks for record in chunk.records]
-    translated_by_id = {
-        record.id: record for chunk in translated.values() for record in chunk.records
-    }
-    replacements: list[Replacement] = []
-    from booktx.epub_inline_xhtml import sanitize_target_fragment
+    from booktx.epub_preflight import assemble_epub_replacements
 
-    for idx, span_ref in enumerate(epub_template.spans):
-        next_span_index = (
-            epub_template.spans[idx + 1].span_index
-            if idx + 1 < len(epub_template.spans)
-            else None
-        )
-        source_records = [
-            record
-            for record in flat_records
-            if record.span_index is not None
-            and record.span_index >= span_ref.span_index
-            and (next_span_index is None or record.span_index < next_span_index)
-        ]
-        if not source_records:
-            raise BuildError(
-                "Stored EPUB spans no longer align with the extracted chunk stream. "
-                "Re-run `booktx extract`."
-            )
-        chunk_targets: list[str] = []
-        source_fragments: list[str] = []
-        for record in source_records:
-            translated_record = translated_by_id.get(record.id)
-            if translated_record is None and require_complete:
-                raise BuildError("build requires complete translations")
-            chunk_targets.append(
-                translated_record.target if translated_record else record.source
-            )
-            source_fragments.append(record.source)
-        span = ProseSpan(
-            text=" ".join(source_fragments),
-            placeholders=[p for record in source_records for p in record.placeholders],
-            protected_terms=[
-                term for record in source_records for term in record.protected_terms
-            ],
-        )
-        joined_target = records_to_span_text(span, chunk_targets)
-        joined_source = records_to_span_text(span, source_fragments)
-        source_view = span_ref.source_view_text or span_ref.source_text
-        replacement_text = joined_target
-        allow_inline_xhtml = False
-        records_unchanged = all(
-            target == source
-            for target, source in zip(chunk_targets, source_fragments, strict=True)
-        )
-        if records_unchanged:
-            replacement_text = span_ref.source_text
-        elif joined_target == source_view:
-            replacement_text = span_ref.source_text
-        elif span_ref.source_markup == "epub-inline-xhtml:v1":
-            sanitized = sanitize_target_fragment(joined_target, joined_source)
-            errors = [issue for issue in sanitized.issues if issue.severity == "error"]
-            if errors:
-                raise BuildError(errors[0].message)
-            replacement_text = sanitized.xhtml
-            allow_inline_xhtml = True
+    assembled_spans = assemble_epub_replacements(
+        project,
+        source_chunks={chunk.chunk_id: chunk for chunk in _load_chunks(project)},
+        effective_chunks=translated,
+        require_complete=require_complete,
+    )
+    replacements: list[Replacement] = []
+    for span in assembled_spans:
+        span_ref = span.span_ref
+        errors = [issue for issue in span.sanitized_issues if issue.severity == "error"]
+        if errors:
+            raise BuildError(_format_inline_xhtml_build_error(span, errors[0].message))
         replacements.append(
             Replacement(
                 block_id=span_ref.block_id,
-                text=replacement_text,
+                text=span.replacement_text,
                 expected_source=span_ref.source_text,
-                allow_inline_xhtml=allow_inline_xhtml,
+                allow_inline_xhtml=span.allow_inline_xhtml,
             )
         )
 

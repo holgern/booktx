@@ -994,3 +994,212 @@ def test_review_coverage_findings_satisfied_when_review_present():
         ],
     )
     assert review_coverage_findings(rec, cfg, "0001", "0001-000001") == []
+
+
+# --- EPUB inline-XHTML preflight (build-grade) ---------------------------
+
+
+def _extract_epub_for_preflight(tmp_path: Path):
+    import tests.test_epub_io as epub_fixtures
+    from booktx.config import find_source_file
+
+    proj = init_project(tmp_path / "book", target_language="de")
+    epub_path = proj.source_dir / "book.epub"
+    epub_fixtures._make_epub(epub_path)
+    find_source_file(proj)
+    res = CliRunner().invoke(app, ["extract", str(proj.root)])
+    assert res.exit_code == 0, res.output
+    return load_project(proj.root)
+
+
+def _simulate_old_project_plain_records(proj) -> None:
+    """Reproduce the brief's bug: old projects whose chunk records lack
+    record-level ``source_markup`` (plain:v1) while the EPUB span manifest
+    still marks spans ``epub-inline-xhtml:v1``. The manifest is the authority."""
+    for path in proj.chunks():
+        chunk = json.loads(path.read_text("utf-8"))
+        for record in chunk["records"]:
+            record.pop("source_markup", None)
+        path.write_text(json.dumps(chunk, ensure_ascii=False), encoding="utf-8")
+
+
+def _write_chunk_translations(proj, transform) -> None:
+    proj.translated_dir.mkdir(parents=True, exist_ok=True)
+    for path in proj.chunks():
+        chunk = json.loads(path.read_text("utf-8"))
+        records = [
+            {"id": record["id"], "target": transform(record["source"])}
+            for record in chunk["records"]
+        ]
+        payload = {"chunk_id": chunk["chunk_id"], "records": records}
+        (proj.translated_dir / f"{chunk['chunk_id']}.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+
+
+def _broken_record_ids(proj) -> set[str]:
+    return {
+        record["id"]
+        for path in proj.chunks()
+        for record in json.loads(path.read_text("utf-8"))["records"]
+        if "<strong>" in record["source"]
+    }
+
+
+def _drop_strong_target(src: str) -> str:
+    """Translation transform that drops <strong>...</strong>; identity otherwise."""
+    return "Hallo Welt." if "<strong>" in src else src
+
+
+def test_preflight_catches_missing_tag_with_plain_record_markup(tmp_path: Path):
+    # ac-0006: manifest is authoritative. Even when Record.source_markup is
+    # plain:v1 (old project), the preflight catches the missing inline tag.
+    from booktx.epub_preflight import validate_epub_inline_preflight
+
+    proj = _extract_epub_for_preflight(tmp_path)
+    _simulate_old_project_plain_records(proj)
+    _write_chunk_translations(proj, _drop_strong_target)
+
+    findings = validate_epub_inline_preflight(proj)
+
+    assert any(
+        f.rule == "inline_xhtml_preserved" and f.severity == "error" for f in findings
+    ), findings
+    assert any(f.record_id for f in findings), "expected an attributed record id"
+    assert any(f.span_index is not None for f in findings)
+    assert any(f.block_id for f in findings)
+    assert any(f.document_href for f in findings)
+
+
+def test_validate_epub_preflight_clean_when_tags_preserved(tmp_path: Path):
+    from booktx.epub_preflight import validate_epub_inline_preflight
+
+    proj = _extract_epub_for_preflight(tmp_path)
+    _simulate_old_project_plain_records(proj)
+    _write_chunk_translations(proj, lambda src: src)  # identity -> source-as-target
+
+    findings = validate_epub_inline_preflight(proj)
+    assert findings == []
+
+
+def test_validate_epub_preflight_chapter_scope_filters_unrelated(tmp_path: Path):
+    from booktx.cli import _project_status_snapshot
+    from booktx.epub_preflight import validate_epub_inline_preflight
+
+    proj = _extract_epub_for_preflight(tmp_path)
+    _simulate_old_project_plain_records(proj)
+    _write_chunk_translations(proj, _drop_strong_target)
+
+    bundle = _project_status_snapshot(proj)
+    all_chapter_ids = [c.chapter_id for c in bundle.index.chapter_summaries]
+    broken_ids = _broken_record_ids(proj)
+    broken_chapter = next(
+        (
+            cid
+            for cid in all_chapter_ids
+            if any(
+                rid in broken_ids
+                for rid in bundle.index.record_ids_by_chapter.get(cid, [])
+            )
+        ),
+        None,
+    )
+    other_chapter = next(
+        (cid for cid in all_chapter_ids if cid != broken_chapter), None
+    )
+    if other_chapter is not None:
+        scoped = validate_epub_inline_preflight(proj, chapter_id=other_chapter)
+        assert scoped == [], scoped
+    if broken_chapter is not None:
+        scoped_broken = validate_epub_inline_preflight(proj, chapter_id=broken_chapter)
+        assert any(f.rule == "inline_xhtml_preserved" for f in scoped_broken)
+
+
+def test_validate_epub_preflight_record_id_scope(tmp_path: Path):
+    from booktx.epub_preflight import validate_epub_inline_preflight
+
+    proj = _extract_epub_for_preflight(tmp_path)
+    _simulate_old_project_plain_records(proj)
+    _write_chunk_translations(proj, _drop_strong_target)
+    broken_ids = _broken_record_ids(proj)
+    # Scoping to the broken record's id surfaces the span finding.
+    scoped = validate_epub_inline_preflight(proj, record_ids=broken_ids)
+    assert any(f.rule == "inline_xhtml_preserved" for f in scoped)
+
+    # Scoping to a record in a DIFFERENT span (ch2 "The end") yields nothing,
+    # because that span is not touched by the broken record.
+    other_span_id = next(
+        record["id"]
+        for path in proj.chunks()
+        for record in json.loads(path.read_text("utf-8"))["records"]
+        if record["source"] == "The end."
+    )
+    scoped_other = validate_epub_inline_preflight(proj, record_ids={other_span_id})
+    assert scoped_other == []
+
+
+def test_validate_project_catches_missing_inline_tag_via_preflight(tmp_path: Path):
+    # End-to-end: validate_project uses the shared EPUB preflight so it catches
+    # the skeleton mismatch before build, even for old projects without
+    # record-level source_markup.
+    proj = _extract_epub_for_preflight(tmp_path)
+    _simulate_old_project_plain_records(proj)
+    _write_chunk_translations(proj, _drop_strong_target)
+
+    report = validate_project(proj)
+
+    assert any(
+        f.rule == "inline_xhtml_preserved" and f.severity == "error"
+        for f in report.findings
+    ), report.findings
+    assert not report.passed
+
+
+def test_check_chapter_reports_exact_inline_location(tmp_path: Path):
+    # CLI-level test for 'booktx check --chapter 0005'.
+    # Assert output includes chapter id, record id, source snippet, rule.
+    proj = _extract_epub_for_preflight(tmp_path)
+    _simulate_old_project_plain_records(proj)
+    _write_chunk_translations(proj, _drop_strong_target)
+
+    # Get the broken chapter id.
+    broken_ids = _broken_record_ids(proj)
+    from booktx.cli import _project_status_snapshot
+
+    bundle = _project_status_snapshot(proj)
+    broken_chapter = next(
+        (
+            c.chapter_id
+            for c in bundle.index.chapter_summaries
+            if any(
+                rid in broken_ids
+                for rid in bundle.index.record_ids_by_chapter.get(c.chapter_id, [])
+            )
+        ),
+        None,
+    )
+    if broken_chapter is None:
+        # No chapter map available; skip scoped CLI test.
+        return
+    res = runner.invoke(app, ["check", str(proj.root), "--chapter", broken_chapter])
+    assert res.exit_code == 1
+    output = res.output
+    assert "inline_xhtml_preserved" in output
+    assert broken_chapter in output or "inline_xhtml" in output
+
+
+def test_audit_inline_uses_manifest_when_record_markup_missing(tmp_path: Path):
+    # ac-0010: audit_inline returns nonzero records_with_inline_source for
+    # EPUB projects even when Record.source_markup is plain:v1.
+    from booktx.inline_audit import audit_inline_xhtml
+
+    proj = _extract_epub_for_preflight(tmp_path)
+    _simulate_old_project_plain_records(proj)
+    _write_chunk_translations(proj, _drop_strong_target)
+
+    result = audit_inline_xhtml(proj)
+
+    assert result.records_with_inline_source > 0
+    assert any(f["rule"] == "inline_xhtml_preserved" for f in result.findings), (
+        result.findings
+    )

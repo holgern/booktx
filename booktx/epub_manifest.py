@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from hashlib import sha256
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from booktx.chunking import ProseSpan
 from booktx.models import EpubNavigationRef, EpubSpanRef, EpubTemplateData, Manifest
@@ -192,10 +192,15 @@ def assert_source_sha(path: Path | str, expected_sha: str) -> None:
 
 def prose_span_from_epub_ref(span_ref: EpubSpanRef) -> ProseSpan:
     """Convert an EPUB span reference to a ProseSpan for sentence segmentation."""
+    from typing import cast
+
     return ProseSpan(
         text=span_ref.source_text,
         placeholders=span_ref.placeholders,
         protected_terms=span_ref.protected_terms,
+        source_markup=cast(
+            Literal["plain:v1", "epub-inline-xhtml:v1"], span_ref.source_markup
+        ),
     )
 
 
@@ -365,6 +370,7 @@ def structured_to_span_refs(
                     placeholders=record_placeholders,
                     protected_terms=names,
                     presegmented=block_has_upstream_segments,
+                    source_markup=INLINE_XHTML_CODEC,
                 )
             )
         span_ref = EpubSpanRef(

@@ -22,6 +22,7 @@ __all__ = [
     "translate_todo_resume_command",
     "context_chapter_note_command",
     "validate_command",
+    "check_command",
     "build_command",
 ]
 
@@ -157,6 +158,28 @@ def validate_command(
     """Build a ``booktx validate`` command string."""
     strict = " --fail-on-warnings" if fail_on_warnings else ""
     return f"booktx validate .{profile_option_fragment(project, mode)}{strict}"
+
+
+def check_command(
+    project: Project | None,
+    *,
+    mode: RuntimeMode | None = None,
+    chapter_id: str | None = None,
+    task_id: str | None = None,
+    fail_on_warnings: bool = True,
+) -> str:
+    """Build a ``booktx check`` command string.
+
+    ``check`` is the human-friendly alias for scoped validation + EPUB inline
+    preflight. ``project`` may be ``None`` when the hint is rendered without a
+    resolved project (e.g. inside build errors); in that case the profile and
+    path fragments are omitted.
+    """
+    profile = profile_option_fragment(project, mode) if project is not None else ""
+    chapter = f" --chapter {chapter_id}" if chapter_id else ""
+    task = f" --task-id {task_id}" if task_id else ""
+    strict = " --fail-on-warnings" if fail_on_warnings else ""
+    return f"booktx check .{profile}{chapter}{task}{strict}"
 
 
 def build_command(

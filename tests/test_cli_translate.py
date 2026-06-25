@@ -8,7 +8,12 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from booktx.cli import app
-from booktx.config import load_project, translation_store_path
+from booktx.config import (
+    find_source_file,
+    init_project,
+    load_project,
+    translation_store_path,
+)
 from booktx.context import load_context, write_context
 
 runner = CliRunner()
@@ -1466,3 +1471,92 @@ def test_translate_next_refuses_ready_context_with_unapproved_required_answers(
     )
     assert res.exit_code == 1
     assert "unapproved" in res.output
+
+
+# --- EPUB inline-XHTML pre-write rejection --------------------------------
+
+
+def test_translate_insert_rejects_missing_inline_tag_for_epub_record(
+    tmp_path: Path,
+):
+    # ac-0009: translate insert rejects an EPUB inline-XHTML target missing a
+    # required tag BEFORE writing translation-store.json.
+    from ebooklib import epub
+
+    proj = init_project(tmp_path / "book", target_language="de")
+    book = epub.EpubBook()
+    book.set_identifier("test")
+    book.set_title("T")
+    book.set_language("en")
+    ch1 = epub.EpubHtml(title="C1", file_name="ch1.xhtml", lang="en")
+    ch1.content = (
+        '<html xmlns="http://www.w3.org/1999/xhtml">'
+        "<head><title>C1</title></head><body>"
+        "<p>Alice met <strong>Bob</strong>.</p>"
+        "</body></html>"
+    )
+    book.add_item(ch1)
+    book.spine = ["nav", ch1]
+    book.add_item(epub.EpubNav())
+    book.add_item(epub.EpubNcx())
+    book.toc = (ch1,)
+    epub.write_epub(str(proj.source_dir / "book.epub"), book, {})
+    find_source_file(proj)
+    res = runner.invoke(app, ["extract", str(proj.root)])
+    assert res.exit_code == 0, res.output
+    proj = load_project(proj.root)
+    # Simulate old project: strip source_markup from chunk records.
+    for path in proj.chunks():
+        chunk = json.loads(path.read_text("utf-8"))
+        for r in chunk["records"]:
+            r.pop("source_markup", None)
+        path.write_text(json.dumps(chunk, ensure_ascii=False), encoding="utf-8")
+    # Initialize context so translate next works.
+    runner.invoke(app, ["context", "init", str(proj.root), "--non-interactive"])
+    runner.invoke(
+        app,
+        ["context", "mark-ready", str(proj.root), "--force", "--reason", "test"],
+    )
+    # Request the next task.
+    next_res = runner.invoke(
+        app,
+        ["translate", "next", str(proj.root), "--unit", "chapter", "--json"],
+    )
+    assert next_res.exit_code == 0, next_res.output
+    task = json.loads(next_res.output)
+    # Build a submission that drops the <strong> tag.
+    records = []
+    for r in task["records"]:
+        if "<strong>" in r.get("source", ""):
+            records.append({"id": r["id"], "target": "Hallo Welt."})
+        else:
+            records.append({"id": r["id"], "target": r["source"]})
+    ingest_path = proj.profile_dir / "ingest" / f"{task['task_id']}.json"
+    ingest_path.parent.mkdir(parents=True, exist_ok=True)
+    ingest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "profile": proj.profile,
+                "task_id": task["task_id"],
+                "translation_version": task.get("translation_version"),
+                "records": records,
+            }
+        ),
+        encoding="utf-8",
+    )
+    insert_res = runner.invoke(
+        app,
+        [
+            "translate",
+            "insert",
+            str(proj.root),
+            "--task-id",
+            task["task_id"],
+            "--json-file",
+            str(ingest_path),
+        ],
+    )
+    # Pre-write enforcement: insert should reject before writing the store.
+    assert insert_res.exit_code != 0
+    assert "inline_xhtml_preserved" in insert_res.output

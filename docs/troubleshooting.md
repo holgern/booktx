@@ -180,3 +180,20 @@ Do not use `context mark-ready --force` during normal translation setup. If a le
 ## EPUB inline XHTML validation failures
 
 If validation reports `inline_xhtml_preserved`, `inline_xhtml_no_new_attributes`, `inline_xhtml_no_block_tags`, or `inline_xhtml_opaque_preserved`, correct the target so it preserves the source inline XHTML skeleton. Use `booktx translate audit-inline ./book --profile PROFILE` to list active records that need review.
+
+## Validate passed but build failed (inline XHTML)
+
+If `booktx build` fails with `target inline XHTML skeleton does not match the source`
+but `booktx validate` reported no errors, this indicates a validation gap that
+should no longer occur with the current version. The EPUB inline-XHTML preflight
+is now shared between validate/check and build.
+
+If you encounter this, run `booktx check` which uses the build-grade preflight:
+
+```bash
+booktx check . --chapter 0005 --fail-on-warnings
+```
+
+The check output will show the exact record, chapter, source/target snippet, and
+suggested fix commands. File a booktx bug if check also misses the error that
+build catches.

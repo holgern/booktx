@@ -111,6 +111,30 @@ budget runs low. `--max-run-words` is advisory only.
   Only use `translate next --unit chapter` for small chapters or when the user
   explicitly requests a whole-chapter task.
 
+## Finish a single large chapter
+
+If the user asks to finish a chapter and that chapter has more than the safe
+task budget, booktx automatically creates a single-chapter todo and returns
+bounded batch tasks. Do not create a giant chapter task:
+
+```bash
+booktx translate next . --chapter 0005 --unit chapter --max-words 800 --format block
+# booktx auto-creates a single-chapter todo and returns a bounded batch
+booktx translate insert . --task-id TASK --file ingest/TASK.block.txt --format block
+booktx check . --chapter 0005 --fail-on-warnings
+booktx translate todo-resume . --latest --format block
+# repeat until chapter complete
+```
+
+Only use `--force-chapter` for small chapters or when explicitly requested.
+
+After each chapter, always run `booktx check` before adding the chapter note:
+
+```bash
+booktx check . --chapter 0005 --fail-on-warnings
+booktx context chapter-note . 0005 --title "ONE" ...
+```
+
 ## Context approval hard stop
 
 Stop and ask the user whenever context questions are open or only recommended. Do not translate from a context that you generated yourself. Prepare a user review form, then wait for explicit approval or edited answers before running `booktx context approve` and `booktx context mark-ready`.

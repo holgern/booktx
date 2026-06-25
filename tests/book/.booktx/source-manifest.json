@@ -1,0 +1,259 @@
+{
+  "version": 2,
+  "source": {
+    "filename": "book.epub",
+    "format": "epub",
+    "source_language": "en",
+    "target_language": "de",
+    "sha256": "efd92cc96ec18ee485b491c0f8f265362dc13c9ec4472887bc72ba0887ef1833"
+  },
+  "chunk_count": 1,
+  "record_count": 6,
+  "chunk_size": 50,
+  "record_id_scheme": "chunk-local:v1",
+  "segmenter": {
+    "name": "phrasplit",
+    "mode": "sentence",
+    "use_spacy": false,
+    "language": "en",
+    "backend": "regex",
+    "version": "0.3.3.dev3+g9715f5ff9"
+  },
+  "names_sha256": "900894bb0612e1a8b77d5d53405894ab11e4501db27ddb3945982fed791dfbb0",
+  "template": {
+    "pipeline": "epub2text+text2epub",
+    "epub2text_schema": "epub2text.structured.v1",
+    "text2epub_manifest": {
+      "schema_version": 1,
+      "source_sha256": "efd92cc96ec18ee485b491c0f8f265362dc13c9ec4472887bc72ba0887ef1833",
+      "entries": [
+        {
+          "href": "EPUB/ch1.xhtml",
+          "media_type": "application/xhtml+xml",
+          "spine_index": 1,
+          "raw_sha256": "edb85ed7968f61a4a3336773cac0a17904395c9ce8394269ed3436265f920d03",
+          "blocks": [
+            {
+              "block_id": "block:doc:1:chapter_0:0:258:c56fd601",
+              "text": "Chapter One",
+              "source_start": 299,
+              "source_end": 319,
+              "body_source_start": 303,
+              "body_source_end": 314,
+              "source_fragment": "Chapter One",
+              "replacement_mode": "whole_block_body"
+            },
+            {
+              "block_id": "block:doc:1:chapter_0:1:282:f3d9692a",
+              "text": "Alice met Bob. A second sentence.",
+              "source_start": 324,
+              "source_end": 381,
+              "body_source_start": 327,
+              "body_source_end": 377,
+              "source_fragment": "Alice met <strong>Bob</strong>. A second sentence.",
+              "replacement_mode": "whole_block_body"
+            },
+            {
+              "block_id": "block:doc:1:chapter_0:2:379:cca6e662",
+              "text": "Run pip install now.",
+              "source_start": 421,
+              "source_end": 461,
+              "body_source_start": 424,
+              "body_source_end": 457,
+              "source_fragment": "Run <code>pip install</code> now.",
+              "replacement_mode": "whole_block_body"
+            }
+          ]
+        },
+        {
+          "href": "EPUB/ch2.xhtml",
+          "media_type": "application/xhtml+xml",
+          "spine_index": 2,
+          "raw_sha256": "236ae4cc56bc050145af430b7cc5420993d4ba74aa4ef057bd32a6f87ee6fd33",
+          "blocks": [
+            {
+              "block_id": "block:doc:2:chapter_1:0:258:55bed2db",
+              "text": "Chapter Two",
+              "source_start": 299,
+              "source_end": 319,
+              "body_source_start": 303,
+              "body_source_end": 314,
+              "source_fragment": "Chapter Two",
+              "replacement_mode": "whole_block_body"
+            },
+            {
+              "block_id": "block:doc:2:chapter_1:1:282:b610e2dd",
+              "text": "The end.",
+              "source_start": 324,
+              "source_end": 339,
+              "body_source_start": 327,
+              "body_source_end": 335,
+              "source_fragment": "The end.",
+              "replacement_mode": "whole_block_body"
+            }
+          ]
+        }
+      ]
+    },
+    "spans": [
+      {
+        "span_index": 0,
+        "block_id": "block:doc:1:chapter_0:0:258:c56fd601",
+        "document_href": "ch1.xhtml",
+        "spine_index": 1,
+        "tag_name": "h1",
+        "source_text": "Chapter One",
+        "source_text_sha256": "3e93ded328010c26b2176cdc15e10c360110a14f9f60379e2d83f093ad3f3e2e",
+        "source_char_start": 303,
+        "source_char_end": 314,
+        "placeholders": [],
+        "protected_terms": [],
+        "source_view_text": "Chapter One",
+        "source_view_sha256": "3e93ded328010c26b2176cdc15e10c360110a14f9f60379e2d83f093ad3f3e2e",
+        "source_markup": "epub-inline-xhtml:v1",
+        "inline_skeleton": []
+      },
+      {
+        "span_index": 1,
+        "block_id": "block:doc:1:chapter_0:1:282:f3d9692a",
+        "document_href": "ch1.xhtml",
+        "spine_index": 1,
+        "tag_name": "p",
+        "source_text": "Alice met Bob. A second sentence.",
+        "source_text_sha256": "75532b9d800806c770ff58d3e7a4de315736c200c4a65e6a2c156c86e937f515",
+        "source_char_start": 327,
+        "source_char_end": 377,
+        "placeholders": [],
+        "protected_terms": [],
+        "source_view_text": "Alice met <strong>Bob</strong>. A second sentence.",
+        "source_view_sha256": "5263887516139a247582cb4e9dfa7f5717f6b969636dc4fdeb7c64f3741397b9",
+        "source_markup": "epub-inline-xhtml:v1",
+        "inline_skeleton": [
+          {
+            "kind": "start",
+            "tag": "strong",
+            "attrs": [],
+            "opaque": false
+          },
+          {
+            "kind": "end",
+            "tag": "strong",
+            "attrs": [],
+            "opaque": false
+          }
+        ]
+      },
+      {
+        "span_index": 3,
+        "block_id": "block:doc:1:chapter_0:2:379:cca6e662",
+        "document_href": "ch1.xhtml",
+        "spine_index": 1,
+        "tag_name": "p",
+        "source_text": "Run pip install now.",
+        "source_text_sha256": "e38d2f63a52091a042b6e12d424bcff6dc8f850fb209294df82c4594e591a79c",
+        "source_char_start": 424,
+        "source_char_end": 457,
+        "placeholders": [],
+        "protected_terms": [],
+        "source_view_text": "Run <code>pip install</code> now.",
+        "source_view_sha256": "e61de87f954900306d96b0b20a5f0cf4abd74dca56fe546071ab2f6affcb225f",
+        "source_markup": "epub-inline-xhtml:v1",
+        "inline_skeleton": [
+          {
+            "kind": "start",
+            "tag": "code",
+            "attrs": [],
+            "opaque": true
+          },
+          {
+            "kind": "end",
+            "tag": "code",
+            "attrs": [],
+            "opaque": true
+          }
+        ]
+      },
+      {
+        "span_index": 4,
+        "block_id": "block:doc:2:chapter_1:0:258:55bed2db",
+        "document_href": "ch2.xhtml",
+        "spine_index": 2,
+        "tag_name": "h1",
+        "source_text": "Chapter Two",
+        "source_text_sha256": "85c0e5bd4d6773ceb9de1387cd86919a2874abb0d75022ac342bfc765b568fcb",
+        "source_char_start": 303,
+        "source_char_end": 314,
+        "placeholders": [],
+        "protected_terms": [],
+        "source_view_text": "Chapter Two",
+        "source_view_sha256": "85c0e5bd4d6773ceb9de1387cd86919a2874abb0d75022ac342bfc765b568fcb",
+        "source_markup": "epub-inline-xhtml:v1",
+        "inline_skeleton": []
+      },
+      {
+        "span_index": 5,
+        "block_id": "block:doc:2:chapter_1:1:282:b610e2dd",
+        "document_href": "ch2.xhtml",
+        "spine_index": 2,
+        "tag_name": "p",
+        "source_text": "The end.",
+        "source_text_sha256": "e0a1d6943ae22b1e6fe5e2299898317563c367c9a5decdcb65376f414f6e04c5",
+        "source_char_start": 327,
+        "source_char_end": 335,
+        "placeholders": [],
+        "protected_terms": [],
+        "source_view_text": "The end.",
+        "source_view_sha256": "e0a1d6943ae22b1e6fe5e2299898317563c367c9a5decdcb65376f414f6e04c5",
+        "source_markup": "epub-inline-xhtml:v1",
+        "inline_skeleton": []
+      }
+    ],
+    "navigation": [
+      {
+        "id": "nav:0:44ef181c",
+        "title": "Introduction",
+        "href": "internal:prefix_content",
+        "document_href": "internal:prefix_content",
+        "fragment": null,
+        "spine_index": null,
+        "source_char_start": null,
+        "source_byte_start": null,
+        "level": 1,
+        "parent_id": null,
+        "order": 0,
+        "children": [],
+        "source": "nav"
+      },
+      {
+        "id": "nav:1:271ad79a",
+        "title": "Chapter One",
+        "href": "ch1.xhtml",
+        "document_href": "ch1.xhtml",
+        "fragment": null,
+        "spine_index": 1,
+        "source_char_start": null,
+        "source_byte_start": null,
+        "level": 1,
+        "parent_id": null,
+        "order": 1,
+        "children": [],
+        "source": "nav"
+      },
+      {
+        "id": "nav:2:5a7abb5a",
+        "title": "Chapter Two",
+        "href": "ch2.xhtml",
+        "document_href": "ch2.xhtml",
+        "fragment": null,
+        "spine_index": 2,
+        "source_char_start": null,
+        "source_byte_start": null,
+        "level": 1,
+        "parent_id": null,
+        "order": 2,
+        "children": [],
+        "source": "nav"
+      }
+    ]
+  }
+}

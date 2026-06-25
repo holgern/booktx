@@ -513,3 +513,44 @@ def test_build_uses_active_review_output_when_valid(tmp_path: Path):
     result = build_project(proj)
     out = result.output_path.read_text("utf-8")
     assert "ran sehr schnell" in out
+
+
+def test_build_and_validate_share_preflight(tmp_path: Path):
+    # ac-0007: validate fails before build, and build error points to booktx check.
+    proj = init_project(tmp_path / "book", target_language="de")
+    epub_path = proj.source_dir / "book.epub"
+    epub_fixtures._make_epub(epub_path)
+    find_source_file(proj)
+    _extract_epub_project(proj.root)
+    proj = load_project(proj.root)
+    # Simulate old project (plain records) so the span sanitizer is the catcher.
+    for path in proj.chunks():
+        chunk = json.loads(path.read_text("utf-8"))
+        for r in chunk["records"]:
+            r.pop("source_markup", None)
+        path.write_text(json.dumps(chunk, ensure_ascii=False), encoding="utf-8")
+    # Write translations that drop <strong>.
+    translations = {}
+    for chunk in _load_chunk_payloads(proj):
+        records = []
+        for record in chunk["records"]:
+            if "<strong>" in record["source"]:
+                target = "Hallo Welt."
+            else:
+                target = record["source"]
+            records.append({"id": record["id"], "target": target})
+        translations[str(chunk["chunk_id"])] = {
+            "chunk_id": chunk["chunk_id"],
+            "records": records,
+        }
+    _write_translations(proj, translations)
+    # Validate should catch the error BEFORE build.
+    from booktx.validate import validate_project
+
+    report = validate_project(proj)
+    assert not report.passed
+    assert any(f.rule == "inline_xhtml_preserved" for f in report.findings)
+    # Build should also fail and point to booktx check.
+    with pytest.raises(BuildError) as exc_info:
+        build_project(proj)
+    assert "booktx check" in str(exc_info.value)

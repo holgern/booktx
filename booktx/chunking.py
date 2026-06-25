@@ -18,6 +18,7 @@ sentence** — chunking never merges or splits beyond what phrasplit returns.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import phrasplit  # type: ignore[import-not-found]
 from phrasplit import split_with_offsets
@@ -77,12 +78,17 @@ class ProseSpan:
 
     ``presegmented`` means the upstream extractor already selected this span as
     one sentence/record. In that case booktx must not run phrasplit again.
+
+    ``source_markup`` records the inline markup contract of the span so it can
+    propagate into ``Record.source_markup`` for defense-in-depth record-level
+    validation. The EPUB span manifest remains the authority at build time.
     """
 
     text: str
     placeholders: list[Placeholder]
     protected_terms: list[str]
     presegmented: bool = False
+    source_markup: Literal["plain:v1", "epub-inline-xhtml:v1"] = "plain:v1"
 
 
 def _language_model(language: str) -> str:
@@ -156,6 +162,7 @@ def segment_spans(spans: list[ProseSpan], *, language: str = "en") -> list[Recor
                     placeholders=record_placeholders,
                     span_index=span_index,
                     span_record_index=span_record_index,
+                    source_markup=span.source_markup,
                 )
             )
     return records

@@ -1,0 +1,64 @@
+{
+  "schema_version": 3,
+  "chunk_id": "0001",
+  "chunk_size": 50,
+  "record_id_scheme": "chunk-local:v1",
+  "source_language": "en",
+  "target_language": "de",
+  "records": [
+    {
+      "id": "0001-000001",
+      "source": "Chapter One",
+      "protected_terms": [],
+      "placeholders": [],
+      "span_index": 0,
+      "span_record_index": 0,
+      "source_markup": "epub-inline-xhtml:v1"
+    },
+    {
+      "id": "0001-000002",
+      "source": "Alice met <strong>Bob</strong>.",
+      "protected_terms": [],
+      "placeholders": [],
+      "span_index": 1,
+      "span_record_index": 0,
+      "source_markup": "epub-inline-xhtml:v1"
+    },
+    {
+      "id": "0001-000003",
+      "source": "A second sentence.",
+      "protected_terms": [],
+      "placeholders": [],
+      "span_index": 2,
+      "span_record_index": 0,
+      "source_markup": "epub-inline-xhtml:v1"
+    },
+    {
+      "id": "0001-000004",
+      "source": "Run <code>pip install</code> now.",
+      "protected_terms": [],
+      "placeholders": [],
+      "span_index": 3,
+      "span_record_index": 0,
+      "source_markup": "epub-inline-xhtml:v1"
+    },
+    {
+      "id": "0001-000005",
+      "source": "Chapter Two",
+      "protected_terms": [],
+      "placeholders": [],
+      "span_index": 4,
+      "span_record_index": 0,
+      "source_markup": "epub-inline-xhtml:v1"
+    },
+    {
+      "id": "0001-000006",
+      "source": "The end.",
+      "protected_terms": [],
+      "placeholders": [],
+      "span_index": 5,
+      "span_record_index": 0,
+      "source_markup": "epub-inline-xhtml:v1"
+    }
+  ]
+}

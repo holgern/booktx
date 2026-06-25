@@ -171,17 +171,38 @@ Continue bounded runs with:
 ```bash
 booktx translate todo-status ./demo --profile de_gpt5_5 --latest
 booktx translate todo-resume ./demo --profile de_gpt5_5 --latest --format block
-booktx validate ./demo --profile de_gpt5_5 --fail-on-warnings
+booktx check ./demo --profile de_gpt5_5 --fail-on-warnings
+```
+
+## Single large chapters
+
+If the user asks to finish a single chapter that has more than the safe task
+budget (default 800 source words), booktx automatically creates or reuses a
+single-chapter todo and returns bounded batch tasks:
+
+```bash
+booktx translate next ./demo --chapter 0005 --unit chapter --max-words 800
+```
+
+This creates a todo for chapter 0005 and returns the first bounded batch.
+Continue with `booktx translate todo-resume` until the chapter completes.
+
+To override this behavior and force a whole-chapter task:
+
+```bash
+booktx translate next ./demo --chapter 0005 --unit chapter --force-chapter
+```
+
+After each chapter, run `booktx check` before adding the chapter note:
+
+```bash
+booktx check ./demo --profile de_gpt5_5 --chapter 0005 --fail-on-warnings
+booktx context chapter-note ./demo --profile de_gpt5_5 0005 ...
 ```
 
 `--max-run-words` is advisory only: it tells the agent when to stop and report
 progress, but booktx does not hard-stop accepted work at that threshold. Prefer
 batches over chapter-sized tasks.
-
-After a chapter completes, use the `booktx context chapter-note` template
-printed by `booktx translate insert` instead of hand-editing `context.md`.
-
-Chapter-note appends update the next task's effective context, but they do
 **not** create a new dotted translation version. Dotted versions track baseline
 policy changes such as style, glossary, answered questions, global rules,
 readiness, source metadata, language metadata, or actor/model track changes.

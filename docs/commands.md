@@ -116,12 +116,29 @@ context-view metadata for the immutable task snapshot it created.
 ```bash
 booktx validate ./book --profile de_gpt5_5
 booktx validate ./book --profile de_gpt5_5 --fail-on-warnings
+booktx validate ./book --profile de_gpt5_5 --chapter 0005
+booktx validate ./book --profile de_gpt5_5 --task-id TASK_ID
+booktx validate ./book --profile de_gpt5_5 --json
 booktx build ./book --profile de_gpt5_5
 booktx build ./book --profile de_gpt5_5 --require-complete
 ```
 
+`--chapter` and `--task-id` scope validation to a specific chapter or task.
+Use `--json` for machine-readable output.
+
 `--fail-on-warnings` keeps default validate behavior unchanged unless you opt
 into warning-fatal automation.
+
+## `check` -- scoped build-preflight validation
+
+```bash
+booktx check ./book --profile de_gpt5_5 --chapter 0005 --fail-on-warnings
+booktx check ./book --profile de_gpt5_5 --task-id TASK_ID --json
+```
+
+`check` is a human-friendly alias for scoped validation + EPUB inline-XHTML
+preflight. It defaults to `--fail-on-warnings`. Use it after each chapter
+translation and before build.
 
 Outputs land under:
 

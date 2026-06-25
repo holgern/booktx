@@ -333,3 +333,39 @@ def latest_incomplete_todo(
             ),
         )
     return latest
+
+
+def find_incomplete_todo_for_chapter(
+    project: Project,
+    bundle: StatusBundle,
+    chapter_id: str,
+) -> TranslationTodo | None:
+    """Find the newest incomplete todo for a single chapter.
+
+    Returns the latest todo whose planned chapters include ``chapter_id``
+    and whose current incomplete chapter is ``chapter_id``. Skips todos with
+    source/context drift. Returns ``None`` when no matching todo exists so
+    callers can create a fresh one.
+
+    This prevents duplicate todos on retry: todo ids are timestamped, so
+    lookup-before-creation is mandatory.
+    """
+    todos = list_translation_todos(project)
+    candidates: list[TranslationTodo] = []
+    for todo in todos:
+        planned_ids = {ch.chapter_id for ch in todo.chapters}
+        if chapter_id not in planned_ids:
+            continue
+        status = build_todo_status(project, todo, bundle, fail_on_warnings=False)
+        if status.goal_complete:
+            continue
+        if status.source_drifted or status.context_drifted:
+            continue
+        if status.current_chapter is None:
+            continue
+        if status.current_chapter.chapter_id != chapter_id:
+            continue
+        candidates.append(todo)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda todo: (todo.created_at, todo.todo_id))

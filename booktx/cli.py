@@ -2853,6 +2853,21 @@ def translate_next(
         "--allow-missing-context",
         help="Legacy override: allow next without a ready translation context.",
     ),
+    chapter_word_limit: int | None = typer.Option(
+        None,
+        "--chapter-word-limit",
+        help="Source-word threshold above which --unit chapter is treated as oversized.",
+    ),
+    large_chapter_mode: str = typer.Option(
+        "todo",
+        "--large-chapter-mode",
+        help="How to handle oversized --unit chapter requests: todo, error, or chapter.",
+    ),
+    force_chapter: bool = typer.Option(
+        False,
+        "--force-chapter",
+        help="Force --unit chapter regardless of size (alias for --large-chapter-mode chapter).",
+    ),
 ) -> None:
     """Return the next text to translate and persist a task id."""
     runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
@@ -2871,6 +2886,74 @@ def translate_next(
     if selected_chapter is None:
         console.print("All records already have accepted translations.")
         raise typer.Exit(code=1)
+    # Large-chapter protection: when --unit chapter is requested and the
+    # chapter exceeds the safe word budget, redirect to a single-chapter todo.
+    if unit == "chapter" and not force_chapter:
+        limit = chapter_word_limit or max_words
+        if selected_chapter.source_words_remaining > limit:
+            from booktx.todo_resume import ensure_single_chapter_todo
+
+            if large_chapter_mode == "error":
+                from booktx.command_hints import (
+                    profile_option_fragment,
+                    translate_todo_resume_command,
+                )
+
+                console.print(
+                    f"Chapter {selected_chapter.chapter_id} has "
+                    f"{selected_chapter.source_words_remaining:,} source words remaining, "
+                    f"exceeding the safe budget of {limit}."
+                )
+                prof = profile_option_fragment(proj, runtime.mode)
+                console.print("Create a bounded todo:")
+                console.print(
+                    f"booktx translate todo-next .{prof}"
+                    f" --start-chapter {selected_chapter.chapter_id}"
+                    f" --chapters 1 --batch-words {max_words} --write",
+                    soft_wrap=True,
+                    markup=False,
+                )
+                console.print("Resume the todo:")
+                console.print(
+                    translate_todo_resume_command(
+                        proj,
+                        mode=runtime.mode,
+                        latest=True,
+                    ),
+                    soft_wrap=True,
+                    markup=False,
+                )
+                raise typer.Exit(code=1)
+            # large_chapter_mode == "todo" (default)
+            todo = ensure_single_chapter_todo(
+                proj,
+                summary,
+                chapter_id=selected_chapter.chapter_id,
+                batch_words=max_words,
+            )
+            console.print(
+                f"large chapter detected: {selected_chapter.chapter_id} "
+                f"{selected_chapter.title} has "
+                f"{selected_chapter.source_words_remaining:,} source words remaining"
+            )
+            console.print(f"created todo: {todo.todo_id}")
+            console.print(
+                f"goal: complete chapter {selected_chapter.chapter_id} {selected_chapter.title}"
+            )
+            console.print(f"batch words: {todo.batch_words}")
+            from booktx.todo_resume import resume_translation_todo
+
+            task = resume_translation_todo(proj, summary, todo_id=todo.todo_id)
+            _print_translate_task(
+                task,
+                proj,
+                mode=runtime.mode,
+                as_json=as_json,
+                output_format=output_format,
+                show_sources=show_sources,
+                show_template=show_template,
+            )
+            return
     actual_unit, record_ids = _select_translation_record_ids(
         summary,
         selected_chapter,
@@ -2964,6 +3047,10 @@ def translate_insert(
         else None
     )
     summary = _project_status_snapshot(proj)
+    # Pre-write EPUB inline-XHTML check (Q2=a).
+    # Stage submitted records and run the preflight BEFORE writing the store.
+    submitted_ids = {r.id for r in submitted_records}
+    _staged_preflight_check(proj, submitted_records, submitted_ids)
     try:
         result = accept_translation_records(
             proj,
@@ -3044,6 +3131,27 @@ def translate_insert(
         )
     elif result.chapter_id and result.records_remaining > 0:
         # Current chapter still incomplete — stay on it.
+        # Warn if this looks like an oversized chapter task (no todo backing).
+        if task is not None and not task.todo_id and task.unit == "chapter":
+            from booktx.command_hints import profile_option_fragment
+
+            console.print(
+                "[yellow]warning:[/yellow] this looks like an oversized chapter task. "
+                "Use a bounded todo instead:"
+            )
+            prof = profile_option_fragment(proj, runtime.mode)
+            console.print(
+                f"booktx translate todo-next .{prof}"
+                f" --start-chapter {result.chapter_id}"
+                f" --chapters 1 --batch-words {max_words} --write",
+                soft_wrap=True,
+                markup=False,
+            )
+            console.print(
+                f"booktx translate todo-resume .{prof} --latest --format block",
+                soft_wrap=True,
+                markup=False,
+            )
         console.print(
             "next: "
             + translate_next_command(
@@ -4097,6 +4205,13 @@ def validate(
         "--all-versions-strict",
         help="Treat inactive-version validation errors as fatal.",
     ),
+    chapter: str | None = typer.Option(
+        None, "--chapter", help="Scope to a specific chapter id."
+    ),
+    task_id: str | None = typer.Option(
+        None, "--task-id", help="Scope to a specific task id."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
     fail_on_warnings: bool = typer.Option(
         False,
         "--fail-on-warnings",
@@ -4107,25 +4222,161 @@ def validate(
     runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
     proj = runtime.project
 
-    report = validate_project(proj, all_versions_strict=all_versions_strict)
+    report = validate_project(
+        proj,
+        all_versions_strict=all_versions_strict,
+        chapter_id=chapter,
+        task_id=task_id,
+    )
     out = write_report(proj, report)
 
-    if report.findings:
-        for f in report.findings:
-            color = "red" if f.severity == "error" else "yellow"
+    if as_json:
+        console.print_json(json.dumps(report.as_dict(), indent=2, ensure_ascii=False))
+    else:
+        _render_validate_findings(report)
+        console.print(
+            f"chunks_checked={report.chunks_checked} "
+            f"passed={report.chunks_passed} "
+            f"errors={len(report.errors)} warnings={len(report.warnings)} "
+            f"missing={report.chunks_missing_translation}"
+        )
+        console.print("[dim]report:[/dim] ", end="")
+        console.print(display_path(out, runtime.mode), soft_wrap=True, markup=False)
+    if not report.passed or (fail_on_warnings and report.warnings):
+        raise typer.Exit(code=1)
+
+
+def _staged_preflight_check(proj, submitted_records, submitted_ids: set[str]) -> None:
+    """Run EPUB inline-XHTML preflight on staged submitted records.
+
+    Layers submitted records on top of current effective translations and
+    runs the preflight. If inline-XHTML errors are found, renders them and
+    exits non-zero BEFORE the store is written.
+    """
+    from booktx.models import TranslatedRecord
+    from booktx.validate import load_effective_translated_chunks
+
+    # Only run for EPUB projects.
+    if proj.config.format != "epub":
+        return
+
+    try:
+        effective = load_effective_translated_chunks(proj)
+    except Exception:  # noqa: BLE001
+        return  # can't check; let accept_translation_records handle it
+    # Build a staged effective chunks view with submitted records overlaid.
+    # Even when effective chunks are empty, we need to create staged chunks
+    # from source chunks so new submissions can be validated.
+    from booktx.progress import load_source_chunks
+
+    source_chunks = {c.chunk_id: c for c in load_source_chunks(proj)}
+    staged_chunks: dict[str, TranslatedChunk] = {}
+    for chunk_id, source_chunk in source_chunks.items():
+        existing = effective.chunks.get(chunk_id)
+        staged_records = []
+        if existing is not None:
+            for rec in existing.records:
+                if rec.id in submitted_ids:
+                    submitted = next(
+                        (r for r in submitted_records if r.id == rec.id), None
+                    )
+                    if submitted is not None:
+                        staged_records.append(
+                            TranslatedRecord(id=submitted.id, target=submitted.target)
+                        )
+                    else:
+                        staged_records.append(rec)
+                else:
+                    staged_records.append(rec)
+        # Add submitted records that are in this source chunk but not yet
+        # in effective translations (new submissions).
+        existing_ids = {r.id for r in staged_records}
+        source_ids = {r.id for r in source_chunk.records}
+        for rec in submitted_records:
+            if rec.id in source_ids and rec.id not in existing_ids:
+                staged_records.append(TranslatedRecord(id=rec.id, target=rec.target))
+        if staged_records:
+            staged_chunks[chunk_id] = TranslatedChunk(
+                records=staged_records, chunk_id=chunk_id
+            )
+    # Now run preflight on the staged chunks.
+    from booktx.epub_preflight import validate_epub_inline_preflight
+
+    preflight_findings = validate_epub_inline_preflight(
+        proj, record_ids=submitted_ids, effective_chunks=staged_chunks
+    )
+    errors = [f for f in preflight_findings if f.severity == "error"]
+    if errors:
+        for f in errors:
+            color = "red"
             loc = f" [{f.record_id}]" if f.record_id else ""
             console.print(
-                f"[{color}]{f.severity}[/{color}] {f.chunk_id}{loc} "
-                f"{f.rule}: {f.message}"
+                f"[{color}]error[/{color}] {f.chunk_id}{loc} {f.rule}: {f.message}"
             )
-    console.print(
-        f"chunks_checked={report.chunks_checked} "
-        f"passed={report.chunks_passed} "
-        f"errors={len(report.errors)} warnings={len(report.warnings)} "
-        f"missing={report.chunks_missing_translation}"
-    )
-    console.print("[dim]report:[/dim] ", end="")
-    console.print(display_path(out, runtime.mode), soft_wrap=True, markup=False)
+            if f.source:
+                console.print(f"  source: {f.source}")
+            if f.target:
+                console.print(f"  target: {f.target}")
+            fix_record = f.record_id or (f.record_ids[0] if f.record_ids else "")
+            if fix_record:
+                console.print(
+                    f"  fix: booktx translate get-record . {fix_record} --context 2",
+                    soft_wrap=True,
+                    markup=False,
+                )
+        raise typer.Exit(code=1)
+
+
+def _render_validate_findings(report) -> None:
+    if not report.findings:
+        return
+    for f in report.findings:
+        color = "red" if f.severity == "error" else "yellow"
+        loc = f" [{f.record_id}]" if f.record_id else ""
+        console.print(
+            f"[{color}]{f.severity}[/{color}] {f.chunk_id}{loc} {f.rule}: {f.message}"
+        )
+
+
+@app.command()
+def check(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    chapter: str | None = typer.Option(
+        None, "--chapter", help="Scope to a specific chapter id."
+    ),
+    task_id: str | None = typer.Option(
+        None, "--task-id", help="Scope to a specific task id."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+    fail_on_warnings: bool = typer.Option(
+        True,
+        "--fail-on-warnings/--no-fail-on-warnings",
+        help="Exit non-zero when validation reports warnings.",
+    ),
+) -> None:
+    """Scoped build-preflight check for inline XHTML and translation contracts.
+
+    A human-friendly alias for scoped validation + EPUB inline-XHTML preflight.
+    Prefer this after each chapter translation and before build.
+    """
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
+
+    report = validate_project(proj, chapter_id=chapter, task_id=task_id)
+
+    if as_json:
+        console.print_json(json.dumps(report.as_dict(), indent=2, ensure_ascii=False))
+    else:
+        _render_validate_findings(report)
+        console.print(
+            f"chunks_checked={report.chunks_checked} "
+            f"passed={report.chunks_passed} "
+            f"errors={len(report.errors)} warnings={len(report.warnings)} "
+            f"missing={report.chunks_missing_translation}"
+        )
     if not report.passed or (fail_on_warnings and report.warnings):
         raise typer.Exit(code=1)
 
@@ -4136,13 +4387,19 @@ def translate_audit_inline(
     profile: str | None = typer.Option(
         None, "--profile", help="Translation profile name."
     ),
+    chapter: str | None = typer.Option(
+        None, "--chapter", help="Scope to a specific chapter id."
+    ),
+    task_id: str | None = typer.Option(
+        None, "--task-id", help="Scope to a specific task id."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     """Audit active translations for required EPUB inline XHTML semantics."""
     runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
     from booktx.inline_audit import audit_inline_xhtml
 
-    result = audit_inline_xhtml(runtime.project)
+    result = audit_inline_xhtml(runtime.project, chapter_id=chapter, task_id=task_id)
     if json_output:
         console.print_json(json.dumps(result.as_dict(), ensure_ascii=False))
         return
