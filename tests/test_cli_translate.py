@@ -51,7 +51,17 @@ def _make_project(tmp_path: Path, *, protected_terms: list[str] | None = None) -
     ext = runner.invoke(app, ["extract", str(project_dir)])
     assert ext.exit_code == 0, ext.output
     runner.invoke(app, ["context", "init", str(project_dir), "--non-interactive"])
-    runner.invoke(app, ["context", "mark-ready", str(project_dir), "--force"])
+    runner.invoke(
+        app,
+        [
+            "context",
+            "mark-ready",
+            str(project_dir),
+            "--force",
+            "--reason",
+            "test setup",
+        ],
+    )
     return project_dir
 
 
@@ -1449,6 +1459,7 @@ def test_translate_next_refuses_ready_context_with_unapproved_required_answers(
             q.status = "answered"
             q.answer_source = "agent"
     ctx.ready = True
+    ctx.ready_forced = False
     write_context(load_project(project_dir), ctx)
     res = runner.invoke(
         app, ["translate", "next", str(project_dir), "--format", "block"]

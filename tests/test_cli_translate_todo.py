@@ -72,7 +72,17 @@ def _make_three_chapter_project(tmp_path: Path) -> Path:
     ext = runner.invoke(app, ["extract", str(project_dir)])
     assert ext.exit_code == 0, ext.output
     runner.invoke(app, ["context", "init", str(project_dir), "--non-interactive"])
-    runner.invoke(app, ["context", "mark-ready", str(project_dir), "--force"])
+    runner.invoke(
+        app,
+        [
+            "context",
+            "mark-ready",
+            str(project_dir),
+            "--force",
+            "--reason",
+            "test setup",
+        ],
+    )
     return project_dir
 
 

@@ -49,7 +49,17 @@ def _make_project(tmp_path: Path) -> Path:
 
 def _ready_context(project_dir: Path) -> None:
     runner.invoke(app, ["context", "init", str(project_dir), "--non-interactive"])
-    runner.invoke(app, ["context", "mark-ready", str(project_dir), "--force"])
+    runner.invoke(
+        app,
+        [
+            "context",
+            "mark-ready",
+            str(project_dir),
+            "--force",
+            "--reason",
+            "test setup",
+        ],
+    )
 
 
 def _translated_dir(project_dir: Path) -> Path:

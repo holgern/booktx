@@ -56,7 +56,15 @@ def _write_legacy_project(tmp_path: Path, *, include_target: bool = True) -> Pat
     )
     assert (
         runner.invoke(
-            app, ["context", "mark-ready", str(project_dir), "--force"]
+            app,
+            [
+                "context",
+                "mark-ready",
+                str(project_dir),
+                "--force",
+                "--reason",
+                "test setup",
+            ],
         ).exit_code
         == 0
     )

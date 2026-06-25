@@ -526,7 +526,17 @@ def test_next_prints_context_path_when_context_ready(tmp_path: Path):
     project_dir = _make_markdown_project(tmp_path)
     runner.invoke(app, ["extract", str(project_dir)])
     runner.invoke(app, ["context", "init", str(project_dir), "--non-interactive"])
-    runner.invoke(app, ["context", "mark-ready", str(project_dir), "--force"])
+    runner.invoke(
+        app,
+        [
+            "context",
+            "mark-ready",
+            str(project_dir),
+            "--force",
+            "--reason",
+            "test setup",
+        ],
+    )
     res = runner.invoke(app, ["next", str(project_dir)])
     assert res.exit_code == 0, res.output
     assert "context:" in res.output

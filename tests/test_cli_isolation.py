@@ -39,7 +39,15 @@ def _make_project(tmp_path: Path) -> tuple[Path, Path]:
     )
     assert init_ctx.exit_code == 0, init_ctx.output
     ready_ctx = runner.invoke(
-        app, ["context", "mark-ready", str(project_dir), "--force"]
+        app,
+        [
+            "context",
+            "mark-ready",
+            str(project_dir),
+            "--force",
+            "--reason",
+            "test setup",
+        ],
     )
     assert ready_ctx.exit_code == 0, ready_ctx.output
     profile_root = project_dir / "translations" / "de_default"
@@ -274,6 +282,8 @@ def test_profile_root_mode_does_not_leak_sibling_profile_translations(
             "--profile",
             "fr_default",
             "--force",
+            "--reason",
+            "test setup",
         ],
     )
     assert sibling_ctx_ready.exit_code == 0, sibling_ctx_ready.output
