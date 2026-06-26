@@ -64,6 +64,9 @@ Every translation effort lives under `translations/<profile>/`.
 | `translations/<profile>/tasks/`                          | profile-local | Persisted translation tasks                                                |
 | `translations/<profile>/ingest/`                         | profile-local | Durable submission files                                                   |
 | `translations/<profile>/translated/`                     | profile-local | Generated compatibility/export chunk JSON (rebuildable; not primary state) |
+| `translations/<profile>/source-index.json`               | profile-local | Generated source-only editor QA index; rebuildable from source chunks and chapter map |
+| `translations/<profile>/target-index.json`               | profile-local | Generated target-only search index for editor QA; rebuildable from store, chunks, and chapter map |
+| `translations/<profile>/source-target-index.json`        | profile-local | Generated source/target side-by-side editor QA index; rebuildable from store, chunks, and chapter map |
 | `translations/<profile>/reports/`                        | profile-local | Validation reports                                                         |
 | `translations/<profile>/output/`                         | profile-local | Rebuilt translated documents (rebuildable from the store)                  |
 

@@ -71,6 +71,25 @@ booktx translation activate ./book --profile de_gpt5_5 74@38 1.2
 booktx translation review ./book --profile de_gpt5_5 74@38 --activate 1.2 --note "Better rhythm"
 booktx translation revise-record ./book --profile de_gpt5_5 74@38 --target "Revised target text"
 booktx translate export ./book --profile de_gpt5_5
+booktx translate export-index ./book --profile de_gpt5_5
+booktx translate export-index ./book --profile de_gpt5_5 --kind source
+booktx translate export-index ./book --profile de_gpt5_5 --kind target
+booktx translate export-index ./book --profile de_gpt5_5 --kind source-target
+booktx translate export-index ./book --profile de_gpt5_5 --json
+booktx translate export-index ./book --profile de_gpt5_5 --fail-on-warn
+```
+
+`translate export` writes store-backed accepted translations as legacy-compatible chunk files under `translated/`.
+
+`translate export-index` writes three generated editor QA indexes under `translations/<profile>/`: `source-index.json` (source text only), `target-index.json` (target text only), and `source-target-index.json` (slim side-by-side view). Use `--kind source`, `--kind target`, or `--kind source-target` (repeatable) to write only selected kinds. `--fail-on-warn` blocks target-based indexes on warnings. `--json` prints the summary as JSON. All three files are generated artifacts safe to delete and regenerate. They never contain canonical state and must not be used as build input.
+
+Profile-root mode works without `--profile`:
+
+```bash
+cd translations/de_default
+booktx translate export-index .
+rg "Wespen" target-index.json
+nvim source-target-index.json
 ```
 
 ## Bounded agent runs

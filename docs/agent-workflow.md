@@ -77,6 +77,19 @@ booktx build . --require-complete
 
 For per-batch validation within a bounded todo, use scoped `booktx check . --chapter CHAPTER --fail-on-warnings` instead. Use `booktx validate` only for the final pre-build check.
 
+## 6b. Refresh editor QA indexes
+
+After translation/review changes, refresh the three editor-friendly indexes for source-only search, target-only search, and side-by-side review:
+
+```bash
+booktx translate export-index .
+```
+
+This writes `source-index.json`, `target-index.json`, and `source-target-index.json` into the profile directory. Use `rg` to search translated terms without English source false positives (`rg "Wespen" target-index.json`) or source terms without target matches (`rg "Wasp" source-index.json`). Use `nvim source-target-index.json` for side-by-side scanning.
+
+The three files are generated artifacts. Do not edit them manually and do not use them as build input.
+
+
 ## 7. Longer bounded runs
 
 When the user asks to continue for multiple chapters, do not request one huge

@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -103,6 +104,11 @@ from booktx.context import (
     upsert_chapter_context,
     write_context,
     write_context_markdown,
+)
+from booktx.editor_indexes import (
+    EditorIndexError,
+    EditorIndexesResult,
+    export_editor_indexes,
 )
 from booktx.epub_io import EpubExtraction, extract_epub
 from booktx.epub_manifest import EPUB2TEXT_SCHEMA, EPUB_TEMPLATE_PIPELINE
@@ -3805,6 +3811,119 @@ def translate_export(  # noqa: C901
         )
         exported += 1
     console.print(f"exported: {exported} chunk(s) to {proj.translated_dir}")
+
+
+@translate_app.command(name="export-index")
+def translate_export_index(  # noqa: C901
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    kind: list[str] = typer.Option(
+        [],
+        "--kind",
+        help=(
+            "Index kind to write. Repeatable. One of source, target, "
+            "source-target. Defaults to all three kinds."
+        ),
+    ),
+    fail_on_warn: bool = typer.Option(
+        False,
+        "--fail-on-warn",
+        help="Fail when target validation warnings are present.",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit command summary as JSON."),
+) -> None:
+    """Export profile-local editor QA indexes.
+
+    Writes generated, rebuildable artifacts under translations/<profile>/:
+    source-index.json (source text only), target-index.json (target text only),
+    and source-target-index.json (slim side-by-side view). All three are safe
+    to delete and regenerate; the canonical state remains translation-store.json.
+    """
+    valid_kinds = {"source", "target", "source-target"}
+    invalid = sorted({k for k in kind if k not in valid_kinds})
+    if invalid:
+        _die(
+            f"invalid --kind value(s) {invalid}; expected one of {sorted(valid_kinds)}"
+        )
+        return
+    requested = set(kind) if kind else None
+
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
+    mode = runtime.mode
+
+    def _display(path_str: str | None) -> str | None:
+        if path_str is None:
+            return None
+        return display_path(Path(path_str), mode)
+
+    try:
+        result = export_editor_indexes(
+            proj,
+            kinds=requested,
+            fail_on_warn=fail_on_warn,  # type: ignore[arg-type]
+        )
+    except EditorIndexError as exc:
+        # source-index may have been written before target-based export failed.
+        partial = exc.result
+        if partial.source_path is not None:
+            console.print(
+                f"exported source index: {partial.source_record_count} "
+                f"record(s) to {_display(partial.source_path)}"
+            )
+        if as_json:
+            payload = _editor_index_summary(partial, _display)
+            payload["error"] = str(exc)
+            console.print_json(json.dumps(payload, ensure_ascii=False))
+        else:
+            console.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    if as_json:
+        console.print_json(
+            json.dumps(_editor_index_summary(result, _display), ensure_ascii=False)
+        )
+        return
+
+    if result.source_path is not None:
+        console.print(
+            f"exported source index: {result.source_record_count} record(s) "
+            f"to {_display(result.source_path)}"
+        )
+    if result.target_path is not None:
+        console.print(
+            f"exported target index: {result.target_record_count} record(s) "
+            f"to {_display(result.target_path)}"
+        )
+    if result.source_target_path is not None:
+        console.print(
+            f"exported source-target index: {result.source_target_record_count} "
+            f"record(s) to {_display(result.source_target_path)}"
+        )
+    console.print(f"translated: {result.translated_count}")
+    console.print(f"missing: {result.missing_count}")
+    console.print(f"warnings: {result.warning_count}")
+    console.print(f"errors: {result.error_count}")
+
+
+def _editor_index_summary(
+    result: EditorIndexesResult, display: Callable[[str | None], str | None]
+) -> dict[str, Any]:
+    return {
+        "source_path": display(result.source_path),
+        "target_path": display(result.target_path),
+        "source_target_path": display(result.source_target_path),
+        "source_record_count": result.source_record_count,
+        "target_record_count": result.target_record_count,
+        "source_target_record_count": result.source_target_record_count,
+        "translated_count": result.translated_count,
+        "missing_count": result.missing_count,
+        "warning_count": result.warning_count,
+        "error_count": result.error_count,
+        "written": list(result.written),
+    }
 
 
 @translate_app.command(name="task-status")

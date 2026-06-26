@@ -59,6 +59,18 @@ translation state for that profile.
 `translations/<profile>/translated/*.json` remains a compatibility/export
 surface managed by `booktx translate export`.
 
+## Editor QA indexes
+
+`booktx translate export-index` writes three generated profile-local artifacts:
+
+- `source-index.json` -- source text only, for isolated profile workflows and source-language search
+- `target-index.json` -- effective target text only, for target-language search without source false positives
+- `source-target-index.json` -- slim source/target side-by-side view for translation-fit scanning
+
+All three are derived from the store, source chunks, and chapter map. They are
+safe to delete and regenerate. Do not edit them manually and do not use them as
+build input. The canonical state remains `translation-store.json`.
+
 ## Context
 
 `translations/<profile>/context.json` is authoritative.

@@ -226,6 +226,23 @@ booktx validate . --profile PROFILE --fail-on-warnings
 booktx build . --profile PROFILE --require-complete
 ```
 
+## Editor QA indexes
+
+After translation/review changes, run `booktx translate export-index` when the user wants editor-search artifacts current:
+
+```bash
+booktx translate export-index .
+```
+
+This writes `source-index.json`, `target-index.json`, and `source-target-index.json` into the profile directory.
+
+- Use `source-index.json` for source-only term search or isolated profile source reading.
+- Use `target-index.json` for target-only term search without English source false positives.
+- Use `source-target-index.json` for quick translation-fit scans side by side.
+- Never edit any of the three files manually.
+- Never use any editor index as canonical source for build; the canonical state remains `translation-store.json`.
+
+
 ## Pass-through reconstruction check
 
 When the user asks to verify that EPUB reconstruction includes all content,
@@ -266,6 +283,9 @@ Never edit these directly:
 translations/PROFILE/translation-store.json
 translations/PROFILE/translation-version-ledger.json
 translations/PROFILE/translated/*.json
+translations/PROFILE/source-index.json
+translations/PROFILE/target-index.json
+translations/PROFILE/source-target-index.json
 ```
 
 Use commands instead:
@@ -274,6 +294,7 @@ Use commands instead:
 booktx translate insert ...
 booktx translation activate ...
 booktx translate export ...
+booktx translate export-index ...
 booktx translation revise-record . RECORD_ID --target "..."
 booktx check . --chapter CHAPTER --fail-on-warnings
 booktx validate . --profile PROFILE

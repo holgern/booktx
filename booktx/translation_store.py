@@ -28,8 +28,11 @@ if TYPE_CHECKING:
 
 __all__ = [
     "MigrationResult",
+    "EffectiveCandidateError",
+    "EffectiveCandidateSelection",
     "active_candidate",
     "active_review_candidate",
+    "effective_candidate_selection",
     "effective_target_candidate",
     "ensure_store_record",
     "find_candidate",
@@ -39,6 +42,7 @@ __all__ = [
     "resolve_review_base",
     "review_candidate_is_stale",
     "review_chain_is_stale",
+    "review_chain_refs",
     "sha256_text",
     "upsert_translation_version",
 ]
@@ -273,6 +277,181 @@ def effective_target_candidate(
     if review is not None:
         return review
     return active_candidate(record)
+
+
+@dataclass(slots=True)
+class EffectiveCandidateSelection:
+    """Effective output candidate plus provenance metadata.
+
+    ``selected_kind``/``selected_ref`` identify which candidate produces the
+    output. ``version_ref`` is the base translation version the output derives
+    from; ``review_ref`` is the selected review ref when the output is a
+    review candidate. ``review_chain`` is the ordered review chain (earliest
+    first) for review selections and empty for direct translations.
+    """
+
+    candidate: TranslationCandidate | TranslationReviewCandidate
+    selected_kind: Literal["translation", "review"]
+    selected_ref: str
+    version_ref: str | None
+    review_ref: str | None
+    review_chain: list[str]
+
+
+@dataclass(slots=True)
+class EffectiveCandidateError:
+    """A blocking problem resolving the effective candidate for a record.
+
+    ``rule`` mirrors the validation rule names (``active_review_missing``,
+    ``active_review_not_accepted``, ``active_review_base_drift``) so editor
+    index errors stay aligned with build/validate findings.
+    """
+
+    rule: str
+    message: str
+
+
+def review_chain_refs(
+    record: StoredTranslationRecordV2,
+    review_ref: str,
+) -> list[str] | None:
+    """Return the ordered review chain ending at ``review_ref`` (earliest first).
+
+    The chain excludes the translation base. For ``R2.1`` based on ``R1.1``
+    based on a translation version, returns ``["R1.1", "R2.1"]``. Returns
+    ``None`` when the chain is missing, stale (``base_target_sha256`` drift),
+    cyclic, or has invalid pass order.
+    """
+    normalized = parse_review_ref(review_ref).review_ref
+    ordered: list[str] = []
+    seen: set[str] = set()
+    current = find_review_candidate(record, normalized)
+    while current is not None:
+        if current.review_ref in seen:
+            return None  # cycle
+        seen.add(current.review_ref)
+        # Missing base or drifted target hash invalidates the chain.
+        if review_candidate_is_stale(record, current):
+            return None
+        ordered.append(current.review_ref)
+        if current.base_kind == "translation":
+            ordered.reverse()
+            return ordered
+        base_review = find_review_candidate(record, current.base_ref)
+        if base_review is None or current.pass_number <= base_review.pass_number:
+            return None
+        current = base_review
+    return None
+
+
+def _review_base_version_ref(
+    record: StoredTranslationRecordV2,
+    review: TranslationReviewCandidate,
+) -> str | None:
+    """Walk a review chain to its translation base version ref."""
+    current: TranslationReviewCandidate | None = review
+    seen: set[str] = set()
+    while current is not None:
+        if current.review_ref in seen:
+            return None
+        seen.add(current.review_ref)
+        if current.base_kind == "translation":
+            return current.base_ref
+        current = find_review_candidate(record, current.base_ref)
+    return None
+
+
+def _strict_error(
+    strict: bool,
+    rule: str,
+    message: str,
+) -> EffectiveCandidateError | None:
+    """Return an error when strict, otherwise fall back to translation."""
+    return EffectiveCandidateError(rule, message) if strict else None
+
+
+def _select_review(
+    record: StoredTranslationRecordV2,
+    *,
+    strict: bool,
+) -> EffectiveCandidateSelection | EffectiveCandidateError | None:
+    """Attempt to select the active review candidate.
+
+    Returns :class:`EffectiveCandidateSelection` when the active review is
+    valid and chain-accepted. Returns :class:`EffectiveCandidateError` when
+    the review is unusable and ``strict`` is set. Returns ``None`` when there
+    is no active review or it is unusable without strict mode.
+    """
+    if record.active_review is None:
+        return None
+    candidate = find_review_candidate(record, record.active_review)
+    if candidate is None:
+        return _strict_error(
+            strict,
+            "active_review_missing",
+            f"active review {record.active_review!r} has no matching review candidate",
+        )
+    if candidate.status != "accepted":
+        return _strict_error(
+            strict,
+            "active_review_not_accepted",
+            f"active review {candidate.review_ref} is {candidate.status!r},"
+            " not accepted",
+        )
+    chain = review_chain_refs(record, candidate.review_ref)
+    base_version = (
+        _review_base_version_ref(record, candidate) if chain is not None else None
+    )
+    if chain is None or base_version is None:
+        return _strict_error(
+            strict,
+            "active_review_base_drift",
+            f"active review {candidate.review_ref} has a stale, missing,"
+            " or cyclic base chain",
+        )
+    return EffectiveCandidateSelection(
+        candidate=candidate,
+        selected_kind="review",
+        selected_ref=candidate.review_ref,
+        version_ref=base_version,
+        review_ref=candidate.review_ref,
+        review_chain=chain,
+    )
+
+
+def effective_candidate_selection(
+    record: StoredTranslationRecordV2,
+    *,
+    strict_active_review: bool = True,
+) -> EffectiveCandidateSelection | EffectiveCandidateError | None:
+    """Resolve the effective candidate plus selection metadata for a record.
+
+    With ``strict_active_review=True`` (the default), a set-but-unusable
+    ``active_review`` returns an :class:`EffectiveCandidateError` instead of
+    silently falling back to the active translation. This is the safe mode for
+    editor indexes, which must never mask an invalid active review. With
+    ``strict_active_review=False`` an unusable active review falls back to the
+    accepted active translation, mirroring :func:`effective_target_candidate`.
+
+    Returns ``None`` only when there is no accepted effective candidate.
+    """
+    review_result = _select_review(record, strict=strict_active_review)
+    if isinstance(review_result, EffectiveCandidateError):
+        return review_result
+    if review_result is not None:
+        return review_result
+    # No usable active review: select the accepted active translation version.
+    translation = active_candidate(record)
+    if translation is None or translation.status != "accepted":
+        return None
+    return EffectiveCandidateSelection(
+        candidate=translation,
+        selected_kind="translation",
+        selected_ref=translation.version_ref,
+        version_ref=translation.version_ref,
+        review_ref=None,
+        review_chain=[],
+    )
 
 
 def upsert_translation_version(

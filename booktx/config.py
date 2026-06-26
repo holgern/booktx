@@ -149,6 +149,9 @@ __all__ = [
     "translation_review_task_path",
     "translation_review_source_block_path",
     "translation_review_ingest_block_path",
+    "translation_source_index_path",
+    "translation_target_index_path",
+    "translation_source_target_index_path",
     "load_translation_review_task",
     "write_translation_review_task",
     "find_source_file",
@@ -1058,6 +1061,39 @@ def translation_version_ledger_path(project: Project) -> Path:
         return project.ledger_path
     _require_profile_paths(project, "translation version access")
     return project.booktx_dir / "translation-version-ledger.json"
+
+
+def translation_source_index_path(project: Project) -> Path:
+    """Profile-local generated source-only editor index path.
+
+    Returns ``translations/<profile>/source-index.json``. The file is a
+    rebuildable generated artifact, never canonical state.
+    """
+    _require_profile_paths(project, "translation source index access")
+    assert project.profile_dir is not None
+    return project.profile_dir / "source-index.json"
+
+
+def translation_target_index_path(project: Project) -> Path:
+    """Profile-local generated target-only editor index path.
+
+    Returns ``translations/<profile>/target-index.json``. The file is a
+    rebuildable generated artifact, never canonical state.
+    """
+    _require_profile_paths(project, "translation target index access")
+    assert project.profile_dir is not None
+    return project.profile_dir / "target-index.json"
+
+
+def translation_source_target_index_path(project: Project) -> Path:
+    """Profile-local generated source/target side-by-side editor index path.
+
+    Returns ``translations/<profile>/source-target-index.json``. The file is
+    a rebuildable generated artifact, never canonical state.
+    """
+    _require_profile_paths(project, "translation source-target index access")
+    assert project.profile_dir is not None
+    return project.profile_dir / "source-target-index.json"
 
 
 def identity_path(project: Project) -> Path:

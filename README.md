@@ -216,6 +216,36 @@ booktx validate ./demo --profile de_gpt5_5 --fail-on-warnings
 booktx build ./demo --profile de_gpt5_5 --require-complete
 ```
 
+## Editor QA indexes
+
+Refresh editor-friendly indexes:
+
+```bash
+booktx translate export-index ./demo --profile de_gpt5_5
+```
+
+This writes:
+
+- `translations/de_gpt5_5/source-index.json` -- source text only, best for reading/searching the original source inside the profile, including isolated profile runs.
+- `translations/de_gpt5_5/target-index.json` -- target text only, best for searching translated terms without English source false positives.
+- `translations/de_gpt5_5/source-target-index.json` -- slim source/target side-by-side view, best for scanning translation fit in an editor.
+
+```bash
+# Search only the original source language.
+rg "Wasp" translations/de_gpt5_5/source-index.json
+
+# Search only translated German target text.
+rg "Wespen" translations/de_gpt5_5/target-index.json
+
+# Scan source and target side by side.
+nvim translations/de_gpt5_5/source-target-index.json
+
+# Inspect canonical state for a hit.
+booktx translation get-record ./demo 0014-000029 --profile de_gpt5_5 --json
+```
+
+All three files are generated artifacts. Do not edit them manually. The canonical state remains `translation-store.json`.
+
 ## Pass-through validation profile
 
 Use a pass-through profile to verify that extraction and EPUB reconstruction
