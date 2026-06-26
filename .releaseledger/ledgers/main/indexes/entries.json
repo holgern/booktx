@@ -16,6 +16,20 @@
   {
     "audience": null,
     "breaking": false,
+    "entry_id": "entry-0001",
+    "internal": false,
+    "kind": "added",
+    "order": 1,
+    "record_revision": 1,
+    "release_version": "v0.3.0",
+    "scopes": [],
+    "source_refs": ["git:c32e8242789b4b0b7da4500bd08e131046bab7e6"],
+    "status": "accepted",
+    "summary": "Added pass-through validation profile for custom project workflows"
+  },
+  {
+    "audience": null,
+    "breaking": false,
     "entry_id": "entry-0002",
     "internal": false,
     "kind": "added",
@@ -26,6 +40,20 @@
     "source_refs": ["git:b97132def1277588b090697e1f30d831b0ca0c0e"],
     "status": "accepted",
     "summary": "Added translation versioning with nested version tracks and improved part addressing via record refs"
+  },
+  {
+    "audience": null,
+    "breaking": false,
+    "entry_id": "entry-0002",
+    "internal": false,
+    "kind": "added",
+    "order": 2,
+    "record_revision": 1,
+    "release_version": "v0.3.0",
+    "scopes": [],
+    "source_refs": ["git:0d0b183fdfe0b69452b9a0efaa6b39f2d69670c4"],
+    "status": "accepted",
+    "summary": "Added isolated profile-root mode with independent state management per workspace"
   },
   {
     "audience": null,
@@ -47,6 +75,20 @@
   {
     "audience": null,
     "breaking": false,
+    "entry_id": "entry-0003",
+    "internal": false,
+    "kind": "added",
+    "order": 3,
+    "record_revision": 1,
+    "release_version": "v0.3.0",
+    "scopes": [],
+    "source_refs": ["git:967870641518d8a42dcedb5e5dfb765ee2494943"],
+    "status": "accepted",
+    "summary": "Added user-approval workflow for context generation"
+  },
+  {
+    "audience": null,
+    "breaking": false,
     "entry_id": "entry-0004",
     "internal": false,
     "kind": "added",
@@ -57,6 +99,20 @@
     "source_refs": ["git:cea186b092751c414bdddffa99353dcb2e4833cb"],
     "status": "accepted",
     "summary": "Added chapter note context handling that excludes chapter-specific notes from context build hash"
+  },
+  {
+    "audience": null,
+    "breaking": false,
+    "entry_id": "entry-0004",
+    "internal": false,
+    "kind": "added",
+    "order": 4,
+    "record_revision": 1,
+    "release_version": "v0.3.0",
+    "scopes": [],
+    "source_refs": ["git:cd6842c20ba3ad266db12c41d80b5646d57b0d52"],
+    "status": "accepted",
+    "summary": "Improved inline XHTML fragment handling with EPUB validation"
   },
   {
     "audience": null,
@@ -75,6 +131,20 @@
   {
     "audience": null,
     "breaking": false,
+    "entry_id": "entry-0005",
+    "internal": false,
+    "kind": "added",
+    "order": 5,
+    "record_revision": 1,
+    "release_version": "v0.3.0",
+    "scopes": [],
+    "source_refs": ["git:b4677cc6a9b62003a19a4f285b1d3164c9b23ec3"],
+    "status": "accepted",
+    "summary": "Added translated content review system with acceptance workflow"
+  },
+  {
+    "audience": null,
+    "breaking": false,
     "entry_id": "entry-0006",
     "internal": false,
     "kind": "added",
@@ -85,6 +155,20 @@
     "source_refs": ["git:8a2fa654bad274e4749c373c68d23f861e2c022e"],
     "status": "accepted",
     "summary": "Added schema version for chunks with automatic rechunking and improved identity command"
+  },
+  {
+    "audience": null,
+    "breaking": false,
+    "entry_id": "entry-0006",
+    "internal": false,
+    "kind": "fixed",
+    "order": 6,
+    "record_revision": 1,
+    "release_version": "v0.3.0",
+    "scopes": [],
+    "source_refs": ["git:27e3669cf60da2c6e12ca5d04cdd4ee9ccfb9c4d"],
+    "status": "accepted",
+    "summary": "Fixed unit test coverage across acceptance, CLI, and translation modules"
   },
   {
     "audience": null,
@@ -103,6 +187,20 @@
   {
     "audience": null,
     "breaking": false,
+    "entry_id": "entry-0007",
+    "internal": false,
+    "kind": "added",
+    "order": 7,
+    "record_revision": 1,
+    "release_version": "v0.3.0",
+    "scopes": [],
+    "source_refs": ["git:04877cbd3c9c9eff865fbee15d1381703947efa9"],
+    "status": "accepted",
+    "summary": "Added large chapter workflow support with preflight validation"
+  },
+  {
+    "audience": null,
+    "breaking": false,
     "entry_id": "entry-0008",
     "internal": false,
     "kind": "added",
@@ -113,6 +211,20 @@
     "source_refs": ["git:b8bf30e80c6011c155ba2e2c42a725fad8e66186"],
     "status": "accepted",
     "summary": "Added profile migration tooling and identity module for resolving project state across layouts"
+  },
+  {
+    "audience": null,
+    "breaking": false,
+    "entry_id": "entry-0008",
+    "internal": false,
+    "kind": "added",
+    "order": 8,
+    "record_revision": 1,
+    "release_version": "v0.3.0",
+    "scopes": [],
+    "source_refs": ["git:9281a1553693f47c0ac5a6b36a6cad9e9334e39a"],
+    "status": "accepted",
+    "summary": "Added system hardening and bug fixes across CLI and task workflows"
   },
   {
     "audience": null,
@@ -131,6 +243,20 @@
   {
     "audience": null,
     "breaking": false,
+    "entry_id": "entry-0009",
+    "internal": true,
+    "kind": "internal",
+    "order": 9,
+    "record_revision": 2,
+    "release_version": "v0.3.0",
+    "scopes": [],
+    "source_refs": ["git:334408c720a988946aa0bba2460daaecd4ef6751"],
+    "status": "accepted",
+    "summary": "Fixed type annotations for mypy compliance"
+  },
+  {
+    "audience": null,
+    "breaking": false,
     "entry_id": "entry-0010",
     "internal": true,
     "kind": "internal",
@@ -141,6 +267,20 @@
     "source_refs": ["git:8fa59eb91f1bb80cf49e9dd13168f3e7cbdc89cc"],
     "status": "accepted",
     "summary": "Fixed mypy type annotations across modules"
+  },
+  {
+    "audience": null,
+    "breaking": false,
+    "entry_id": "entry-0010",
+    "internal": false,
+    "kind": "added",
+    "order": 10,
+    "record_revision": 2,
+    "release_version": "v0.3.0",
+    "scopes": [],
+    "source_refs": ["git:ded607582ebe214149cfe1270797adc5b71a02c5"],
+    "status": "accepted",
+    "summary": "Improved check and review workflow with enhanced validation"
   },
   {
     "audience": null,
@@ -159,6 +299,20 @@
   {
     "audience": null,
     "breaking": false,
+    "entry_id": "entry-0011",
+    "internal": false,
+    "kind": "added",
+    "order": 11,
+    "record_revision": 1,
+    "release_version": "v0.3.0",
+    "scopes": [],
+    "source_refs": ["git:10841601422397c30dec2828a2b866ba8a5c6439"],
+    "status": "accepted",
+    "summary": "Added export-index command for profile-local editor QA indexes"
+  },
+  {
+    "audience": null,
+    "breaking": false,
     "entry_id": "entry-0012",
     "internal": false,
     "kind": "fixed",
@@ -173,6 +327,20 @@
   {
     "audience": null,
     "breaking": false,
+    "entry_id": "entry-0012",
+    "internal": true,
+    "kind": "internal",
+    "order": 12,
+    "record_revision": 3,
+    "release_version": "v0.3.0",
+    "scopes": [],
+    "source_refs": ["git:38fd655e4f63af70ea35a32d8a6c3bba25b1d070"],
+    "status": "accepted",
+    "summary": "Fixed documentation and project layout"
+  },
+  {
+    "audience": null,
+    "breaking": false,
     "entry_id": "entry-0013",
     "internal": false,
     "kind": "fixed",
@@ -183,5 +351,19 @@
     "source_refs": ["git:2beb38748f48305c51e7072dd502ea425303dbd8"],
     "status": "accepted",
     "summary": "Fixed translation run model rebuild and agent status resolution"
+  },
+  {
+    "audience": null,
+    "breaking": false,
+    "entry_id": "entry-0013",
+    "internal": false,
+    "kind": "added",
+    "order": 13,
+    "record_revision": 1,
+    "release_version": "v0.3.0",
+    "scopes": [],
+    "source_refs": ["git:d963417bd0a7537389aa03c8cfc75de528201224"],
+    "status": "accepted",
+    "summary": "Improved context change CLI commands and agent skill instructions"
   }
 ]

@@ -35,9 +35,9 @@ dependencies = [
     "tomli; python_version < \"3.11\"",
     "beautifulsoup4",
     "markdown-it-py",
-    "phrasplit",
+    "phrasplit>=0.3.3",
     "epub2text>=0.2.6",
-    "text2epub",
+    "text2epub>=0.1.2",
 ]
 
 [project.optional-dependencies]
@@ -57,10 +57,10 @@ docs = [
 booktx = "booktx.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/booktx/booktx"
-Repository = "https://github.com/holgern/booktx"
-Issues = "https://github.com/holgern/booktx/issues"
-Changelog = "https://github.com/holgern/booktx/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/buchwandler/booktx"
+Repository = "https://github.com/buchwandler/booktx"
+Issues = "https://github.com/buchwandler/booktx/issues"
+Changelog = "https://github.com/buchwandler/booktx/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 # Non-src layout: the package lives at ./booktx
