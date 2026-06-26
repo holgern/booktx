@@ -53,22 +53,22 @@ project.
 
 Every translation effort lives under `translations/<profile>/`.
 
-| Path                                                     | Scope         | Notes                                                                      |
-| -------------------------------------------------------- | ------------- | -------------------------------------------------------------------------- |
-| `translations/<profile>/config.toml`                     | profile-local | Target language, locale, output filename, default identity                 |
-| `translations/<profile>/identity.json`                   | profile-local | Stored actor/harness/model defaults                                        |
-| `translations/<profile>/context.json`                    | profile-local | Authoritative translation context                                          |
-| `translations/<profile>/context.md`                      | profile-local | Rendered context for agents                                                |
-| `translations/<profile>/translation-store.json`          | profile-local | Primary record-level translation state                                     |
-| `translations/<profile>/translation-version-ledger.json` | profile-local | Version history inside this profile                                        |
-| `translations/<profile>/tasks/`                          | profile-local | Persisted translation tasks                                                |
-| `translations/<profile>/ingest/`                         | profile-local | Durable submission files                                                   |
-| `translations/<profile>/translated/`                     | profile-local | Generated compatibility/export chunk JSON (rebuildable; not primary state) |
-| `translations/<profile>/source-index.json`               | profile-local | Generated source-only editor QA index; rebuildable from source chunks and chapter map |
-| `translations/<profile>/target-index.json`               | profile-local | Generated target-only search index for editor QA; rebuildable from store, chunks, and chapter map |
+| Path                                                     | Scope         | Notes                                                                                                 |
+| -------------------------------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------- |
+| `translations/<profile>/config.toml`                     | profile-local | Target language, locale, output filename, default identity                                            |
+| `translations/<profile>/identity.json`                   | profile-local | Stored actor/harness/model defaults                                                                   |
+| `translations/<profile>/context.json`                    | profile-local | Authoritative translation context                                                                     |
+| `translations/<profile>/context.md`                      | profile-local | Rendered context for agents                                                                           |
+| `translations/<profile>/translation-store.json`          | profile-local | Primary record-level translation state                                                                |
+| `translations/<profile>/translation-version-ledger.json` | profile-local | Version history inside this profile                                                                   |
+| `translations/<profile>/tasks/`                          | profile-local | Persisted translation tasks                                                                           |
+| `translations/<profile>/ingest/`                         | profile-local | Durable submission files                                                                              |
+| `translations/<profile>/translated/`                     | profile-local | Generated compatibility/export chunk JSON (rebuildable; not primary state)                            |
+| `translations/<profile>/source-index.json`               | profile-local | Generated source-only editor QA index; rebuildable from source chunks and chapter map                 |
+| `translations/<profile>/target-index.json`               | profile-local | Generated target-only search index for editor QA; rebuildable from store, chunks, and chapter map     |
 | `translations/<profile>/source-target-index.json`        | profile-local | Generated source/target side-by-side editor QA index; rebuildable from store, chunks, and chapter map |
-| `translations/<profile>/reports/`                        | profile-local | Validation reports                                                         |
-| `translations/<profile>/output/`                         | profile-local | Rebuilt translated documents (rebuildable from the store)                  |
+| `translations/<profile>/reports/`                        | profile-local | Validation reports                                                                                    |
+| `translations/<profile>/output/`                         | profile-local | Rebuilt translated documents (rebuildable from the store)                                             |
 
 ## Safety rules
 

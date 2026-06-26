@@ -242,7 +242,6 @@ This writes `source-index.json`, `target-index.json`, and `source-target-index.j
 - Never edit any of the three files manually.
 - Never use any editor index as canonical source for build; the canonical state remains `translation-store.json`.
 
-
 ## Pass-through reconstruction check
 
 When the user asks to verify that EPUB reconstruction includes all content,

@@ -89,7 +89,6 @@ This writes `source-index.json`, `target-index.json`, and `source-target-index.j
 
 The three files are generated artifacts. Do not edit them manually and do not use them as build input.
 
-
 ## 7. Longer bounded runs
 
 When the user asks to continue for multiple chapters, do not request one huge
