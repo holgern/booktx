@@ -43,6 +43,20 @@ booktx context render ./book --profile de_gpt5_5 --write
 booktx context chapter-note ./book --profile de_gpt5_5 0010 --decision "Keep title literal"
 ```
 
+## Chapter detection and audit
+
+```bash
+booktx chapters ./book                       # detect, persist, and list chapter ranges
+booktx chapters ./book --audit               # audit EPUB TOC vs. extracted spans and map
+booktx chapters ./book --audit --json        # machine-readable audit output
+```
+
+`booktx chapters` refreshes `.booktx/chapter-map.json` and lists each chapter's
+chunk and record range. `--audit` is EPUB-only and read-only: it compares the
+visible contents page against extracted spans, navigation, and the chapter
+map, then writes `.booktx/reports/chapter-audit.json`. Run it before
+translating and stop if it reports missing numbered chapters.
+
 ## Status and identity
 
 ```bash

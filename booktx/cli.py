@@ -3074,12 +3074,28 @@ def next_cmd(
 @app.command(name="chapters")
 def chapters_cmd(
     project_dir: Path = typer.Argument(..., help="Project directory."),
+    audit: bool = typer.Option(
+        False,
+        "--audit",
+        help=(
+            "Audit the EPUB visible TOC against extracted spans, navigation, "
+            "and the chapter map; writes .booktx/reports/chapter-audit.json."
+        ),
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable JSON output.",
+    ),
 ) -> None:
-    """Detect and list chapter ranges."""
+    """Detect and list chapter ranges, or audit EPUB chapter completeness."""
     try:
         proj = load_project(project_dir)
     except BooktxError as exc:
         _handle_booktx_error(exc)
+        return
+    if audit:
+        _run_chapter_audit(proj, as_json=as_json)
         return
     chapter_map = detect_chapters(proj)
     write_chapter_map(proj, chapter_map)
@@ -3090,6 +3106,54 @@ def chapters_cmd(
             f"{chapter.chapter_id}{title}\tchunks: {chunks}\t"
             f"records: {chapter.start_record_id}..{chapter.end_record_id}"
         )
+
+
+def _run_chapter_audit(proj: Project, *, as_json: bool = False) -> None:
+    from booktx.epub_toc_audit import (
+        audit_epub_chapter_map,
+        write_audit_report,
+    )
+
+    if proj.config.format != "epub":
+        if as_json:
+            console.print_json('{"error": "chapter audit is EPUB-only"}')
+        else:
+            _die("chapter audit is EPUB-only")
+        return
+    chapter_map = load_chapter_map(proj)
+    if chapter_map is None:
+        # Read-only audit: detect without persisting so chapter-map.json is
+        # not mutated by --audit.
+        chapter_map = detect_chapters(proj)
+    result = audit_epub_chapter_map(proj, chapter_map=chapter_map)
+    out_path = write_audit_report(proj, result)
+    if as_json:
+        console.print_json(json.dumps(result.as_dict(), indent=2, ensure_ascii=False))
+        return
+    console.print("EPUB chapter audit")
+    console.print(f"toc entries: {len(result.toc_entries)}")
+    console.print(f"numbered TOC chapters: {result.numbered_toc_count}")
+    console.print(f"numbered chapters in map: {result.mapped_numbered_chapter_count}")
+    console.print(f"extracted documents: {result.extracted_document_count}")
+    if result.missing_numbered_titles:
+        preview = ", ".join(result.missing_numbered_titles[:12])
+        suffix = "" if len(result.missing_numbered_titles) <= 12 else ", ..."
+        console.print(f"missing numbered chapters: {preview}{suffix}")
+    if not result.findings:
+        console.print("findings: none")
+    else:
+        for finding in result.findings:
+            severity_color = {
+                "error": "red",
+                "warning": "yellow",
+                "info": "cyan",
+            }.get(finding.severity, "white")
+            console.print(
+                f"[{severity_color}]{finding.severity}[/{severity_color}] "
+                f"{finding.code}: {finding.message}",
+                soft_wrap=True,
+            )
+    console.print(f"report: {out_path}")
 
 
 @app.command(name="next-chapter")

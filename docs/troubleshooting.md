@@ -202,3 +202,32 @@ booktx check . --chapter 0005 --fail-on-warnings
 The check output will show the exact record, chapter, source/target snippet, and
 suggested fix commands. File a booktx bug if check also misses the error that
 build catches.
+
+## TOC lists more chapters than chapter-map
+
+An EPUB contents page can advertise numbered chapters that were not extracted
+or not detected. Symptoms: `booktx validate` reports
+`epub_toc_chapter_missing_from_map` or `epub_toc_href_extracted_but_unmapped`,
+or the chapter map ends early (for example at `TEN` while the TOC lists
+`ONE` through `TWENTY-SIX`).
+
+Diagnose with the read-only audit:
+
+```bash
+booktx chapters . --audit
+```
+
+Interpret the findings:
+
+- `epub_toc_href_missing_from_extracted_spans` means the target XHTML was not
+  extracted. The source is likely a preview/truncated EPUB or extraction
+  skipped a spine document. Do not synthesize empty chapters; re-extract from a
+  complete source.
+- `epub_toc_href_extracted_but_unmapped` means the target was extracted but no
+  chapter boundary covers it, so translation would skip it. This is a detection
+  bug; report it with the audit report attached.
+- `epub_navigation_partial` indicates navigation is a strict subset of the
+  visible chapter signals.
+
+Run `booktx chapters .` to refresh the map after fixing the source or
+re-extracting.

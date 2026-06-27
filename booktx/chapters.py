@@ -272,16 +272,103 @@ _prose_span_from_ref = prose_span_from_epub_ref  # backward-compatible alias
 def _epub_boundaries_from_refs(
     span_refs: list[EpubSpanRef], navigation_refs: list[EpubNavigationRef]
 ) -> list[_Boundary]:
-    boundaries = _navigation_boundaries(span_refs, navigation_refs)
-    if boundaries:
-        return boundaries
-
+    nav_boundaries = _navigation_boundaries(span_refs, navigation_refs)
     heading_boundaries = [
-        _Boundary(span_ref.span_index, span_ref.source_text)
-        for span_ref in span_refs
+        _Boundary(pos, span_ref.source_text)
+        for pos, span_ref in enumerate(span_refs)
         if span_ref.tag_name in _HEADING_TAGS and span_ref.source_text.strip()
     ]
-    return heading_boundaries
+    if not nav_boundaries:
+        return heading_boundaries
+
+    # If navigation is a strict prefix/subset of a strongly chapter-like
+    # heading sequence, complete the chapter set from headings instead of
+    # trusting the partial navigation result.
+    if _looks_like_partial_numbered_chapter_sequence(
+        nav_boundaries, heading_boundaries
+    ):
+        return _merge_boundaries(nav_boundaries, heading_boundaries)
+
+    # Last resort: TOC-derived document starts for extracted documents whose
+    # chapter-like titles are not yet covered by navigation or headings. Targets
+    # without extracted spans are never used, so this cannot create empty
+    # chapters for missing/truncated documents.
+    toc_extra = _toc_document_start_extras(
+        span_refs, nav_boundaries, heading_boundaries
+    )
+    if toc_extra:
+        return _merge_boundaries(nav_boundaries, toc_extra)
+    return nav_boundaries
+
+
+def _boundary_ordinals(boundaries: list[_Boundary]) -> set[int]:
+    from booktx.epub_toc_audit import chapter_ordinal
+
+    return {
+        ordinal
+        for ordinal in (chapter_ordinal(b.title) for b in boundaries)
+        if ordinal is not None
+    }
+
+
+def _looks_like_partial_numbered_chapter_sequence(
+    nav_boundaries: list[_Boundary], heading_boundaries: list[_Boundary]
+) -> bool:
+    """True when navigation is a strict subset of a chapter-like heading sequence.
+
+    Navigation must already cover at least one numbered chapter, headings must
+    contain at least one numbered chapter not present in navigation, and every
+    navigation ordinal must be backed by a heading. This keeps h2 section
+    headings, front-matter, and non-numbered titles from triggering a merge.
+    """
+    nav_ordinals = _boundary_ordinals(nav_boundaries)
+    heading_ordinals = _boundary_ordinals(heading_boundaries)
+    if not nav_ordinals or not heading_ordinals:
+        return False
+    return nav_ordinals < heading_ordinals
+
+
+def _merge_boundaries(*groups: list[_Boundary]) -> list[_Boundary]:
+    """Combine boundary groups, sorted by span_index with deduplication.
+
+    Two boundaries landing on the same span_index collapse into one; a titled
+    boundary wins over an untitled one at the same position.
+    """
+    combined: list[_Boundary] = []
+    for group in groups:
+        combined.extend(group)
+    combined.sort(key=lambda boundary: boundary.span_index)
+    deduped: list[_Boundary] = []
+    for boundary in combined:
+        if deduped and deduped[-1].span_index == boundary.span_index:
+            if boundary.title and not deduped[-1].title:
+                deduped[-1] = boundary
+            continue
+        deduped.append(boundary)
+    return deduped
+
+
+def _toc_document_start_extras(
+    span_refs: list[EpubSpanRef],
+    nav_boundaries: list[_Boundary],
+    heading_boundaries: list[_Boundary],
+) -> list[_Boundary]:
+    """Return TOC-derived boundaries for uncovered extracted chapter documents."""
+    from booktx.epub_toc_audit import (
+        chapter_ordinal,
+        toc_document_start_boundaries,
+    )
+
+    covered = _boundary_ordinals(nav_boundaries) | _boundary_ordinals(
+        heading_boundaries
+    )
+    extras: list[_Boundary] = []
+    for span_index, title in toc_document_start_boundaries(span_refs):
+        ordinal = chapter_ordinal(title)
+        if ordinal is None or ordinal in covered:
+            continue
+        extras.append(_Boundary(span_index, title))
+    return extras
 
 
 def _navigation_boundaries(
@@ -301,23 +388,31 @@ def _navigation_boundaries(
 def _navigation_span_index(
     entry: EpubNavigationRef, span_refs: list[EpubSpanRef]
 ) -> int | None:
+    """Return the position of the navigation entry's first span in ``span_refs``.
+
+    The returned position is an index into the ``span_refs`` list, which is
+    what ``_span_record_starts`` keys its record-start table by. EPUB span
+    indices are per-block and non-contiguous (a multi-sentence block leaves
+    gaps), so they cannot be used directly as array indices.
+    """
     matches = [
-        span_ref
-        for span_ref in span_refs
+        pos
+        for pos, span_ref in enumerate(span_refs)
         if entry.document_href and span_ref.document_href == entry.document_href
     ]
     if not matches and entry.spine_index is not None:
         matches = [
-            span_ref
-            for span_ref in span_refs
+            pos
+            for pos, span_ref in enumerate(span_refs)
             if span_ref.spine_index == entry.spine_index
         ]
     if not matches:
         return None
     if entry.source_char_start is None:
-        return matches[0].span_index
-    for span_ref in matches:
+        return matches[0]
+    for pos in matches:
+        span_ref = span_refs[pos]
         start = span_ref.source_char_start
         if start is not None and start >= entry.source_char_start:
-            return span_ref.span_index
-    return matches[0].span_index
+            return pos
+    return matches[0]

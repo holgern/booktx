@@ -1358,6 +1358,55 @@ def epub_preflight_findings_as_validation_findings(
     return findings
 
 
+def _epub_toc_audit_findings(project: Project) -> list[Finding]:
+    """Run the EPUB TOC audit and convert findings to validation Findings.
+
+    Returns an empty list for non-EPUB projects or when no EPUB template is
+    stored. Audit errors map to validation errors; warnings map to warnings.
+    """
+    from booktx.epub_toc_audit import audit_epub_chapter_map
+
+    try:
+        result = audit_epub_chapter_map(project)
+    except Exception:  # noqa: BLE001 - audit must never break validation
+        return []
+    findings: list[Finding] = []
+    for audit_finding in result.findings:
+        findings.append(
+            Finding(
+                chunk_id="epub-chapter-audit",
+                severity=audit_finding.severity,
+                rule=audit_finding.code,
+                message=audit_finding.message,
+                document_href=audit_finding.href or "",
+                chapter_title=audit_finding.title or "",
+                record_id=audit_finding.source_record_id or "",
+            )
+        )
+    return findings
+
+
+def _maybe_append_epub_toc_audit(
+    report: ValidationReport,
+    project: Project,
+    *,
+    new_epub_pipeline: bool,
+    resolved_chapter: str | None,
+    task_id: str | None,
+) -> None:
+    """Append EPUB TOC audit findings for unscoped EPUB validation runs.
+
+    EPUB chapter completeness is a source-level concern. It is only surfaced
+    for unscoped validation so a bounded `booktx check --chapter` run is not
+    blocked by unrelated global chapter-map warnings.
+    """
+    if not new_epub_pipeline:
+        return
+    if resolved_chapter is not None or task_id is not None:
+        return
+    report.findings.extend(_epub_toc_audit_findings(project))
+
+
 def validate_project(
     project: Project,
     *,
@@ -1500,6 +1549,14 @@ def validate_project(
                 )
             )
         )
+
+    _maybe_append_epub_toc_audit(
+        report,
+        project,
+        new_epub_pipeline=new_epub_pipeline,
+        resolved_chapter=resolved_chapter,
+        task_id=task_id,
+    )
 
     if context is not None:
         drift_finding = _context_render_drift_finding(project, context)

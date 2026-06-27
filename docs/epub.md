@@ -100,13 +100,47 @@ This preserves identity builds, but changed blocks can lose inner inline markup 
 
 ## Chapter detection
 
-EPUB chapter detection prefers stored navigation references from `epub2text`.
+EPUB chapter detection combines several signals rather than trusting a single
+source:
 
-Fallback behavior:
+1. **navigation entries** from `epub2text` (preferred when complete)
+2. **heading tags** (`h1` through `h6`) that extend a numbered sequence
+3. **TOC-derived document starts**: when navigation is partial and a visible
+   contents page links to an extracted XHTML document, the first span of that
+   document becomes a chapter boundary
+4. a single chapter covering the whole record stream (last resort)
 
-1. navigation entries
-2. heading tags (`h1` through `h6`)
-3. a single chapter covering the whole record stream
+Detection no longer trusts partial navigation blindly. When navigation is a
+strict subset of a strongly chapter-like heading sequence, headings complete
+the map. TOC-derived boundaries are only used for documents that were
+actually extracted, so a truncated/preview EPUB never produces empty chapter
+entries.
+
+### Chapter completeness audit
+
+A visible contents page can promise more chapters than were extracted or
+detected (for example a preview EPUB, a skipped spine document, or partial
+navigation). The audit compares the visible TOC against extracted spans,
+navigation, and the chapter map:
+
+```bash
+booktx chapters ./book --audit
+booktx chapters ./book --audit --json
+```
+
+The audit writes `.booktx/reports/chapter-audit.json` and is also surfaced by
+`booktx validate` and `booktx check` for unscoped EPUB runs. Deterministic
+finding codes and severities:
+
+- `error epub_toc_href_extracted_but_unmapped`: the TOC target has extracted
+  spans but no chapter boundary covers it.
+- `warning epub_toc_chapter_missing_from_map`: a numbered TOC entry is not in
+  the chapter map.
+- `warning epub_toc_href_missing_from_extracted_spans`: the TOC target has no
+  extracted span (truncated/preview EPUB or extraction skip).
+- `warning epub_navigation_partial`: navigation covers fewer numbered chapters
+  than visible chapter signals.
+- `warning epub_chapter_sequence_gap`: numbered TOC chapters have gaps.
 
 ## Common EPUB errors
 

@@ -119,6 +119,22 @@ booktx profile create ./book PROFILE \
 Use a new profile for each target language, model experiment, or hard-isolated
 context experiment.
 
+### EPUB chapter completeness check
+
+Before translating an EPUB, confirm the detected chapter map matches the
+visible contents page. A truncated/preview EPUB or a partial navigation
+document can make the map end early (for example at `TEN` while the TOC lists
+`ONE` through `TWENTY-SIX`), which silently skips chapters.
+
+```bash
+booktx chapters . --audit
+```
+
+Stop and resolve the source if the audit reports `epub_toc_chapter_missing_from_map`,
+`epub_toc_href_extracted_but_unmapped`, or `epub_toc_href_missing_from_extracted_spans`.
+Do not synthesize empty chapters from missing TOC targets; re-extract from a
+complete source instead.
+
 ## Context gate
 
 Before requesting translation work:

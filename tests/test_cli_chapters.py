@@ -79,6 +79,38 @@ def test_chapters_lists_detected_ranges(tmp_path: Path):
     assert (project_dir / ".booktx" / "chapter-map.json").is_file()
 
 
+def test_chapters_audit_reports_toc_mismatch_and_writes_report(tmp_path: Path):
+    from tests.test_epub_toc_audit import _make_project
+
+    project_dir = _make_project(
+        tmp_path, toc_count=26, spine_count=10, contents=True, headings=True
+    )
+    res = runner.invoke(app, ["chapters", str(project_dir), "--audit"])
+    assert res.exit_code == 0, res.output
+    assert "EPUB chapter audit" in res.output
+    assert "numbered TOC chapters: 26" in res.output
+    assert "epub_toc_chapter_missing_from_map" in res.output
+    report = project_dir / ".booktx" / "reports" / "chapter-audit.json"
+    assert report.is_file()
+    payload = json.loads(report.read_text("utf-8"))
+    assert payload["numbered_toc_count"] == 26
+
+
+def test_chapters_audit_json_emits_findings(tmp_path: Path):
+    from tests.test_epub_toc_audit import _make_project
+
+    project_dir = _make_project(
+        tmp_path, toc_count=26, spine_count=10, contents=True, headings=True
+    )
+    res = runner.invoke(app, ["chapters", str(project_dir), "--audit", "--json"])
+    assert res.exit_code == 0, res.output
+    payload = json.loads(res.output)
+    assert payload["numbered_toc_count"] == 26
+    assert payload["mapped_numbered_chapter_count"] == 10
+    codes = {finding["code"] for finding in payload["findings"]}
+    assert "epub_toc_chapter_missing_from_map" in codes
+
+
 def test_next_chapter_respects_context_gate(tmp_path: Path):
     project_dir = _make_project(tmp_path)
     res = runner.invoke(app, ["next-chapter", str(project_dir)])

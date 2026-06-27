@@ -1,5 +1,5 @@
 version = 1
 source_language = "en"
-source_file = ""
-format = "markdown"
+source_file = "book.epub"
+format = "epub"
 chunk_size = 50
