@@ -4805,99 +4805,47 @@ def _staged_preflight_check(
 ) -> None:
     """Run EPUB inline-XHTML preflight on staged submitted records.
 
-    Layers submitted records on top of current effective translations and
-    runs the preflight. If inline-XHTML errors (or, when ``fail_on_warnings=True``,
-    warnings) are found, renders them and exits non-zero BEFORE the store is written.
+    Layers submitted records on top of current effective translations and runs
+    the preflight (via :mod:`booktx.acceptance_preflight`). If inline-XHTML
+    errors (or, when ``fail_on_warnings=True``, warnings) are found, renders
+    them and exits non-zero BEFORE the store is written.
     """
-    """Run EPUB inline-XHTML preflight on staged submitted records.
+    from booktx.acceptance_preflight import run_staged_preflight
 
-    Layers submitted records on top of current effective translations and
-    runs the preflight. If inline-XHTML errors are found, renders them and
-    exits non-zero BEFORE the store is written.
-    """
-    from booktx.models import TranslatedRecord
-    from booktx.validate import load_effective_translated_chunks
-
-    # Only run for EPUB projects.
-    if proj.config.format != "epub":
-        return
-
-    try:
-        effective = load_effective_translated_chunks(proj)
-    except Exception:  # noqa: BLE001
-        return  # can't check; let accept_translation_records handle it
-    # Build a staged effective chunks view with submitted records overlaid.
-    # Even when effective chunks are empty, we need to create staged chunks
-    # from source chunks so new submissions can be validated.
-    from booktx.progress import load_source_chunks
-
-    source_chunks = {c.chunk_id: c for c in load_source_chunks(proj)}
-    submitted_by_id = {record.id: record for record in submitted_records}
-    staged_chunks: dict[str, TranslatedChunk] = {}
-    for chunk_id, source_chunk in source_chunks.items():
-        existing = effective.chunks.get(chunk_id)
-        staged_records = []
-        if existing is not None:
-            for rec in existing.records:
-                if rec.id in submitted_ids:
-                    submitted = submitted_by_id.get(rec.id)
-                    if submitted is not None:
-                        staged_records.append(
-                            TranslatedRecord(id=submitted.id, target=submitted.target)
-                        )
-                    else:
-                        staged_records.append(rec)
-                else:
-                    staged_records.append(rec)
-        # Add submitted records that are in this source chunk but not yet
-        # in effective translations (new submissions).
-        existing_ids = {r.id for r in staged_records}
-        source_ids = {r.id for r in source_chunk.records}
-        for submitted_rec in submitted_records:
-            if submitted_rec.id in source_ids and submitted_rec.id not in existing_ids:
-                staged_records.append(
-                    TranslatedRecord(id=submitted_rec.id, target=submitted_rec.target)
-                )
-        if staged_records:
-            staged_chunks[chunk_id] = TranslatedChunk(
-                records=staged_records, chunk_id=chunk_id
-            )
-    # Now run preflight on the staged chunks.
-    from booktx.epub_preflight import validate_epub_inline_preflight
-
-    preflight_findings = validate_epub_inline_preflight(
-        proj, record_ids=submitted_ids, effective_chunks=staged_chunks
+    blocking = run_staged_preflight(
+        proj,
+        submitted_records,
+        submitted_ids,
+        fail_on_warnings=fail_on_warnings,
     )
-    blocking = [f for f in preflight_findings if f.severity == "error"]
-    if fail_on_warnings:
-        blocking.extend(f for f in preflight_findings if f.severity == "warn")
-    if blocking:
-        for f in blocking:
-            _render_finding(
-                Finding(
-                    chunk_id=f.chunk_id or "epub-preflight",
-                    severity=f.severity,
-                    rule=f.rule,
-                    message=f.message,
-                    record_id=f.record_id,
-                    record_ids=list(f.record_ids),
-                    chapter_id=f.chapter_id,
-                    chapter_title=f.chapter_title,
-                    span_index=f.span_index,
-                    block_id=f.block_id,
-                    document_href=f.document_href,
-                    source=f.source,
-                    target=f.target,
-                )
+    if not blocking:
+        return
+    for f in blocking:
+        _render_finding(
+            Finding(
+                chunk_id=f.chunk_id or "epub-preflight",
+                severity=f.severity,
+                rule=f.rule,
+                message=f.message,
+                record_id=f.record_id,
+                record_ids=list(f.record_ids),
+                chapter_id=f.chapter_id,
+                chapter_title=f.chapter_title,
+                span_index=f.span_index,
+                block_id=f.block_id,
+                document_href=f.document_href,
+                source=f.source,
+                target=f.target,
             )
-            fix_record = f.record_id or (f.record_ids[0] if f.record_ids else "")
-            if fix_record:
-                console.print(
-                    f"  fix: booktx translation revise-record . {fix_record} --stdin",
-                    soft_wrap=True,
-                    markup=False,
-                )
-        raise typer.Exit(code=1)
+        )
+        fix_record = f.record_id or (f.record_ids[0] if f.record_ids else "")
+        if fix_record:
+            console.print(
+                f"  fix: booktx translation revise-record . {fix_record} --stdin",
+                soft_wrap=True,
+                markup=False,
+            )
+    raise typer.Exit(code=1)
 
 
 def _truncate(text: str, limit: int = 120) -> str:
@@ -5240,11 +5188,8 @@ def review_status(
     as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     """Report review coverage by pass."""
-    try:
-        proj = _load_project_or_exit(project_dir, profile=profile, require_profile=True)
-    except BooktxError as exc:
-        _handle_booktx_error(exc)
-        return
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
     from booktx.config import load_translation_store
     from booktx.review_status import compute_review_snapshot
 
@@ -5252,7 +5197,27 @@ def review_status(
         proj.profile_config.quality_review if proj.profile_config is not None else None
     )
     store = load_translation_store(proj)
-    snapshot = compute_review_snapshot(store, cfg)
+    # Build document-ordered (record_id, chapter_id) for actionable hints.
+    bundle = _project_status_snapshot(proj)
+    record_order: list[tuple[str, str]] = []
+    for chapter_id, rids in bundle.index.record_ids_by_chapter.items():
+        record_order.extend((rid, chapter_id) for rid in rids)
+    snapshot = compute_review_snapshot(store, cfg, record_order=record_order)
+    # Populate the top-level next command from the first actionable pass.
+    if snapshot.first_missing_record is not None:
+        first_pass = next(
+            (p for p in snapshot.passes if p.first_missing_record is not None),
+            None,
+        )
+        if first_pass is not None:
+            from booktx.command_hints import review_next_command
+
+            snapshot.next_command = review_next_command(
+                proj,
+                mode=runtime.mode,
+                pass_number=first_pass.pass_number,
+                chapter_id=snapshot.first_missing_chapter,
+            )
     import json
 
     if as_json:
@@ -5273,6 +5238,22 @@ def review_status(
         console.print(f"  stale review: {p.stale_review_records}")
         if p.blocked_records:
             console.print(f"  blocked waiting for prior pass: {p.blocked_records}")
+        if p.first_missing_record is not None:
+            from booktx.command_hints import review_next_command
+
+            console.print(
+                "  next: "
+                + review_next_command(
+                    proj,
+                    mode=runtime.mode,
+                    pass_number=p.pass_number,
+                    chapter_id=p.first_missing_chapter,
+                ),
+                soft_wrap=True,
+                markup=False,
+            )
+        elif p.blocked_records and p.reviewed_records == 0:
+            console.print("  next: finish prior pass first")
 
 
 @review_app.command(name="next")
@@ -5285,6 +5266,16 @@ def review_next(
     chapter: str | None = typer.Option(None, "--chapter", help="Optional chapter id."),
     max_words: int = typer.Option(
         900, "--max-words", help="Maximum source words to return."
+    ),
+    selection: str = typer.Option(
+        "missing",
+        "--selection",
+        help="missing|stale|reviewed|all|changed-base; default missing.",
+    ),
+    base: str | None = typer.Option(
+        None,
+        "--base",
+        help="active_translation|active_review|pass:N (default from pass config).",
     ),
 ) -> None:
     """Create the next durable review task for a pass."""
@@ -5299,10 +5290,28 @@ def review_next(
     if pass_number not in cfg.active_passes:
         _die(f"pass {pass_number} is not in active_passes {cfg.active_passes}")
         return
+    from booktx.review_tasks import (
+        REVIEW_SELECTIONS,
+        create_review_task,
+        parse_review_base,
+        select_review_records,
+    )
+
+    if selection not in REVIEW_SELECTIONS:
+        _die(
+            f"invalid --selection {selection!r}; expected one of: "
+            + ", ".join(REVIEW_SELECTIONS)
+        )
+        return
+    pcfg = next((p for p in cfg.passes if p.pass_number == pass_number), None)
+    try:
+        parse_review_base(base, pcfg)
+    except ValueError as exc:
+        _die(str(exc))
+        return
     _require_chunks(proj)
     _require_no_source_drift(proj)
     from booktx.config import load_translation_store
-    from booktx.review_tasks import create_review_task, select_review_records
 
     bundle = _project_status_snapshot(proj)
     selected_chapter = _selected_chapter(bundle, chapter)
@@ -5317,6 +5326,8 @@ def review_next(
         pass_number=pass_number,
         chapter_id=selected_chapter.chapter_id,
         max_words=max_words,
+        selection=selection,
+        base=base,
     )
     if not selected:
         console.print("No records need review for this pass.")
@@ -5345,8 +5356,12 @@ def review_insert(
     output_format: str = typer.Option(
         "block", "--format", help="Submission format: block."
     ),
-    activate: bool = typer.Option(False, "--activate", help="Force activation."),
-    no_activate: bool = typer.Option(False, "--no-activate", help="Do not activate."),
+    activate: bool = typer.Option(
+        True, "--activate", help="Activate the review candidate (default)."
+    ),
+    no_activate: bool = typer.Option(
+        False, "--no-activate", help="Do not activate the review candidate."
+    ),
 ) -> None:
     """Parse a review task submission and create review candidates."""
     try:
@@ -5370,6 +5385,20 @@ def review_insert(
     cfg = (
         proj.profile_config.quality_review if proj.profile_config is not None else None
     )
+    try:
+        _staged_preflight_check(
+            proj,
+            [SubmittedRecord(id=item.id, target=item.target) for item in submitted],
+            {item.id for item in submitted},
+            fail_on_warnings=True,
+        )
+    except ValidationError as exc:
+        console.print(
+            "[red]error:[/red] internal preflight staging failed while "
+            "validating submitted EPUB inline XHTML"
+        )
+        console.print(f"detail: {exc}")
+        raise typer.Exit(code=1) from None
     try:
         result = accept_review_submission(
             proj,

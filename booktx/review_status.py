@@ -70,6 +70,21 @@ def _eligible_for_pass(
     return active is not None and active.status == "accepted"
 
 
+def _needs_review_for_pass(
+    stored: StoredTranslationRecordV2,
+    pass_number: int,
+    pcfg: ReviewPassConfig | None,
+) -> bool:
+    """True when an eligible record still needs review for a pass.
+
+    Covers both genuinely missing and stale/rejected-only records. Blocked
+    records (eligible base unavailable) are excluded.
+    """
+    if not _eligible_for_pass(stored, pcfg):
+        return False
+    return not _accepted_review_for_pass(stored, pass_number)
+
+
 class ReviewPassStatus(BaseModel):
     """Coverage status for one review pass."""
 
@@ -85,6 +100,8 @@ class ReviewPassStatus(BaseModel):
     stale_review_records: int = 0
     blocked_records: int = 0
     status: Literal["complete", "needs_review", "blocked", "disabled"] = "complete"
+    first_missing_record: str | None = None
+    first_missing_chapter: str | None = None
 
 
 class ReviewStatusSnapshot(BaseModel):
@@ -95,14 +112,25 @@ class ReviewStatusSnapshot(BaseModel):
     enabled: bool
     active_passes: list[int] = Field(default_factory=list)
     passes: list[ReviewPassStatus] = Field(default_factory=list)
+    next_command: str | None = None
+    first_missing_record: str | None = None
+    first_missing_chapter: str | None = None
 
 
 def compute_review_snapshot(
-    store: TranslationStoreV2, quality_cfg: QualityReviewConfig | None
+    store: TranslationStoreV2,
+    quality_cfg: QualityReviewConfig | None,
+    *,
+    record_order: list[tuple[str, str]] | None = None,
 ) -> ReviewStatusSnapshot:
     """Compute per-pass review coverage for a store.
 
-    Returns a disabled snapshot when quality review is not enabled.
+    ``record_order`` is an optional ``(record_id, chapter_id)`` sequence in
+    document order. When supplied, each pass is annotated with the first record
+    still needing review (missing or stale) and the snapshot's top-level
+    ``first_missing_record``/``first_missing_chapter`` point at the first
+    actionable pass. Returns a disabled snapshot when quality review is not
+    enabled.
     """
     if quality_cfg is None or not quality_cfg.enabled:
         return ReviewStatusSnapshot(enabled=False, active_passes=[], passes=[])
@@ -146,6 +174,17 @@ def compute_review_snapshot(
                     status_obj.blocked_records += 1
                 else:
                     status_obj.missing_review_records += 1
+        if record_order is not None and (
+            status_obj.missing_review_records > 0 or status_obj.stale_review_records > 0
+        ):
+            for rid, chapter in record_order:
+                rec = store.records.get(rid)
+                if rec is None:
+                    continue
+                if _needs_review_for_pass(rec, pass_number, pcfg):
+                    status_obj.first_missing_record = rid
+                    status_obj.first_missing_chapter = chapter
+                    break
         if status_obj.blocked_records > 0 and status_obj.reviewed_records == 0:
             status_obj.status = "blocked"
         elif (
@@ -155,4 +194,10 @@ def compute_review_snapshot(
         else:
             status_obj.status = "complete"
         snapshot.passes.append(status_obj)
+    if record_order is not None:
+        for p in snapshot.passes:
+            if p.first_missing_record is not None:
+                snapshot.first_missing_record = p.first_missing_record
+                snapshot.first_missing_chapter = p.first_missing_chapter
+                break
     return snapshot

@@ -24,6 +24,7 @@ __all__ = [
     "validate_command",
     "check_command",
     "build_command",
+    "review_next_command",
 ]
 
 # Preferred default batch words for agent-friendly bounded runs.
@@ -191,3 +192,31 @@ def build_command(
     """Build a ``booktx build`` command string."""
     strict = " --require-complete" if require_complete else ""
     return f"booktx build .{profile_option_fragment(project, mode)}{strict}"
+
+
+def review_next_command(
+    project: Project,
+    *,
+    mode: RuntimeMode | None = None,
+    pass_number: int,
+    chapter_id: str | None = None,
+    max_words: int = 900,
+    selection: str = "missing",
+    base: str | None = None,
+) -> str:
+    """Build a ``booktx review next`` command string for a pass.
+
+    ``selection``/``base`` are only emitted when they differ from the defaults
+    (``missing`` / pass-config-derived), so routine hints stay short.
+    """
+    profile = profile_option_fragment(project, mode)
+    chapter = f" --chapter {chapter_id}" if chapter_id else ""
+    parts = [
+        f"booktx review next .{profile} --pass {pass_number}{chapter}"
+        f" --max-words {max_words}"
+    ]
+    if selection != "missing":
+        parts.append(f" --selection {selection}")
+    if base is not None:
+        parts.append(f" --base {base}")
+    return "".join(parts)

@@ -219,3 +219,45 @@ def test_snapshot_disabled_pass_is_marked_disabled():
     )
     snap = compute_review_snapshot(store, cfg)
     assert snap.passes[0].status == "disabled"
+
+
+def test_snapshot_record_order_populates_first_missing():
+    store = TranslationStoreV2(
+        records={
+            "0001-000001": _record("0001-000001", target="t1"),
+            "0001-000002": _record("0001-000002", target="t2"),
+        }
+    )
+    cfg = QualityReviewConfig(
+        enabled=True,
+        active_passes=[1],
+        passes=[ReviewPassConfig(pass_number=1, enforce="warn")],
+    )
+    # Document order puts 000002 first.
+    order = [("0001-000002", "0001"), ("0001-000001", "0001")]
+    snap = compute_review_snapshot(store, cfg, record_order=order)
+    p1 = snap.passes[0]
+    assert p1.first_missing_record == "0001-000002"
+    assert p1.first_missing_chapter == "0001"
+    # Top-level points at the first actionable pass.
+    assert snap.first_missing_record == "0001-000002"
+    assert snap.first_missing_chapter == "0001"
+
+
+def test_snapshot_first_missing_none_when_complete():
+    r_target = "t1"
+    r1 = _record(
+        "0001-000001",
+        target=r_target,
+        reviews=[_review(target="polished", base_target=r_target)],
+        active_review="R1.1",
+    )
+    store = TranslationStoreV2(records={"0001-000001": r1})
+    cfg = QualityReviewConfig(
+        enabled=True,
+        active_passes=[1],
+        passes=[ReviewPassConfig(pass_number=1, enforce="warn")],
+    )
+    snap = compute_review_snapshot(store, cfg, record_order=[("0001-000001", "0001")])
+    assert snap.passes[0].first_missing_record is None
+    assert snap.first_missing_record is None

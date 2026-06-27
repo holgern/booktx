@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from booktx.cli import app
@@ -184,6 +185,99 @@ def test_select_skips_records_with_current_pass1_review(tmp_path: Path):
     selected_ids = {s.record_id for s in selected}
     assert first_id not in selected_ids
     assert len(selected) == len(records) - 1
+
+
+def _pass1_reviewed_records(tmp_path: Path):
+    """Build a store where every record has an accepted, active R1.1 review."""
+    project_dir = _make_project(tmp_path)
+    proj = load_project(project_dir)
+    records = {}
+    for path in sorted(proj.chunks_dir.glob("*.json")):
+        chunk = json.loads(path.read_text("utf-8"))
+        for rec in chunk["records"]:
+            review = TranslationReviewCandidate(
+                pass_number=1,
+                run_number=1,
+                review_ref="R1.1",
+                base_kind="translation",
+                base_ref="1.1",
+                base_target_sha256=sha256_text(rec["source"]),
+                target="polished",
+                target_sha256=sha256_text("polished"),
+                created_at="t",
+                updated_at="t",
+            )
+            records[rec["id"]] = _store_record(
+                rec["id"], rec["source"], reviews=[review], active_review="R1.1"
+            )
+    write_translation_store(proj, TranslationStoreV2(records=records))
+    _write_ledger(proj)
+    proj = load_project(project_dir)
+    bundle = build_status_snapshot(proj, context_exists=False, context_ready=False)
+    return proj, bundle, records
+
+
+def test_select_reviewed_active_review_creates_r1_2(tmp_path: Path):
+    proj, bundle, records = _pass1_reviewed_records(tmp_path)
+    selected = select_review_records(
+        bundle,
+        records,
+        _pass_cfg(),
+        pass_number=1,
+        selection="reviewed",
+        base="active_review",
+    )
+    # Every record already has R1.1; rerun assigns R1.2 based on R1.1.
+    assert len(selected) == len(records)
+    assert all(s.review_ref == "R1.2" for s in selected)
+    assert all(s.base_kind == "review" for s in selected)
+    assert all(s.base_ref == "R1.1" for s in selected)
+    assert all(s.base_target == "polished" for s in selected)
+
+
+def test_select_missing_default_skips_reviewed_records(tmp_path: Path):
+    proj, bundle, records = _pass1_reviewed_records(tmp_path)
+    # Default selection (missing) finds nothing because everything is reviewed.
+    selected = select_review_records(bundle, records, _pass_cfg(), pass_number=1)
+    assert selected == []
+
+
+def test_select_reviewed_blocked_when_base_active_review_unavailable(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    proj = load_project(project_dir)
+    records = {}
+    for path in sorted(proj.chunks_dir.glob("*.json")):
+        chunk = json.loads(path.read_text("utf-8"))
+        for rec in chunk["records"]:
+            records[rec["id"]] = _store_record(rec["id"], rec["source"])
+    write_translation_store(proj, TranslationStoreV2(records=records))
+    _write_ledger(proj)
+    proj = load_project(project_dir)
+    bundle = build_status_snapshot(proj, context_exists=False, context_ready=False)
+    # No active review exists, so base=active_review blocks every record.
+    selected = select_review_records(
+        bundle,
+        records,
+        _pass_cfg(),
+        pass_number=1,
+        selection="reviewed",
+        base="active_review",
+    )
+    assert selected == []
+
+
+def test_parse_review_base_validates_modes():
+    from booktx.review_tasks import parse_review_base
+
+    assert parse_review_base(None, None) == "active_translation"
+    assert parse_review_base("active_translation", None) == "active_translation"
+    assert parse_review_base("active_review", None) == "active_review"
+    assert parse_review_base("pass:2", None) == "pass:2"
+    cfg = ReviewPassConfig(pass_number=2, base="active_review", required_base_pass=1)
+    assert parse_review_base(None, cfg) == "pass:1"
+    for bad in ("", "translation", "review", "pass:0", "pass:x", "R1.1"):
+        with pytest.raises(ValueError):
+            parse_review_base(bad, None)
 
 
 def test_select_pass2_blocked_when_pass1_missing(tmp_path: Path):

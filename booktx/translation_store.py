@@ -320,7 +320,8 @@ def review_chain_refs(
     The chain excludes the translation base. For ``R2.1`` based on ``R1.1``
     based on a translation version, returns ``["R1.1", "R2.1"]``. Returns
     ``None`` when the chain is missing, stale (``base_target_sha256`` drift),
-    cyclic, or has invalid pass order.
+    cyclic, or violates the lexicographic ``(pass, run)`` order (so same-pass
+    reruns such as ``R1.2`` from ``R1.1`` are valid).
     """
     normalized = parse_review_ref(review_ref).review_ref
     ordered: list[str] = []
@@ -338,7 +339,10 @@ def review_chain_refs(
             ordered.reverse()
             return ordered
         base_review = find_review_candidate(record, current.base_ref)
-        if base_review is None or current.pass_number <= base_review.pass_number:
+        if base_review is None or (
+            current.pass_number,
+            current.run_number,
+        ) <= (base_review.pass_number, base_review.run_number):
             return None
         current = base_review
     return None

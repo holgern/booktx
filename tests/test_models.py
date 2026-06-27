@@ -652,15 +652,15 @@ def test_record_rejects_active_review_without_match():
         )
 
 
-def test_review_pass_order_helper_rejects_non_increasing_pass():
+def test_review_pass_order_allows_same_pass_rerun():
     from booktx.models import (
         TranslationReviewCandidate,
         _validate_review_pass_order,
     )
 
     r1 = TranslationReviewCandidate.model_validate(_review_candidate())
-    # A review-based candidate whose pass is not strictly greater than its base.
-    r_same = TranslationReviewCandidate.model_validate(
+    # Same-pass rerun: R1.2 based on R1.1 is now valid (greater run number).
+    r_rerun = TranslationReviewCandidate.model_validate(
         _review_candidate(
             pass_number=1,
             run_number=2,
@@ -669,8 +669,74 @@ def test_review_pass_order_helper_rejects_non_increasing_pass():
             base_ref="R1.1",
         )
     )
+    # Should not raise.
+    _validate_review_pass_order([r1, r_rerun])
+
+
+@pytest.mark.parametrize(
+    "ref,pn,run,base_ref,base_pn,base_run",
+    [
+        # equal tuple: R1.2 cannot be based on R1.2
+        ("R1.2", 1, 2, "R1.2", 1, 2),
+        # older same-pass run: R1.1 cannot be based on R1.2
+        ("R1.1", 1, 1, "R1.2", 1, 2),
+    ],
+)
+def test_review_pass_order_rejects_equal_or_older_tuple(
+    ref, pn, run, base_ref, base_pn, base_run
+):
+    from booktx.models import (
+        TranslationReviewCandidate,
+        _validate_review_pass_order,
+    )
+
+    base = TranslationReviewCandidate.model_validate(
+        _review_candidate(
+            pass_number=base_pn,
+            run_number=base_run,
+            review_ref=base_ref,
+        )
+    )
+    new = TranslationReviewCandidate.model_validate(
+        _review_candidate(
+            pass_number=pn,
+            run_number=run,
+            review_ref=ref,
+            base_kind="review",
+            base_ref=base_ref,
+        )
+    )
     with pytest.raises(ValueError):
-        _validate_review_pass_order([r1, r_same])
+        _validate_review_pass_order([base, new])
+
+
+def test_review_pass_order_allows_higher_pass_from_same_pass_rerun():
+    from booktx.models import (
+        TranslationReviewCandidate,
+        _validate_review_pass_order,
+    )
+
+    r1 = TranslationReviewCandidate.model_validate(_review_candidate())
+    r12 = TranslationReviewCandidate.model_validate(
+        _review_candidate(
+            pass_number=1,
+            run_number=2,
+            review_ref="R1.2",
+            base_kind="review",
+            base_ref="R1.1",
+        )
+    )
+    # R2.1 based on R1.2 remains valid.
+    r21 = TranslationReviewCandidate.model_validate(
+        _review_candidate(
+            pass_number=2,
+            run_number=1,
+            review_ref="R2.1",
+            base_kind="review",
+            base_ref="R1.2",
+        )
+    )
+    _validate_review_pass_order([r1, r12, r21])  # should not raise
 
 
 def test_review_graph_acyclic_helper_rejects_cycle():
@@ -697,7 +763,7 @@ def test_review_graph_acyclic_helper_rejects_cycle():
         _validate_review_graph_is_acyclic([a, b])
 
 
-def test_record_rejects_review_pass_not_greater_than_base():
+def test_record_allows_same_pass_rerun_review_chain():
     from booktx.models import StoredTranslationRecordV2
 
     revs = [
@@ -708,6 +774,42 @@ def test_record_rejects_review_pass_not_greater_than_base():
             review_ref="R1.2",
             base_kind="review",
             base_ref="R1.1",
+        ),
+    ]
+    rec = StoredTranslationRecordV2.model_validate(
+        _record_with_reviews(revs, active_review="R1.2")
+    )
+    assert [r.review_ref for r in rec.reviews] == ["R1.1", "R1.2"]
+
+
+def test_record_rejects_equal_tuple_review_chain():
+    from booktx.models import StoredTranslationRecordV2
+
+    revs = [
+        _review_candidate(run_number=2, review_ref="R1.2"),
+        _review_candidate(
+            pass_number=1,
+            run_number=2,
+            review_ref="R1.2",
+            base_kind="review",
+            base_ref="R1.2",
+        ),
+    ]
+    with pytest.raises(ValidationError):
+        StoredTranslationRecordV2.model_validate(_record_with_reviews(revs))
+
+
+def test_record_rejects_older_same_pass_review_chain():
+    from booktx.models import StoredTranslationRecordV2
+
+    revs = [
+        _review_candidate(run_number=2, review_ref="R1.2"),
+        _review_candidate(
+            pass_number=1,
+            run_number=1,
+            review_ref="R1.1",
+            base_kind="review",
+            base_ref="R1.2",
         ),
     ]
     with pytest.raises(ValidationError):

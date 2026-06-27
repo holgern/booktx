@@ -398,7 +398,7 @@ first-pass output:
 4. Edit the ingest block under `translations/<profile>/reviews/`
 5. `booktx review insert . --review-task-id TASK --file reviews/TASK.block.txt --format block`
 6. Repeat for pass 2 if configured
-7. `booktx validate . --fail-on-warnings` (# both passes
+7. `booktx validate . --fail-on-warnings` # both passes
 8. `booktx build . --require-complete --require-reviewed`
 
 During review, do not retranslate freely. Review the existing target and improve
@@ -409,6 +409,29 @@ Review candidates are stored in `reviews[]` under each record in the translation
 store. The effective output uses the `active_review` when valid, falling back
 to the `active_version`. Use `booktx translation compare . RECORD --versions 1.1,R1.1,R2.1`
 to inspect the full chain.
+
+### Review-first routing
+
+When the user asks to review, polish, improve grammar, improve flow, or run a
+second pass over existing translations, start with the review workflow, not
+the canonical store:
+
+1. Run `booktx review status .` first. Its JSON includes `next_command`,
+   `first_missing_record`, and `first_missing_chapter`.
+2. Create review work with `booktx review next . --pass N`. Use
+   `--selection reviewed --base active_review` to rerun a pass over records
+   that already have an accepted review (this creates `R1.2` from `R1.1`, not a
+   new translation version). Default selection is `missing`.
+3. Submit improvements with `booktx review insert .`; accepted candidates
+   activate by default. Use `--no-activate` only when you intentionally keep
+   the current effective target.
+4. For source/target term search, refresh and read the
+   `booktx translate export-index .` artifacts. Do not grep
+   `translation-store.json` for normal review work.
+5. Never write Python scripts to parse `translation-store.json` for normal
+   review or polish work. Treat `translation-store.json` as canonical history,
+   not a search interface. Reserve raw-store reads for debugging when a booktx
+   command is genuinely missing.
 
 ## Glossary correction workflow
 

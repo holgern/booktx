@@ -33,6 +33,7 @@ from booktx.models import (
 )
 from booktx.translation_store import (
     active_candidate,
+    active_review_candidate,
     effective_target_candidate,
     review_chain_is_stale,
     sha256_text,
@@ -45,6 +46,10 @@ if TYPE_CHECKING:
 __all__ = [
     "ReviewTaskPaths",
     "ReviewSelectedRecord",
+    "REVIEW_SELECTIONS",
+    "default_base_mode",
+    "parse_review_base",
+    "resolve_base",
     "make_review_task_id",
     "select_review_records",
     "create_review_task",
@@ -109,26 +114,121 @@ def _accepted_review_for_pass(
     return None
 
 
-def _resolve_base(
-    stored: StoredTranslationRecordV2,
-    pcfg: ReviewPassConfig | None,
+REVIEW_SELECTIONS = ("missing", "stale", "reviewed", "all", "changed-base")
+
+
+def default_base_mode(pcfg: ReviewPassConfig | None) -> str:
+    """Derive the default base mode from the pass config.
+
+    ``active_translation`` by default. When the pass config sets
+    ``base=\"active_review\"`` with a ``required_base_pass``, the default base
+    becomes ``pass:<required_base_pass>`` so the review is built on that pass's
+    latest accepted review.
+    """
+    if (
+        pcfg is not None
+        and pcfg.base == "active_review"
+        and pcfg.required_base_pass is not None
+    ):
+        return f"pass:{pcfg.required_base_pass}"
+    return "active_translation"
+
+
+def parse_review_base(base: str | None, pcfg: ReviewPassConfig | None) -> str:
+    """Validate a ``--base`` value into a base mode.
+
+    When ``base`` is None, falls back to :func:`default_base_mode`.
+    """
+    if base is None:
+        return default_base_mode(pcfg)
+    if base in ("active_translation", "active_review"):
+        return base
+    if base.startswith("pass:"):
+        try:
+            pass_n = int(base[len("pass:") :])
+        except ValueError as exc:
+            raise ValueError(
+                f"invalid --base {base!r}: pass number must be an integer"
+            ) from exc
+        if pass_n < 1:
+            raise ValueError(f"invalid --base {base!r}: pass number must be positive")
+        return base
+    raise ValueError(
+        f"invalid --base {base!r}: expected active_translation, active_review, "
+        "or pass:N"
+    )
+
+
+def _latest_accepted_review_for_pass(
+    stored: StoredTranslationRecordV2, pass_number: int
+) -> TranslationReviewCandidate | None:
+    """Return the highest-run accepted, non-stale review for a pass, or None."""
+    candidates = [
+        r
+        for r in stored.reviews
+        if r.pass_number == pass_number
+        and r.status == "accepted"
+        and not review_chain_is_stale(stored, r.review_ref)
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda r: r.run_number)
+
+
+def resolve_base(
+    stored: StoredTranslationRecordV2, base_mode: str
 ) -> tuple[str, str, str] | None:
-    """Resolve (base_kind, base_ref, base_target) for a review pass base.
+    """Resolve ``(base_kind, base_ref, base_target)`` for a base mode.
 
     Returns None when the required base is unavailable (blocked).
     """
-    if pcfg is not None and pcfg.base == "active_review":
-        required = pcfg.required_base_pass
-        if required is None:
+    if base_mode == "active_translation":
+        active = active_candidate(stored)
+        if active is None or active.status != "accepted":
             return None
-        base_review = _accepted_review_for_pass(stored, required)
-        if base_review is None:
+        return ("translation", active.version_ref, active.target)
+    if base_mode == "active_review":
+        review = active_review_candidate(stored)
+        if review is None:
             return None
-        return ("review", base_review.review_ref, base_review.target)
-    active = active_candidate(stored)
-    if active is None or active.status != "accepted":
-        return None
-    return ("translation", active.version_ref, active.target)
+        return ("review", review.review_ref, review.target)
+    if base_mode.startswith("pass:"):
+        try:
+            pass_n = int(base_mode[len("pass:") :])
+        except ValueError:
+            return None
+        review = _latest_accepted_review_for_pass(stored, pass_n)
+        if review is None:
+            return None
+        return ("review", review.review_ref, review.target)
+    return None
+
+
+def _record_matches_selection(
+    stored: StoredTranslationRecordV2,
+    pass_number: int,
+    base_target_sha: str,
+    selection: str,
+) -> bool:
+    """True when a record matches the requested selection mode."""
+    if selection == "all":
+        return True
+    accepted = _accepted_review_for_pass(stored, pass_number)
+    if selection == "missing":
+        # Default: no accepted review for this pass (includes stale/rejected-only).
+        return accepted is None
+    if selection == "reviewed":
+        return accepted is not None
+    if selection == "stale":
+        return accepted is None and any(
+            r.pass_number == pass_number for r in stored.reviews
+        )
+    if selection == "changed-base":
+        latest = _latest_accepted_review_for_pass(stored, pass_number)
+        if latest is None:
+            return False
+        return latest.base_target_sha256 != base_target_sha
+    return False  # unreachable: selection validated by the caller
 
 
 def select_review_records(
@@ -139,15 +239,25 @@ def select_review_records(
     pass_number: int,
     chapter_id: str | None = None,
     max_words: int | None = None,
+    selection: str = "missing",
+    base: str | None = None,
 ) -> list[ReviewSelectedRecord]:
     """Select records eligible for a review pass.
 
-    Skips records that already have a current non-stale accepted review for the
-    pass, and skips records whose required base is unavailable (blocked). Only
-    records with an accepted active translation version are considered for the
-    default active_translation base.
+    ``selection`` chooses which records qualify (default ``missing``: records
+    missing an accepted review for the pass). ``base`` chooses the candidate each
+    new review is derived from; when None it is derived from the pass config
+    (``active_translation`` by default, ``pass:<required_base_pass>`` for passes
+    configured with ``base=\"active_review\"``). Records whose required base is
+    unavailable are skipped (blocked).
+
+    Backward-compatible default behavior is unchanged: the default ``missing``
+    selection skips records that already have a current accepted review for the
+    pass, and pass-2 selection still blocks when the required pass-1 review is
+    missing.
     """
     pcfg = next((p for p in quality_cfg.passes if p.pass_number == pass_number), None)
+    base_mode = parse_review_base(base, pcfg)
     source_by_id = bundle.index.source_by_id
     chapter_ids = (
         [chapter_id]
@@ -165,13 +275,14 @@ def select_review_records(
             view = source_by_id.get(record_id)
             if view is None or stored.source != view.source:
                 continue
-            base = _resolve_base(stored, pcfg)
-            if base is None:
+            resolved = resolve_base(stored, base_mode)
+            if resolved is None:
                 continue  # blocked: required base missing
-            # Skip records with a current non-stale accepted review for this pass.
-            if _accepted_review_for_pass(stored, pass_number) is not None:
+            base_kind, base_ref, base_target = resolved
+            if not _record_matches_selection(
+                stored, pass_number, sha256_text(base_target), selection
+            ):
                 continue
-            base_kind, base_ref, base_target = base
             run_number = _next_run_number(stored, pass_number)
             selected.append(
                 ReviewSelectedRecord(

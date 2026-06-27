@@ -334,7 +334,15 @@ def _validate_review_graph_is_acyclic(
 def _validate_review_pass_order(
     reviews: list[TranslationReviewCandidate],
 ) -> None:
-    """A review based on another review must use a greater pass number."""
+    """A review based on another review must use a greater (pass, run) tuple.
+
+    The total order is lexicographic on ``(pass_number, run_number)``: a review
+    based on another review must satisfy
+    ``(new.pass, new.run) > (base.pass, base.run)``. This permits reruns of
+    the same pass (``R1.2`` from ``R1.1``), keeps higher-pass reviews based on
+    lower-pass reviews (``R2.1`` from ``R1.2``), and rejects equal or older
+    tuples (``R1.2`` from ``R1.2`` or ``R1.1`` from ``R1.2``).
+    """
     by_ref = {review.review_ref: review for review in reviews}
     for review in reviews:
         if review.base_kind != "review":
@@ -342,10 +350,15 @@ def _validate_review_pass_order(
         base = by_ref.get(review.base_ref)
         if base is None:
             continue
-        if review.pass_number <= base.pass_number:
+        if (review.pass_number, review.run_number) <= (
+            base.pass_number,
+            base.run_number,
+        ):
             raise ValueError(
-                f"review {review.review_ref!r} pass {review.pass_number} must be "
-                f"greater than base {base.review_ref!r} pass {base.pass_number}"
+                f"review {review.review_ref!r} (pass {review.pass_number}, "
+                f"run {review.run_number}) must be greater than base "
+                f"{base.review_ref!r} (pass {base.pass_number}, "
+                f"run {base.run_number})"
             )
 
 

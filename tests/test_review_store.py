@@ -185,3 +185,22 @@ def test_chain_stale_when_review_base_missing():
 def test_chain_stale_for_missing_review_ref():
     rec = _record()
     assert review_chain_is_stale(rec, "R9.9") is True
+
+
+def test_chain_resolves_same_pass_rerun():
+    """R1.2 based on R1.1 resolves as a valid (non-stale) same-pass chain."""
+    v11 = _version("first-pass")
+    r1 = _review("pass1-output", review_ref="R1.1", base_target="first-pass")
+    r12 = _review(
+        "rerun-output",
+        review_ref="R1.2",
+        base_kind="review",
+        base_ref="R1.1",
+        base_target="pass1-output",
+    )
+    rec = _record(versions=[v11], reviews=[r1, r12], active_review="R1.2")
+    assert review_chain_is_stale(rec, "R1.2") is False
+    from booktx.translation_store import review_chain_refs
+
+    assert review_chain_refs(rec, "R1.2") == ["R1.1", "R1.2"]
+    assert effective_target_candidate(rec).target == "rerun-output"  # type: ignore[union-attr]
