@@ -25,6 +25,9 @@ __all__ = [
     "check_command",
     "build_command",
     "review_next_command",
+    "review_todo_next_command",
+    "review_todo_status_command",
+    "review_todo_resume_command",
 ]
 
 # Preferred default batch words for agent-friendly bounded runs.
@@ -220,3 +223,66 @@ def review_next_command(
     if base is not None:
         parts.append(f" --base {base}")
     return "".join(parts)
+
+
+def review_todo_next_command(
+    project: Project,
+    *,
+    mode: RuntimeMode | None = None,
+    passes: str = "1",
+    selection: str = "missing",
+    base: str | None = None,
+    chapters: int = 2,
+    batch_words: int = 900,
+) -> str:
+    """Build a ``booktx review todo-next`` command string."""
+    profile = profile_option_fragment(project, mode)
+    parts = [
+        f"booktx review todo-next .{profile}"
+        f" --passes {passes}"
+        f" --chapters {chapters}"
+        f" --batch-words {batch_words}"
+        f" --selection {selection}"
+    ]
+    if base is not None:
+        parts.append(f" --base {base}")
+    parts.append(" --write")
+    return " ".join(parts)
+
+
+def review_todo_status_command(
+    project: Project,
+    *,
+    mode: RuntimeMode | None = None,
+    review_todo_id: str | None = None,
+    latest: bool = False,
+) -> str:
+    """Build a ``booktx review todo-status`` command string."""
+    profile = profile_option_fragment(project, mode)
+    parts = ["booktx review todo-status ."]
+    if review_todo_id:
+        parts.append(f" --review-todo-id {review_todo_id}")
+    elif latest:
+        parts.append(" --latest")
+    if profile:
+        parts.append(profile.lstrip())
+    return " ".join(parts)
+
+
+def review_todo_resume_command(
+    project: Project,
+    *,
+    mode: RuntimeMode | None = None,
+    review_todo_id: str | None = None,
+    latest: bool = False,
+) -> str:
+    """Build a ``booktx review todo-resume`` command string."""
+    profile = profile_option_fragment(project, mode)
+    parts = ["booktx review todo-resume ."]
+    if review_todo_id:
+        parts.append(f" --review-todo-id {review_todo_id}")
+    elif latest:
+        parts.append(" --latest")
+    if profile:
+        parts.append(profile.lstrip())
+    return " ".join(parts)

@@ -71,7 +71,11 @@ __all__ = [
     "TranslationReviewTaskRecord",
     "TranslationReviewTask",
     "ReviewPassConfig",
+    "ReviewTodoPass",
+    "ReviewTodoChapter",
+    "ReviewTodo",
     "QualityReviewConfig",
+    "IndexesConfig",
 ]
 
 
@@ -875,6 +879,79 @@ class QualityReviewConfig(BaseModel):
     passes: list[ReviewPassConfig] = Field(default_factory=list)
 
 
+class ReviewTodoPass(BaseModel):
+    """One review pass selected for a durable review todo.
+
+    Carries the pass_number, selection mode, and base mode that will be used
+    when this pass is resumed via ``review todo-resume``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    pass_number: int = Field(..., ge=1)
+    selection: Literal["missing", "stale", "reviewed", "all", "changed-base"] = (
+        "missing"
+    )
+    base: str = "active_translation"
+
+
+class ReviewTodoChapter(BaseModel):
+    """One chapter tracked by a durable review todo.
+
+    Captures review coverage at the moment the todo was created so callers
+    can detect progress and drift without re-reading the entire store.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    chapter_id: str
+    title: str = ""
+    status: str
+    eligible_records_at_start: int = 0
+    missing_review_at_start: int = 0
+    stale_review_at_start: int = 0
+    pending_passes: list[int] = Field(default_factory=list)
+
+
+class ReviewTodo(BaseModel):
+    """A durable run-control artifact for a bounded multi-pass review run.
+
+    Written by ``booktx review todo-next`` under
+    ``translations/<profile>/review-todos/<review_todo_id>.{json,md}``.
+    This tells the agent which review passes and chapters to process,
+    the per-pass selection and base modes, and the stop conditions.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal[1] = 1
+    review_todo_id: str
+    profile: str
+    passes: list[ReviewTodoPass] = Field(default_factory=list)
+    chapters_requested: int
+    batch_words: int
+    created_at: str
+    source_sha256: str | None = None
+    profile_config_sha256: str | None = None
+    source_config_sha256: str | None = None
+    start_snapshot_sha256: str | None = None
+    chapters: list[ReviewTodoChapter] = Field(default_factory=list)
+
+
+class IndexesConfig(BaseModel):
+    """Optional auto-export index configuration.
+
+    Stored under ``[indexes]`` in ``translations/<profile>/config.toml``.
+    When ``None``, no auto-export occurs.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    auto_export_after_insert: bool = False
+    auto_export_after_review: bool = False
+    write_jsonl: bool = True
+
+
 class ProfileConfig(BaseModel):
     """Per-profile translation config stored in ``translations/<profile>/config.toml``."""
 
@@ -896,6 +973,7 @@ class ProfileConfig(BaseModel):
     # Optional quality-review configuration. ``None`` means no [quality_review]
     # table is present; existing config.toml files round-trip without one.
     quality_review: QualityReviewConfig | None = None
+    indexes: IndexesConfig | None = None
 
 
 class ProfileRootMarker(BaseModel):

@@ -143,6 +143,9 @@ __all__ = [
     "translation_todo_dir",
     "translation_todo_json_path",
     "translation_todo_markdown_path",
+    "review_todo_dir",
+    "review_todo_json_path",
+    "review_todo_markdown_path",
     "load_translation_task",
     "write_translation_task",
     "translation_review_dir",
@@ -1217,6 +1220,28 @@ def translation_todo_json_path(project: Project, todo_id: str) -> Path:
 
 def translation_todo_markdown_path(project: Project, todo_id: str) -> Path:
     return translation_todo_dir(project) / f"{todo_id}.md"
+
+
+def _review_todo_dir(root: Path, profile: str) -> Path:
+    return profile_dir(root, profile) / "review-todos"
+
+
+def review_todo_dir(project: Project) -> Path:
+    """Profile-local directory for durable review todo files.
+
+    Returns ``translations/<profile>/review-todos/``.  Raises :exc:`BooktxError`
+    if no profile is selected.
+    """
+    _require_profile_paths(project, "review todo access")
+    return _review_todo_dir(project.root, project.profile or "")
+
+
+def review_todo_json_path(project: Project, review_todo_id: str) -> Path:
+    return review_todo_dir(project) / f"{review_todo_id}.json"
+
+
+def review_todo_markdown_path(project: Project, review_todo_id: str) -> Path:
+    return review_todo_dir(project) / f"{review_todo_id}.md"
 
 
 def load_translation_task(project: Project, task_id: str) -> TranslationTask | None:

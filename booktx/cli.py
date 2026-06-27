@@ -17,6 +17,7 @@ booktx never translates text; it extracts, validates, and rebuilds.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sys
 from collections.abc import Callable
@@ -110,7 +111,6 @@ from booktx.context import (
 from booktx.editor_indexes import (
     EditorIndexError,
     EditorIndexesResult,
-    build_editor_indexes,
     export_editor_indexes,
 )
 from booktx.epub_io import EpubExtraction, extract_epub
@@ -236,6 +236,43 @@ def _die(message: str, code: int = 1) -> None:
 
 def _handle_booktx_error(exc: BooktxError) -> None:
     _die(str(exc))
+
+
+def _maybe_auto_export_indexes(
+    proj: Project, *, export_index: bool = False, trigger: str = ""
+) -> None:
+    """Auto-export editor indexes after accepted changes if configured."""
+    from booktx.editor_indexes import export_editor_indexes
+
+    cfg = proj.profile_config
+    if cfg is None:
+        return
+    indexes_cfg = cfg.indexes
+    if indexes_cfg is None and not export_index:
+        return
+
+    should_export = export_index
+    if indexes_cfg is not None:
+        if trigger == "review" and indexes_cfg.auto_export_after_review:
+            should_export = True
+        elif trigger == "translation" and indexes_cfg.auto_export_after_insert:
+            should_export = True
+
+    if not should_export:
+        return
+
+    try:
+        result = export_editor_indexes(
+            proj,
+            write_jsonl=indexes_cfg.write_jsonl if indexes_cfg is not None else False,
+        )
+        console.print(
+            f"indexes: exported {result.translated_count} translated, "
+            f"{result.missing_count} missing",
+        )
+    except Exception as exc:
+        # Non-fatal: don't block the main operation because of index export.
+        console.print(f"[yellow]warning:[/yellow] index export failed: {exc}")
 
 
 def _isolated_mode_error() -> str:
@@ -3277,6 +3314,9 @@ def translate_insert(
         "--allow-missing-context",
         help="Legacy override: allow insert without a ready translation context.",
     ),
+    export_index: bool = typer.Option(
+        False, "--export-index", help="Export editor QA indexes after acceptance."
+    ),
 ) -> None:
     """Accept translated text through the CLI and write the store atomically."""
     runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
@@ -3349,6 +3389,7 @@ def translate_insert(
     )
     if result.version_ref:
         console.print(f"version: {result.version_ref}")
+    _maybe_auto_export_indexes(proj, export_index=export_index, trigger="translation")
     if result.chapter_id:
         console.print(f"chapter: {result.chapter_id} {result.chapter_title}".rstrip())
         console.print(
@@ -4114,26 +4155,8 @@ def translate_export_index(  # noqa: C901
             proj,
             kinds=requested,
             fail_on_warn=fail_on_warn,  # type: ignore[arg-type]
+            write_jsonl=jsonl,
         )
-        if jsonl:
-            source_index, target_index, source_target_index, _ = build_editor_indexes(
-                proj
-            )
-            if result.source_path is not None:
-                _write_jsonl_index(
-                    Path(result.source_path).with_suffix(".jsonl"),
-                    source_index.model_dump(mode="json")["records"],
-                )
-            if result.target_path is not None:
-                _write_jsonl_index(
-                    Path(result.target_path).with_suffix(".jsonl"),
-                    target_index.model_dump(mode="json")["records"],
-                )
-            if result.source_target_path is not None:
-                _write_jsonl_index(
-                    Path(result.source_target_path).with_suffix(".jsonl"),
-                    source_target_index.model_dump(mode="json")["records"],
-                )
     except EditorIndexError as exc:
         # source-index may have been written before target-based export failed.
         partial = exc.result
@@ -4177,18 +4200,6 @@ def translate_export_index(  # noqa: C901
     console.print(f"errors: {result.error_count}")
     if jsonl:
         console.print("jsonl: written for requested successful indexes")
-
-
-def _write_jsonl_index(path: Path, records: dict[str, Any]) -> None:
-    from booktx.io_utils import write_text_atomic
-
-    lines = [
-        json.dumps(
-            {"id": record_id, **payload}, ensure_ascii=False, separators=(",", ":")
-        )
-        for record_id, payload in records.items()
-    ]
-    write_text_atomic(path, "\n".join(lines) + ("\n" if lines else ""))
 
 
 def _editor_index_summary(
@@ -5705,6 +5716,9 @@ def review_insert(
     no_activate: bool = typer.Option(
         False, "--no-activate", help="Do not activate the review candidate."
     ),
+    export_index: bool = typer.Option(
+        False, "--export-index", help="Export editor QA indexes after acceptance."
+    ),
 ) -> None:
     """Parse a review task submission and create review candidates."""
     try:
@@ -5765,6 +5779,9 @@ def review_insert(
     if result.activated:
         console.print(f"activated: {', '.join(result.review_refs)}")
     console.print("next: booktx validate .")
+
+    # Auto-export indexes if configured or explicitly requested.
+    _maybe_auto_export_indexes(proj, export_index=export_index, trigger="review")
 
 
 @review_app.command(name="activate")
@@ -6000,6 +6017,613 @@ def review_revise_record(
         soft_wrap=True,
         markup=False,
     )
+
+
+@review_app.command(name="todo-next")
+def review_todo_next(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    passes: str = typer.Option(
+        "1", "--passes", help="Comma-separated pass numbers (default: 1)."
+    ),
+    chapters: int = typer.Option(
+        2, "--chapters", help="Number of chapters to include (default: 2)."
+    ),
+    batch_words: int = typer.Option(
+        900, "--batch-words", help="Max source words per review task (default: 900)."
+    ),
+    selection: str = typer.Option(
+        "missing", "--selection", help="missing|stale|reviewed|all|changed-base."
+    ),
+    base: str | None = typer.Option(
+        None, "--base", help="active_translation|active_review|pass:N."
+    ),
+    write: bool = typer.Option(False, "--write", help="Write todo files to disk."),
+) -> None:
+    """Create a bounded multi-pass review todo with chapter selection."""
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
+    cfg = proj.profile_config
+    if cfg is None:
+        _die("profile config is not available")
+        return
+    quality = cfg.quality_review
+    if quality is None or not quality.enabled:
+        _die("quality review is not enabled; run `booktx review configure . --enable`")
+        return
+
+    from booktx.status import project_status_snapshot as _status_snap
+
+    bundle = _status_snap(proj)
+    pass_numbers = [int(p.strip()) for p in passes.split(",") if p.strip()]
+    if not pass_numbers:
+        _die("at least one pass number is required")
+        return
+
+    from booktx.review_todo import build_review_todo, write_review_todo
+
+    try:
+        todo = build_review_todo(
+            proj,
+            bundle,
+            quality,
+            chapters=chapters,
+            batch_words=batch_words,
+        )
+    except ValueError as exc:
+        _die(str(exc))
+        return
+
+    if write:
+        json_path, md_path = write_review_todo(proj, todo, mode=runtime.mode)
+        console.print(f"review todo: {todo.review_todo_id}")
+        console.print(f"json: {json_path}")
+        console.print(f"markdown: {md_path}")
+    else:
+        import json as _json
+
+        console.print_json(
+            _json.dumps(todo.model_dump(mode="json"), ensure_ascii=False)
+        )
+
+
+@review_app.command(name="todo-status")
+def review_todo_status(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    review_todo_id: str | None = typer.Option(
+        None, "--review-todo-id", help="Review todo id."
+    ),
+    latest: bool = typer.Option(
+        False, "--latest", help="Show status for the latest incomplete review todo."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    """Report progress for a bounded review todo."""
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
+    cfg = proj.profile_config
+    if cfg is None:
+        _die("profile config is not available")
+        return
+    quality = cfg.quality_review
+    if quality is None or not quality.enabled:
+        _die("quality review is not enabled")
+        return
+
+    from booktx.review_todo import (
+        compute_review_todo_status,
+        latest_incomplete_review_todo,
+        load_review_todo,
+    )
+    from booktx.status import project_status_snapshot as _status_snap
+
+    bundle = _status_snap(proj)
+
+    if review_todo_id is not None:
+        todo = load_review_todo(proj, review_todo_id)
+        if todo is None:
+            _die(f"unknown review todo id: {review_todo_id}")
+            return
+    elif latest:
+        todo = latest_incomplete_review_todo(proj, bundle, quality)
+        if todo is None:
+            _die("no incomplete review todo was found")
+            return
+    else:
+        _die("pass --review-todo-id or --latest")
+        return
+
+    status = compute_review_todo_status(todo, proj, bundle, quality, mode=runtime.mode)
+
+    if as_json:
+        import json as _json
+
+        console.print_json(_json.dumps(status.as_dict(), ensure_ascii=False))
+        return
+
+    console.print(f"review todo: {todo.review_todo_id}")
+    console.print(f"state: {status.state}")
+    console.print(f"goal complete: {status.goal_complete}")
+    if status.current_chapter is not None:
+        console.print(
+            f"current chapter: {status.current_chapter.chapter_id}"
+            f" {status.current_chapter.title}"
+        )
+    for ch in status.chapters:
+        mark = " [complete]" if ch.complete else ""
+        console.print(
+            f"  {ch.chapter_id} {ch.title}:"
+            f" missing_review={ch.missing_review_now}"
+            f" pending_passes={ch.pending_passes_now}{mark}"
+        )
+    if status.next_safe_command:
+        console.print(f"next: {status.next_safe_command}", soft_wrap=True, markup=False)
+
+
+@review_app.command(name="todo-resume")
+def review_todo_resume(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    review_todo_id: str | None = typer.Option(
+        None, "--review-todo-id", help="Review todo id."
+    ),
+    latest: bool = typer.Option(
+        False, "--latest", help="Resume the latest incomplete review todo."
+    ),
+) -> None:
+    """Create the next bounded review task for an open review todo."""
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
+    cfg = proj.profile_config
+    if cfg is None:
+        _die("profile config is not available")
+        return
+    quality = cfg.quality_review
+    if quality is None or not quality.enabled:
+        _die("quality review is not enabled")
+        return
+
+    from booktx.review_todo import resume_review_todo
+    from booktx.status import project_status_snapshot as _status_snap
+
+    bundle = _status_snap(proj)
+
+    try:
+        task = resume_review_todo(
+            proj,
+            bundle,
+            quality,
+            mode=runtime.mode,
+            review_todo_id=review_todo_id,
+            latest=latest,
+        )
+    except Exception as exc:
+        _die(str(exc))
+        return
+
+    console.print(f"review task: {task.review_task_id}")
+    console.print(f"pass: R{task.pass_number} {task.pass_name}".rstrip())
+    console.print(f"chapter: {task.chapter_id} {task.chapter_title}".rstrip())
+    console.print(f"records: {task.record_count}")
+    console.print(
+        "next:",
+        f"booktx review insert . --review-task-id {task.review_task_id}"
+        f" --file reviews/{task.review_task_id}.block.txt --format block",
+        soft_wrap=True,
+        markup=False,
+    )
+
+
+# --- qa scan command -----------------------------------------------------
+
+
+@app.command(name="qa-scan")
+def qa_scan_cmd(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    target_only: bool = typer.Option(
+        False, "--target-only", help="Search targets only, omit source."
+    ),
+    forbidden: bool = typer.Option(
+        False, "--forbidden", help="Check for forbidden glossary terms in targets."
+    ),
+    glossary: bool = typer.Option(
+        False, "--glossary", help="Report glossary target mismatches."
+    ),
+    target_contains: str | None = typer.Option(
+        None,
+        "--target-contains",
+        help="Literal substring to find in effective targets.",
+    ),
+    pattern: str | None = typer.Option(
+        None, "--pattern", help="Regex pattern to match in targets."
+    ),
+    language_leftovers: str | None = typer.Option(
+        None, "--language-leftovers", help="Detect source-language leftovers (e.g. en)."
+    ),
+    chapter: str | None = typer.Option(
+        None, "--chapter", help="Scope to one chapter id."
+    ),
+    jsonl: bool = typer.Option(
+        False, "--jsonl", help="Output one JSON object per finding per line."
+    ),
+) -> None:
+    """Scan effective targets for QA findings without scripting."""
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
+
+    from booktx.qa_scan import qa_scan
+    from booktx.status import project_status_snapshot as _status_snap
+
+    bundle = _status_snap(proj)
+
+    try:
+        result = qa_scan(
+            proj,
+            bundle,
+            chapter_id=chapter,
+            target_only=target_only,
+            forbidden=forbidden,
+            glossary=glossary,
+            target_contains=target_contains,
+            pattern=pattern,
+            language_leftovers=language_leftovers,
+        )
+    except ValueError as exc:
+        _die(str(exc))
+        return
+
+    if jsonl:
+        import json as _json
+
+        for finding in result.findings:
+            console.print(
+                _json.dumps(finding.as_dict(), ensure_ascii=False),
+                soft_wrap=True,
+                markup=False,
+            )
+    else:
+        console.print(
+            f"scanned {result.records_scanned} records, "
+            f"{result.findings_count} findings"
+        )
+        for finding in result.findings:
+            console.print(
+                f"  {finding.id} [{finding.rule}] {finding.term}"
+                f" -> {finding.target[:80]}..."
+                if len(finding.target) > 80
+                else f"  {finding.id} [{finding.rule}] {finding.term} -> {finding.target}",
+                soft_wrap=True,
+                markup=False,
+            )
+
+
+# --- translation search command -------------------------------------------
+
+
+@translate_app.command(name="search")
+def translation_search_cmd(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    target: str | None = typer.Option(
+        None, "--target", help="Literal text to find in effective targets."
+    ),
+    source: str | None = typer.Option(
+        None, "--source", help="Literal text to find in source text."
+    ),
+    chapter: str | None = typer.Option(
+        None, "--chapter", help="Scope to one chapter id."
+    ),
+    record: str | None = typer.Option(
+        None, "--record", help="Show one specific record id."
+    ),
+    before: int = typer.Option(0, "--before", help="Context records before the match."),
+    after: int = typer.Option(0, "--after", help="Context records after the match."),
+    jsonl: bool = typer.Option(
+        False, "--jsonl", help="Output one JSON object per match per line."
+    ),
+) -> None:
+    """Search effective translations without scripting against translation-store.json."""
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
+
+    from booktx.config import load_translation_store
+    from booktx.status import project_status_snapshot as _status_snap
+    from booktx.translation_store import effective_target_candidate
+
+    bundle = _status_snap(proj)
+    store = load_translation_store(proj)
+    store_records = store.records
+    source_by_id = bundle.index.source_by_id
+
+    chapters_to_search = (
+        [chapter] if chapter is not None else list(bundle.index.record_ids_by_chapter)
+    )
+
+    if record is not None:
+        stored = store_records.get(record)
+        if stored is None:
+            _die(f"record {record} not found in store")
+            return
+        eff = effective_target_candidate(stored)
+        source_view = source_by_id.get(record)
+        if jsonl:
+            import json as _json
+
+            console.print_json(
+                _json.dumps(
+                    {
+                        "id": record,
+                        "source": source_view.source if source_view else "",
+                        "target": eff.target if eff else "",
+                        "effective_ref": (
+                            getattr(eff, "review_ref", None)
+                            or getattr(eff, "version_ref", None)
+                            or ""
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            console.print(
+                f"record: {record}"
+                f" chapter={source_view.chapter_id if source_view else '?'}"
+            )
+            console.print(f"source: {source_view.source if source_view else ''}")
+            console.print(f"target: {eff.target if eff else ''}")
+            if eff:
+                ref = getattr(eff, "review_ref", None) or getattr(
+                    eff, "version_ref", "?"
+                )
+                console.print(f"ref: {ref}")
+        return
+
+    matches: list[dict[str, object]] = []
+    for cid in chapters_to_search:
+        flat = list(bundle.index.record_ids_by_chapter.get(cid, []))
+        for idx, record_id in enumerate(flat):
+            stored = store_records.get(record_id)
+            if stored is None:
+                continue
+            eff = effective_target_candidate(stored)
+            if eff is None:
+                continue
+            source_view = source_by_id.get(record_id)
+            source_text = source_view.source if source_view else ""
+            target_text = eff.target
+
+            matched = False
+            if target is not None and target.lower() in target_text.lower():
+                matched = True
+            if source is not None and source.lower() in source_text.lower():
+                matched = True
+
+            if matched:
+                match = {
+                    "id": record_id,
+                    "chapter_id": cid,
+                    "source": source_text
+                    if not (target is not None and source is None)
+                    else "",
+                    "target": target_text,
+                    "effective_ref": (
+                        getattr(eff, "review_ref", None)
+                        or getattr(eff, "version_ref", None)
+                        or ""
+                    ),
+                }
+
+                if before > 0 or after > 0:
+                    before_ids = flat[max(0, idx - before) : idx]
+                    after_ids = flat[idx + 1 : idx + 1 + after]
+                    before_records = [
+                        {
+                            "id": rid,
+                            "target": (
+                                effective_target_candidate(store_records[rid]).target
+                                if store_records.get(rid)
+                                and effective_target_candidate(store_records[rid])
+                                else ""
+                            ),
+                        }
+                        for rid in before_ids
+                    ]
+                    after_records = [
+                        {
+                            "id": rid,
+                            "target": (
+                                effective_target_candidate(store_records[rid]).target
+                                if store_records.get(rid)
+                                and effective_target_candidate(store_records[rid])
+                                else ""
+                            ),
+                        }
+                        for rid in after_ids
+                    ]
+                    match["before"] = before_records
+                    match["after"] = after_records
+
+                matches.append(match)
+
+    if jsonl:
+        import json as _json
+
+        for match in matches:
+            console.print(
+                _json.dumps(match, ensure_ascii=False),
+                soft_wrap=True,
+                markup=False,
+            )
+    else:
+        console.print(f"found {len(matches)} matches")
+        for match in matches:
+            rec_id = match.get("id", "")
+            target_text = match.get("target", "")
+            disp = f"{rec_id}: {target_text[:100]}"
+            if len(disp) < len(target_text):
+                disp += "..."
+            console.print(f"  {disp}", soft_wrap=True, markup=False)
+
+
+# --- epub inspect command group --------------------------------------------
+
+
+epub_app = typer.Typer()
+app.add_typer(epub_app, name="epub")
+
+
+@epub_app.command(name="inspect")
+def epub_inspect_cmd(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    chapter: str | None = typer.Option(
+        None, "--chapter", help="Chapter id to inspect."
+    ),
+    contains: str | None = typer.Option(
+        None, "--contains", help="Only show content containing this text."
+    ),
+) -> None:
+    """Inspect built EPUB XHTML output."""
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
+
+    output_dir = proj.paths.output_dir
+    if output_dir is None or not output_dir.is_dir():
+        _die(
+            "no EPUB output directory; run `booktx build .` first. "
+            f"Expected: translations/{proj.profile or '?'}/output/"
+        )
+        return
+
+    xhtml_files = sorted(output_dir.glob("**/*.xhtml"))
+    if not xhtml_files:
+        _die(f"no XHTML files found in {output_dir}")
+        return
+
+    if chapter is not None:
+        xhtml_files = [
+            f
+            for f in xhtml_files
+            if f"chapter_{chapter}" in f.name or f"ch_{chapter}" in f.name
+        ]
+        if not xhtml_files:
+            _die(f"no XHTML files found for chapter {chapter}")
+            return
+
+    for xhtml_path in xhtml_files:
+        text = xhtml_path.read_text("utf-8", errors="replace")
+        if contains is not None and contains.lower() not in text.lower():
+            continue
+        console.print(f"--- {xhtml_path.name} ---")
+        if contains is not None:
+            for line in text.splitlines():
+                if contains.lower() in line.lower():
+                    console.print(line.strip(), soft_wrap=True, markup=False)
+        else:
+            console.print(text[:2000], soft_wrap=True, markup=False)
+            if len(text) > 2000:
+                console.print("... (truncated)")
+
+
+@epub_app.command(name="grep")
+def epub_grep_cmd(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    text_pattern: str = typer.Argument(..., help="Text to search for."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+) -> None:
+    """Grep built EPUB XHTML output for text."""
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
+
+    output_dir = proj.paths.output_dir
+    if output_dir is None or not output_dir.is_dir():
+        _die(
+            "no EPUB output directory; run `booktx build .` first. "
+            f"Expected: translations/{proj.profile or '?'}/output/"
+        )
+        return
+
+    xhtml_files = sorted(output_dir.glob("**/*.xhtml"))
+    if not xhtml_files:
+        _die(f"no XHTML files found in {output_dir}")
+        return
+
+    for xhtml_path in xhtml_files:
+        try:
+            text = xhtml_path.read_text("utf-8", errors="replace")
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if text_pattern.lower() in line.lower():
+                    rel = xhtml_path.relative_to(output_dir)
+                    console.print(
+                        f"{rel}:{lineno}: {line.strip()}",
+                        soft_wrap=True,
+                        markup=False,
+                    )
+        except Exception as exc:
+            console.print(f"error reading {xhtml_path.name}: {exc}")
+
+
+@epub_app.command(name="extract-text")
+def epub_extract_text_cmd(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    chapter: str | None = typer.Option(
+        None, "--chapter", help="Chapter id to extract text from."
+    ),
+) -> None:
+    """Extract plain text from built EPUB XHTML."""
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    proj = runtime.project
+
+    output_dir = proj.paths.output_dir
+    if output_dir is None or not output_dir.is_dir():
+        _die(
+            "no EPUB output directory; run `booktx build .` first. "
+            f"Expected: translations/{proj.profile or '?'}/output/"
+        )
+        return
+
+    xhtml_files = sorted(output_dir.glob("**/*.xhtml"))
+    if not xhtml_files:
+        _die(f"no XHTML files found in {output_dir}")
+        return
+
+    if chapter is not None:
+        xhtml_files = [
+            f
+            for f in xhtml_files
+            if f"chapter_{chapter}" in f.name or f"ch_{chapter}" in f.name
+        ]
+        if not xhtml_files:
+            _die(f"no XHTML files found for chapter {chapter}")
+            return
+
+    for xhtml_path in xhtml_files:
+        text = xhtml_path.read_text("utf-8", errors="replace")
+        stripped = re.sub(r"<[^>]+>", "", text)
+        console.print(
+            stripped.strip(),
+            soft_wrap=True,
+            markup=False,
+        )
 
 
 def main() -> None:

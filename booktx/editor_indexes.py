@@ -571,6 +571,7 @@ def export_editor_indexes(
     *,
     kinds: set[Literal["source", "target", "source-target"]] | None = None,
     fail_on_warn: bool = False,
+    write_jsonl: bool = False,
 ) -> EditorIndexesResult:
     """Build and write the requested editor indexes.
 
@@ -579,6 +580,10 @@ def export_editor_indexes(
     target findings (errors, or warnings when ``fail_on_warn`` is set). When
     blocking findings prevent writing target-based indexes, an
     :class:`EditorIndexError` is raised carrying the partial result.
+
+    When ``write_jsonl`` is True, JSONL versions are written alongside the
+    existing JSON files: ``current-source.jsonl``, ``current-target.jsonl``,
+    ``current-source-target.jsonl``.
     """
     requested = _resolve_kinds(kinds)  # type: ignore[arg-type]
     source_index, target_index, source_target_index, findings = build_editor_indexes(
@@ -609,6 +614,9 @@ def export_editor_indexes(
         _write_index(source_path, source_index)
         result.source_path = str(source_path)
         result.written.append("source")
+        if write_jsonl:
+            jsonl_path = source_path.with_suffix(".jsonl")
+            _write_jsonl_index(jsonl_path, source_index.records)
 
     if not has_blocking:
         if "target" in requested:
@@ -616,11 +624,17 @@ def export_editor_indexes(
             _write_index(target_path, target_index)
             result.target_path = str(target_path)
             result.written.append("target")
+            if write_jsonl:
+                jsonl_path = target_path.with_suffix(".jsonl")
+                _write_jsonl_index(jsonl_path, target_index.records)
         if "source-target" in requested:
             st_path = translation_source_target_index_path(project)
             _write_index(st_path, source_target_index)
             result.source_target_path = str(st_path)
             result.written.append("source-target")
+            if write_jsonl:
+                jsonl_path = st_path.with_suffix(".jsonl")
+                _write_jsonl_index(jsonl_path, source_target_index.records)
 
     # Preserve canonical order in ``written`` regardless of request order.
     result.written = [kind for kind in _ALL_KINDS if kind in set(result.written)]
@@ -629,3 +643,16 @@ def export_editor_indexes(
         raise EditorIndexError(blocking, result)
 
     return result
+
+
+def _write_jsonl_index(path: Path, records: list[Any]) -> None:
+    """Write a list of model records as one JSON object per line."""
+    lines: list[str] = []
+    for rec in records:
+        if hasattr(rec, "model_dump"):
+            lines.append(json.dumps(rec.model_dump(mode="json"), ensure_ascii=False))
+        elif hasattr(rec, "as_dict"):
+            lines.append(json.dumps(rec.as_dict(), ensure_ascii=False))
+        elif isinstance(rec, dict):
+            lines.append(json.dumps(rec, ensure_ascii=False))
+    write_text_atomic(path, "\n".join(lines) + "\n")
