@@ -25,7 +25,7 @@ from booktx.placeholders import TRANSLATABLE_INLINE_PARENTS
 
 if TYPE_CHECKING:
     from booktx.config import Project
-    from booktx.models import EpubNavigationRef, EpubSpanRef
+    from booktx.models import EpubNavigationRef, EpubSpanRef, Record
 __all__ = [
     "Chapter",
     "ChapterMap",
@@ -33,6 +33,12 @@ __all__ = [
     "load_chapter_map",
     "write_chapter_map",
 ]
+
+# Chapter-map algorithm/schema version. Bump when chapter detection changes
+# so cached maps are regenerated even when the source SHA is unchanged. EPUB
+# extract always writes the current version; ensure_chapter_map regenerates
+# any cached map below this value.
+CURRENT_CHAPTER_MAP_VERSION = 2
 
 
 class Chapter(BaseModel):
@@ -53,7 +59,7 @@ class ChapterMap(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    version: int = 1
+    version: int = CURRENT_CHAPTER_MAP_VERSION
     source_sha256: str = ""
     chapters: list[Chapter] = Field(default_factory=list)
 
@@ -96,7 +102,11 @@ def ensure_chapter_map(project: Project) -> ChapterMap:
     """
     source_sha256 = project_source_sha256(project)
     chapter_map = load_chapter_map(project)
-    if chapter_map is None or chapter_map.source_sha256 != source_sha256:
+    if (
+        chapter_map is None
+        or chapter_map.source_sha256 != source_sha256
+        or chapter_map.version != CURRENT_CHAPTER_MAP_VERSION
+    ):
         chapter_map = detect_chapters(project)
         write_chapter_map(project, chapter_map)
     return chapter_map
@@ -113,40 +123,41 @@ def detect_chapters(project: Project) -> ChapterMap:
         text = source.read_text("utf-8")
         md_extraction = extract_markdown(text, protected_terms=names)
         boundaries = _markdown_boundaries(split_front_matter(text)[1])
-        spans = md_extraction.spans
-    elif project.config.format == "epub":
+        record_ids = _project_record_ids(project)
+        return _build_chapter_map(
+            md_extraction.spans,
+            boundaries,
+            record_ids,
+            language=project.config.source_language,
+            source_sha256=source_sha256,
+        )
+    if project.config.format == "epub":
         manifest = load_manifest(project)
+        template = None
         if manifest is not None:
             try:
                 template = load_epub_template_from_manifest(manifest)
             except ValueError:
                 template = None
-            if template is not None:
-                spans = [_prose_span_from_ref(span_ref) for span_ref in template.spans]
-                boundaries = _epub_boundaries_from_refs(
-                    template.spans, template.navigation
-                )
-            else:
-                epub_extraction = extract_epub(str(source), protected_terms=names)
-                spans = epub_extraction.spans
-                boundaries = _epub_boundaries_from_refs(
-                    epub_extraction.span_refs, epub_extraction.navigation
-                )
+        if template is not None:
+            chapter_mapping = template.chapter_mapping
+            span_refs = template.spans
+            navigation_refs = template.navigation
         else:
             epub_extraction = extract_epub(str(source), protected_terms=names)
-            spans = epub_extraction.spans
-            boundaries = _epub_boundaries_from_refs(
-                epub_extraction.span_refs, epub_extraction.navigation
-            )
-    else:  # pragma: no cover - config validation guards this
-        spans = []
-        boundaries = []
-
-    record_ids = _project_record_ids(project)
+            chapter_mapping = "epub2text-block-v1"
+            span_refs = epub_extraction.span_refs
+            navigation_refs = epub_extraction.navigation
+        boundaries = _epub_boundaries_from_refs(
+            span_refs, navigation_refs, chapter_mapping=chapter_mapping
+        )
+        records = _project_records(project)
+        return _build_epub_chapter_map(boundaries, records, source_sha256=source_sha256)
+    # pragma: no cover - config validation guards this branch
     return _build_chapter_map(
-        spans,
-        boundaries,
-        record_ids,
+        [],
+        [],
+        [],
         language=project.config.source_language,
         source_sha256=source_sha256,
     )
@@ -179,6 +190,7 @@ def _build_chapter_map(
     language: str,
     source_sha256: str = "",
 ) -> ChapterMap:
+    """Markdown chapter map: boundaries index into the prose span list."""
     if not record_ids:
         return ChapterMap(source_sha256=source_sha256, chapters=[])
 
@@ -190,7 +202,18 @@ def _build_chapter_map(
         record_start = starts[boundary.span_index]
         if record_start < len(record_ids):
             candidates.append((record_start, boundary.title.strip()))
+    return _assemble_chapters(candidates, record_ids, source_sha256=source_sha256)
 
+
+def _assemble_chapters(
+    candidates: list[tuple[int, str]],
+    record_ids: list[str],
+    *,
+    source_sha256: str = "",
+) -> ChapterMap:
+    """Turn ``(record_position, title)`` candidates into contiguous chapters."""
+    if not record_ids:
+        return ChapterMap(source_sha256=source_sha256, chapters=[])
     if not candidates:
         candidates = [(0, "")]
     elif candidates[0][0] != 0:
@@ -223,6 +246,57 @@ def _build_chapter_map(
             )
         )
     return ChapterMap(source_sha256=source_sha256, chapters=chapters)
+
+
+def _project_records(project: Project) -> list[Record]:
+    """Ordered ``Record`` objects across all chunks (canonical chunk order)."""
+    from booktx.models import Chunk
+
+    records: list[Record] = []
+    for chunk_path in project.chunks():
+        chunk = Chunk.model_validate_json(chunk_path.read_text("utf-8"))
+        records.extend(chunk.records)
+    return records
+
+
+def _record_positions_by_span(records: list[Record]) -> dict[int, int]:
+    """Map each ``Record.span_index`` to its first position in the record array."""
+    positions: dict[int, int] = {}
+    for position, record in enumerate(records):
+        if record.span_index is not None:
+            positions.setdefault(record.span_index, position)
+    return positions
+
+
+def _build_epub_chapter_map(
+    boundaries: list[_Boundary],
+    records: list[Record],
+    *,
+    source_sha256: str = "",
+) -> ChapterMap:
+    """Build a chapter map by resolving EPUB boundaries through canonical records.
+
+    Each EPUB boundary carries an ``EpubSpanRef.span_index`` (a prose-span
+    index). It is resolved to a record-array position via ``Record.span_index``.
+    A boundary whose span_index has no matching record is a manifest/extraction
+    inconsistency and raises instead of silently defaulting to record zero.
+    """
+    record_ids = [record.id for record in records]
+    if not record_ids:
+        return ChapterMap(source_sha256=source_sha256, chapters=[])
+    positions_by_span = _record_positions_by_span(records)
+    candidates: list[tuple[int, str]] = []
+    for boundary in boundaries:
+        position = positions_by_span.get(boundary.span_index)
+        if position is None:
+            raise ValueError(
+                "EPUB chapter boundary at span_index="
+                f"{boundary.span_index} (title={boundary.title!r}) has no "
+                "matching extracted record; the source manifest is inconsistent "
+                "with the extracted chunks. Re-run `booktx extract`."
+            )
+        candidates.append((position, boundary.title.strip()))
+    return _assemble_chapters(candidates, record_ids, source_sha256=source_sha256)
 
 
 def _unique_chunk_ids(record_ids: list[str]) -> list[str]:
@@ -269,26 +343,64 @@ _HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 _prose_span_from_ref = prose_span_from_epub_ref  # backward-compatible alias
 
 
-def _epub_boundaries_from_refs(
-    span_refs: list[EpubSpanRef], navigation_refs: list[EpubNavigationRef]
-) -> list[_Boundary]:
-    nav_boundaries = _navigation_boundaries(span_refs, navigation_refs)
-    heading_boundaries = [
-        _Boundary(pos, span_ref.source_text)
-        for pos, span_ref in enumerate(span_refs)
+def _heading_boundaries(span_refs: list[EpubSpanRef]) -> list[_Boundary]:
+    """Heading-tag boundaries keyed by ``EpubSpanRef.span_index``."""
+    return [
+        _Boundary(span_ref.span_index, span_ref.source_text)
+        for span_ref in span_refs
         if span_ref.tag_name in _HEADING_TAGS and span_ref.source_text.strip()
     ]
+
+
+def _annotated_chapter_boundaries(span_refs: list[EpubSpanRef]) -> list[_Boundary]:
+    """Authoritative boundaries from upstream ``chapter_id``/``chapter_title``.
+
+    Emits one boundary per chapter transition, keyed by the first span_index
+    carrying a new ``chapter_id``. An all-None annotation set returns ``[]``, a
+    distinct authoritative "no assignment" result: callers must not fall back
+    to legacy navigation when ``chapter_mapping`` is v1.
+    """
+    boundaries: list[_Boundary] = []
+    last_chapter_id: str | None = None
+    for span_ref in sorted(span_refs, key=lambda item: item.span_index):
+        if not span_ref.chapter_id:
+            continue
+        if span_ref.chapter_id == last_chapter_id:
+            continue
+        boundaries.append(
+            _Boundary(span_ref.span_index, (span_ref.chapter_title or "").strip())
+        )
+        last_chapter_id = span_ref.chapter_id
+    return boundaries
+
+
+def _epub_boundaries_from_refs(
+    span_refs: list[EpubSpanRef],
+    navigation_refs: list[EpubNavigationRef],
+    *,
+    chapter_mapping: str = "legacy",
+) -> list[_Boundary]:
+    heading_boundaries = _heading_boundaries(span_refs)
+    if chapter_mapping == "epub2text-block-v1":
+        # Authoritative upstream block annotations. Use them even when empty;
+        # never fall back to legacy navigation for a v1 manifest.
+        primary = _annotated_chapter_boundaries(span_refs)
+        if primary and _looks_like_partial_numbered_chapter_sequence(
+            primary, heading_boundaries
+        ):
+            return _merge_boundaries(primary, heading_boundaries)
+        toc_extra = _toc_document_start_extras(span_refs, primary, heading_boundaries)
+        if toc_extra:
+            return _merge_boundaries(primary, toc_extra)
+        return primary
+    # Legacy manifests: conservative navigation-derived detection.
+    nav_boundaries = _navigation_boundaries(span_refs, navigation_refs)
     if not nav_boundaries:
         return heading_boundaries
-
-    # If navigation is a strict prefix/subset of a strongly chapter-like
-    # heading sequence, complete the chapter set from headings instead of
-    # trusting the partial navigation result.
     if _looks_like_partial_numbered_chapter_sequence(
         nav_boundaries, heading_boundaries
     ):
         return _merge_boundaries(nav_boundaries, heading_boundaries)
-
     # Last resort: TOC-derived document starts for extracted documents whose
     # chapter-like titles are not yet covered by navigation or headings. Targets
     # without extracted spans are never used, so this cannot create empty
@@ -388,31 +500,51 @@ def _navigation_boundaries(
 def _navigation_span_index(
     entry: EpubNavigationRef, span_refs: list[EpubSpanRef]
 ) -> int | None:
-    """Return the position of the navigation entry's first span in ``span_refs``.
+    """Conservatively map a legacy navigation entry to an ``EpubSpanRef.span_index``.
 
-    The returned position is an index into the ``span_refs`` list, which is
-    what ``_span_record_starts`` keys its record-start table by. EPUB span
-    indices are per-block and non-contiguous (a multi-sentence block leaves
-    gaps), so they cannot be used directly as array indices.
+    Legacy manifests predate upstream block annotations, so this re-derives the
+    mapping from stored navigation metadata. It is intentionally conservative
+    and returns ``None`` (no boundary) rather than guessing:
+
+    - fallback navigation entries (``source == "fallback"``) are ignored;
+    - unresolved fragments (``fragment is not None`` with no resolvable offset)
+      are ignored — only a whole-document href maps to document start;
+    - a whole-document href maps to document start only when its document href
+      and spine index are both known (matches upstream ``_effective_start``);
+    - an offset at or beyond all matching spans is ignored;
+    - the returned value is the stored ``EpubSpanRef.span_index``, never a
+      position inside the ``span_refs`` list.
+
+    Legacy parity with upstream block ranges is not exact; re-extraction is the
+    authoritative fix for an old project.
     """
+    if entry.source == "fallback":
+        return None
+    # Unresolved fragment: never map (mirrors upstream _effective_start).
+    if entry.fragment is not None and entry.source_char_start is None:
+        return None
     matches = [
-        pos
-        for pos, span_ref in enumerate(span_refs)
+        span_ref
+        for span_ref in span_refs
         if entry.document_href and span_ref.document_href == entry.document_href
     ]
     if not matches and entry.spine_index is not None:
         matches = [
-            pos
-            for pos, span_ref in enumerate(span_refs)
+            span_ref
+            for span_ref in span_refs
             if span_ref.spine_index == entry.spine_index
         ]
     if not matches:
         return None
+    matches.sort(key=lambda span_ref: span_ref.span_index)
     if entry.source_char_start is None:
-        return matches[0]
-    for pos in matches:
-        span_ref = span_refs[pos]
+        # Whole-document href: require a known document and spine.
+        if entry.document_href is None or entry.spine_index is None:
+            return None
+        return matches[0].span_index
+    for span_ref in matches:
         start = span_ref.source_char_start
         if start is not None and start >= entry.source_char_start:
-            return pos
-    return matches[0]
+            return span_ref.span_index
+    # Offset beyond all matching spans: no boundary.
+    return None

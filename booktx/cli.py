@@ -2630,8 +2630,10 @@ def extract(
         raise
 
     record_count = sum(len(c.records) for c in chunks)
+    epub_audit_warning = ""
     if fmt == "epub":
         _save_epub_manifest(proj, source, extraction, len(chunks), record_count)
+        epub_audit_warning = _write_epub_chapter_map_and_audit(proj)
     elif fmt == "markdown":
         from booktx.config import write_manifest
         from booktx.models import Manifest, ManifestSource
@@ -2661,6 +2663,9 @@ def extract(
     )
     if warning_message:
         console.print(f"[yellow]warning:[/yellow] {warning_message}", soft_wrap=True)
+    if epub_audit_warning:
+        console.print(f"[yellow]warning:[/yellow] {epub_audit_warning}", soft_wrap=True)
+        console.print("[dim]details: booktx chapters . --audit[/dim]", soft_wrap=True)
 
 
 def _assert_epub_records_are_clean(chunks: list[Chunk]) -> None:
@@ -2693,6 +2698,7 @@ def _save_epub_manifest(
         text2epub_manifest=extraction.text2epub_manifest,
         spans=extraction.span_refs,
         navigation=extraction.navigation,
+        chapter_mapping="epub2text-block-v1",
     )
     manifest = Manifest(
         version=2,
@@ -2714,6 +2720,34 @@ def _save_epub_manifest(
     write_manifest(proj, manifest)
     # names file convenience: keep names.json in sync if user edited it.
     _ = (json, NamesFile)  # touch imports for clarity
+
+
+def _write_epub_chapter_map_and_audit(proj: Project) -> str:
+    """Detect and persist the chapter map and audit after EPUB extraction.
+
+    Returns a one-line warning string when the audit has findings, or "". The
+    extraction itself stays successful: this is a completeness signal, not a
+    policy gate, so preview/truncated EPUBs with warning-only findings still
+    extract cleanly.
+    """
+    from booktx.epub_toc_audit import audit_epub_chapter_map, write_audit_report
+
+    chapter_map = detect_chapters(proj)
+    write_chapter_map(proj, chapter_map)
+    result = audit_epub_chapter_map(proj, chapter_map=chapter_map)
+    write_audit_report(proj, result)
+    if not result.findings:
+        return ""
+    bits: list[str] = []
+    if result.error_findings:
+        bits.append(f"{len(result.error_findings)} error(s)")
+    if result.warning_findings:
+        bits.append(f"{len(result.warning_findings)} warning(s)")
+    return (
+        "EPUB chapter audit: "
+        + ", ".join(bits)
+        + " (visible TOC vs extracted chapters)."
+    )
 
 
 def _require_ready_context(
@@ -2807,6 +2841,41 @@ def _project_status_snapshot(proj: Project) -> StatusBundle:
     )
 
 
+def _render_epub_audit_summary(audit: Any) -> None:
+    """Print a recomputed EPUB chapter-audit summary when findings exist."""
+    if audit is None or not getattr(audit, "findings", None):
+        return
+    color = "red" if audit.has_blocking_errors else "yellow"
+    label = "error" if audit.has_blocking_errors else "warning"
+    console.print(
+        f"[{color}]{label}:[/{color}] EPUB chapter audit: "
+        f"{audit.error_count} error(s), {audit.warning_count} warning(s) "
+        f"(visible TOC vs extracted chapters).",
+        soft_wrap=True,
+    )
+    console.print("[dim]details: booktx chapters . --audit[/dim]", soft_wrap=True)
+
+
+def _block_on_epub_audit_errors(bundle: StatusBundle) -> None:
+    """Refuse new work selection when the recomputed EPUB audit has errors.
+
+    Warnings (preview/truncated EPUBs) stay non-blocking; only ``error`` findings
+    such as ``epub_toc_href_extracted_but_unmapped`` block. The audit is always
+    recomputed (``StatusBundle.epub_audit``), never read from a persisted report.
+    """
+    audit = getattr(bundle, "epub_audit", None)
+    if audit is None or not audit.has_blocking_errors:
+        return
+    errors = [f for f in audit.findings if f.severity == "error"]
+    preview = "; ".join(f"{f.code}: {f.message}" for f in errors[:3])
+    suffix = "" if len(errors) <= 3 else f" ...(+{len(errors) - 3} more)"
+    _die(
+        f"EPUB chapter audit reports {len(errors)} blocking error(s); refusing to "
+        f"select new work until resolved. {preview}{suffix}\n"
+        "Inspect: booktx chapters . --audit"
+    )
+
+
 def _selected_chapter(
     bundle: StatusBundle, chapter_id: str | None
 ) -> ChapterProgress | None:
@@ -2884,6 +2953,7 @@ def _print_status_human(bundle: StatusBundle, chapter: ChapterProgress | None) -
     from booktx.rendering import print_status_human
 
     print_status_human(bundle, chapter)
+    _render_epub_audit_summary(getattr(bundle, "epub_audit", None))
 
 
 def _print_translate_task(
@@ -2930,6 +3000,7 @@ def _next_chapter(
     mode: RuntimeMode | None = None,
 ) -> None:
     summary = _project_status_snapshot(proj)
+    _block_on_epub_audit_errors(summary)
     chapter = summary.snapshot.next
     if chapter is None:
         console.print("All chapter records have accepted translations.")
@@ -3039,6 +3110,7 @@ def next_cmd(
             "booktx next is not available in profile-root isolated mode; use `booktx translate next .` instead"
         )
     summary = _project_status_snapshot(proj)
+    _block_on_epub_audit_errors(summary)
     pending_chunks = [
         chunk.chunk_id
         for chunk in summary.index.chunk_summaries
@@ -3245,6 +3317,7 @@ def translate_next(
     _require_no_source_drift(proj)
     _require_ready_context(proj, allow_missing_context=allow_missing_context)
     summary = _project_status_snapshot(proj)
+    _block_on_epub_audit_errors(summary)
     selected_chapter = _selected_chapter(summary, chapter)
     if selected_chapter is None:
         console.print("All records already have accepted translations.")
@@ -3608,6 +3681,7 @@ def translate_todo_next(
     _require_no_source_drift(proj)
     _require_ready_context(proj)
     bundle = _project_status_snapshot(proj)
+    _block_on_epub_audit_errors(bundle)
 
     try:
         todo = build_translation_todo(

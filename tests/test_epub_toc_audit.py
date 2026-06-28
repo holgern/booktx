@@ -1,3 +1,5 @@
+# ruff: noqa: E501
+
 """Regression tests for the EPUB visible-TOC chapter-map audit.
 
 Covers the five cases described in ``booktx_chapter_map_review.md``:
@@ -359,3 +361,113 @@ def test_audit_reports_uploaded_shape_missing_chapters(tmp_path):
     codes = {finding.code for finding in result.findings}
     assert "epub_toc_chapter_missing_from_map" in codes
     assert "epub_toc_href_missing_from_extracted_spans" in codes
+
+
+# --- relative visible-TOC href resolution -----------------------------------
+
+
+def test_resolve_relative_href_handles_nested_directories():
+    from booktx.epub_toc_audit import resolve_relative_href
+
+    # sibling link
+    assert resolve_relative_href("Text/contents.xhtml", "ch01.xhtml") == "Text/ch01.xhtml"
+    # ../ link
+    assert (
+        resolve_relative_href("Text/contents.xhtml", "../chapter/ch01.xhtml")
+        == "chapter/ch01.xhtml"
+    )
+    # fragment stripped, base directory kept
+    assert resolve_relative_href("Text/contents.xhtml", "ch01.xhtml#sec") == "Text/ch01.xhtml"
+    # same-basename documents in different dirs are NOT collapsed
+    assert resolve_relative_href("Notes/toc.xhtml", "ch01.xhtml") == "Notes/ch01.xhtml"
+    assert resolve_relative_href("Text/toc.xhtml", "ch01.xhtml") == "Text/ch01.xhtml"
+    # no base -> normalize the link directly
+    assert resolve_relative_href("", "ch01.xhtml") == "ch01.xhtml"
+    # scheme / fragment-only left untouched / emptied
+    assert resolve_relative_href("Text/toc.xhtml", "http://x/y.xhtml") == "http://x/y.xhtml"
+    assert resolve_relative_href("Text/toc.xhtml", "#frag") == ""
+
+
+def test_relative_toc_href_in_nested_dirs_matches_extracted_spans(tmp_path):
+    # contents page lives in Text/ and links chapters with a relative path that
+    # only resolves correctly against its containing directory.
+    book = epub.EpubBook()
+    book.set_identifier("nested")
+    book.set_title("Nested")
+    book.set_language("en")
+    book.add_author("Test")
+    contents = epub.EpubHtml(title="Contents", file_name="Text/contents.xhtml", lang="en")
+    contents.content = (
+        '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>'
+        '<a href="../chapter/ch01.xhtml">ONE</a> </p></body></html>'
+    )
+    ch1 = epub.EpubHtml(title="ONE", file_name="chapter/ch01.xhtml", lang="en")
+    ch1.content = (
+        '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+        "<h1>ONE</h1><p>Sentence one. Sentence two.</p>"
+        "</body></html>"
+    )
+    book.add_item(contents)
+    book.add_item(ch1)
+    book.spine = ["nav", contents, ch1]
+    book.add_item(epub.EpubNav())
+    book.add_item(epub.EpubNcx())
+    book.toc = (ch1,)
+    source = tmp_path / "nested.epub"
+    epub.write_epub(str(source), book, {})
+    project = init_project(
+        tmp_path / "book", target_language="de", source_file=source, chunk_size=2
+    )
+    res = runner.invoke(app, ["extract", str(project.root)])
+    assert res.exit_code == 0, res.output
+    result = audit_epub_chapter_map(load_project(project.root))
+    # The contents link resolved to chapter/ch01.xhtml, which was extracted, so
+    # it is NOT reported as missing-from-extracted-spans.
+    assert not any(
+        f.code == "epub_toc_href_missing_from_extracted_spans"
+        and "chapter/ch01.xhtml" in f.message
+        for f in result.findings
+    )
+
+
+def test_toc_document_start_boundaries_returns_stored_span_index():
+    # Construct span refs whose span_index values are non-contiguous (as real
+    # per-block EPUB span indices are) and confirm the helper returns those
+    # stored values, not positions in a sorted list.
+    from booktx.models import EpubSpanRef
+
+    span_refs = [
+        EpubSpanRef(span_index=0, block_id="b0", document_href="toc.xhtml", spine_index=0, tag_name="p", source_text="x", source_text_sha256="h"),
+        EpubSpanRef(span_index=5, block_id="b1", document_href="ch01.xhtml", spine_index=1, tag_name="p", source_text="<a href=\"ch01.xhtml\">ONE</a>", source_text_sha256="h"),
+        EpubSpanRef(span_index=12, block_id="b2", document_href="ch02.xhtml", spine_index=2, tag_name="p", source_text="<a href=\"ch02.xhtml\">TWO</a>", source_text_sha256="h"),
+    ]
+    boundaries = toc_document_start_boundaries(span_refs)
+    indices = {span_index for span_index, _ in boundaries}
+    titles = {title for _, title in boundaries}
+    assert titles == {"ONE", "TWO"}
+    # Returned indices are the stored span_index values (5 and 12), not list
+    # positions (which would have been 1 and 2).
+    assert indices == {5, 12}
+
+
+def test_extract_writes_chapter_map_and_audit_report(tmp_path):
+    project_dir = _make_project(
+        tmp_path, toc_count=26, spine_count=10, contents=True, headings=True
+    )
+    assert (Path(project_dir) / ".booktx" / "chapter-map.json").is_file()
+    assert (
+        Path(project_dir) / ".booktx" / "reports" / "chapter-audit.json"
+    ).is_file()
+    # Warning-only preview findings: extract succeeded (exit 0 at _make_project
+    # time) and produced both artifacts.
+    report = json.loads(
+        (Path(project_dir) / ".booktx" / "reports" / "chapter-audit.json").read_text("utf-8")
+    )
+    assert any(f["severity"] == "warning" for f in report["findings"])
+    # The on-disk report is NOT trusted by gates; status recomputes it.
+    from booktx.status import build_status_snapshot
+    bundle = build_status_snapshot(
+        load_project(project_dir), context_exists=False, context_ready=False
+    )
+    assert bundle.epub_audit is not None
+    assert bundle.epub_audit.warning_count > 0

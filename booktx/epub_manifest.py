@@ -391,6 +391,8 @@ def structured_to_span_refs(
             inline_skeleton=[
                 asdict(token) for token in inline_skeleton(str(block_fragment))
             ],
+            chapter_id=block.chapter_id,
+            chapter_title=block.chapter_title,
         )
         span_refs.append(span_ref)
 

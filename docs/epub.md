@@ -103,18 +103,29 @@ This preserves identity builds, but changed blocks can lose inner inline markup 
 EPUB chapter detection combines several signals rather than trusting a single
 source:
 
-1. **navigation entries** from `epub2text` (preferred when complete)
+1. **upstream `epub2text` block chapter annotations** — the authoritative
+   source for manifests marked `chapter_mapping="epub2text-block-v1"`. New
+   extractions persist `TextBlock.chapter_id` / `chapter_title` onto each
+   span ref and use them even when the set is empty (an authoritative "no
+   assignment" result).
 2. **heading tags** (`h1` through `h6`) that extend a numbered sequence
-3. **TOC-derived document starts**: when navigation is partial and a visible
-   contents page links to an extracted XHTML document, the first span of that
-   document becomes a chapter boundary
+3. **TOC-derived document starts**: when a boundary source is partial and a
+   visible contents page links to an extracted XHTML document, the first span
+   of that document becomes a chapter boundary
 4. a single chapter covering the whole record stream (last resort)
 
-Detection no longer trusts partial navigation blindly. When navigation is a
-strict subset of a strongly chapter-like heading sequence, headings complete
-the map. TOC-derived boundaries are only used for documents that were
-actually extracted, so a truncated/preview EPUB never produces empty chapter
-entries.
+Boundaries are resolved through canonical `Record.span_index` metadata, so a
+multi-sentence block never shifts a chapter start. Old manifests without
+block annotations (`chapter_mapping="legacy"`) fall back to a conservative
+navigation mapper that ignores fallback/unresolved navigation entries and
+offsets beyond extracted spans; re-extraction is required to gain upstream
+annotations. Detection no longer trusts partial navigation blindly: when a
+boundary source is a strict subset of a strongly chapter-like heading
+sequence, headings complete the map. TOC-derived boundaries are only used
+for documents that were actually extracted, so a truncated/preview EPUB
+never produces empty chapter entries. Relative visible-TOC hrefs are resolved
+against their containing XHTML document (no same-basename collapse).
+
 
 ### Chapter completeness audit
 
@@ -141,6 +152,45 @@ finding codes and severities:
 - `warning epub_navigation_partial`: navigation covers fewer numbered chapters
   than visible chapter signals.
 - `warning epub_chapter_sequence_gap`: numbered TOC chapters have gaps.
+
+The chapter map and audit are generated automatically during `booktx extract`:
+`extract` writes `.booktx/chapter-map.json`, runs the audit, writes
+`.booktx/reports/chapter-audit.json`, and prints a one-line warning with the
+`booktx chapters . --audit` hint when findings exist. Extraction stays
+successful for warning-only preview/truncation cases (it is a completeness
+signal, not a policy gate). The chapter-map algorithm is versioned
+(`ChapterMap.version`); a cached map whose version is older than the current
+algorithm is regenerated even when the source SHA is unchanged.
+
+`booktx status` recomputes the audit summary for the current source rather
+than trusting the persisted report, and shows it when findings exist. New
+chapter/task/todo selection (`next`, `next-chapter`, `translate next
+--chapter`, todo creation) refuses to create new work only on `error` audit
+findings (for example `epub_toc_href_extracted_but_unmapped`); warning-only
+findings remain visible but non-blocking. This keeps the three counts distinct:
+
+- **visible-TOC count** — chapters promised by the contents page (audit only).
+- **extracted-spine documents** — XHTML documents actually present in the spine.
+- **chapter-map count** — chapters booktx will translate.
+
+If the chapter-map count is lower than the visible-TOC count, inspect the
+source rather than trusting the contents page:
+
+```bash
+booktx chapters . --audit
+booktx epub inspect .
+```
+
+### Re-extraction for upstream annotations
+
+Projects extracted before `chapter_mapping="epub2text-block-v1"` use the
+conservative legacy navigation fallback and do not carry upstream block
+annotations. Re-extract to gain them:
+
+```bash
+booktx extract .
+```
+
 
 ## Common EPUB errors
 

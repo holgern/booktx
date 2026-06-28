@@ -54,8 +54,11 @@ booktx chapters ./book --audit --json        # machine-readable audit output
 `booktx chapters` refreshes `.booktx/chapter-map.json` and lists each chapter's
 chunk and record range. `--audit` is EPUB-only and read-only: it compares the
 visible contents page against extracted spans, navigation, and the chapter
-map, then writes `.booktx/reports/chapter-audit.json`. Run it before
-translating and stop if it reports missing numbered chapters.
+map, then writes `.booktx/reports/chapter-audit.json`. EPUB `booktx extract`
+already generates both files and prints a warning when findings exist; run
+`--audit` for details. `booktx status` recomputes the audit summary, and new
+work selection blocks only on `error` findings (warning-only findings stay
+non-blocking).
 
 ## Status and identity
 

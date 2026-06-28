@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import zipfile
 from dataclasses import dataclass, field
 
@@ -39,10 +40,58 @@ def read_epub(path: str) -> zipfile.ZipFile:
     return zipfile.ZipFile(str(path))
 
 
+_CHAPTER_CONTRACT_CACHE: bool | None = None
+
+
+def _epub2text_annotates_blocks() -> bool:
+    """Return True when the installed epub2text maps navigation onto blocks.
+
+    booktx EPUB chapter detection consumes ``TextBlock.chapter_id`` /
+    ``chapter_title`` populated by ``annotate_blocks_with_navigation`` during
+    ``extract_structured()``. Tagged releases that predate that wiring (for
+    example v0.2.6, which has no ``toc_map`` module and never calls the
+    annotator) must be rejected before booktx writes any new-format manifest.
+    """
+    try:
+        import epub2text.parser as _parser  # type: ignore[import-not-found]
+        import epub2text.toc_map as _toc_map  # type: ignore[import-not-found]
+    except ImportError:
+        return False
+    if not callable(getattr(_toc_map, "annotate_blocks_with_navigation", None)):
+        return False
+    try:
+        source = inspect.getsource(_parser)
+    except (OSError, TypeError):
+        # Source unavailable (e.g. a zipped install). The ``toc_map`` module
+        # existing at all is a strong signal here because pre-annotation
+        # releases do not ship it; full behavioral coverage is the deferred
+        # released-epub2text contract test.
+        return True
+    return "annotate_blocks_with_navigation" in source
+
+
+def _assert_epub2text_chapter_contract() -> None:
+    """Fail EPUB extraction early if epub2text lacks the block annotator."""
+    global _CHAPTER_CONTRACT_CACHE
+    if _CHAPTER_CONTRACT_CACHE is None:
+        _CHAPTER_CONTRACT_CACHE = _epub2text_annotates_blocks()
+    if not _CHAPTER_CONTRACT_CACHE:
+        raise RuntimeError(
+            "Installed epub2text does not annotate extracted blocks with "
+            "navigation chapter metadata: annotate_blocks_with_navigation is "
+            "missing or is not wired into extract_structured(). booktx EPUB "
+            "chapter detection requires an epub2text release that maps "
+            "navigation onto TextBlock.chapter_id/chapter_title during "
+            "structured extraction. Upgrade epub2text and re-run "
+            "`booktx extract`."
+        )
+
+
 def extract_epub(
     path: str, *, protected_terms: list[str] | None = None
 ) -> EpubExtraction:
     """Extract translatable EPUB spans through epub2text structured blocks."""
+    _assert_epub2text_chapter_contract()
     from epub2text import extract_epub_structure  # type: ignore[import-not-found]
     from epub2text.structured import ExtractionPolicy  # type: ignore[import-not-found]
 

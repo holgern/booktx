@@ -1052,6 +1052,12 @@ class EpubSpanRef(BaseModel):
     source_markup: str = "plain:v1"
     inline_skeleton: list[dict[str, Any]] = Field(default_factory=list)
 
+    # Populated from epub2text TextBlock.chapter_id/chapter_title after the
+    # upstream TOC mapper runs. Optional for backward compatibility with
+    # manifests created before the epub2text-block-v1 chapter mapping.
+    chapter_id: str | None = None
+    chapter_title: str | None = None
+
 
 class EpubNavigationRef(BaseModel):
     """Stored navigation metadata for EPUB chapter detection."""
@@ -1083,6 +1089,12 @@ class EpubTemplateData(BaseModel):
     text2epub_manifest: dict[str, Any] = Field(default_factory=dict)
     spans: list[EpubSpanRef] = Field(default_factory=list)
     navigation: list[EpubNavigationRef] = Field(default_factory=list)
+    # Capability marker distinguishing legacy navigation-derived manifests from
+    # those whose blocks carry authoritative epub2text chapter annotations. The
+    # default keeps old manifests valid; new extractions set
+    # "epub2text-block-v1" so an all-None annotation set is not mistaken for a
+    # legacy manifest.
+    chapter_mapping: Literal["legacy", "epub2text-block-v1"] = "legacy"
 
 
 class ManifestSource(BaseModel):

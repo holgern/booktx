@@ -69,6 +69,7 @@ __all__ = [
     "StatusSnapshot",
     "StatusRuntimeIndex",
     "StatusBundle",
+    "EpubAuditSummary",
     "ProfileOverview",
     "ProfilesOverview",
     "coverage_status",
@@ -229,6 +230,33 @@ class StatusRuntimeIndex:
     record_error_by_id: dict[str, Finding]
 
 
+class EpubAuditFindingSummary(BaseModel):
+    """One EPUB chapter-audit finding surfaced in status output."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    severity: str
+    code: str
+    message: str
+    href: str | None = None
+    title: str | None = None
+
+
+class EpubAuditSummary(BaseModel):
+    """Recomputed EPUB visible-TOC chapter-audit summary for the current source.
+
+    Always recomputed at status/gate time; the persisted report is user-facing
+    only and is never trusted for workflow gating.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    error_count: int = 0
+    warning_count: int = 0
+    has_blocking_errors: bool = False
+    findings: list[EpubAuditFindingSummary] = Field(default_factory=list)
+
+
 @dataclass(slots=True)
 class StatusBundle:
     """A status snapshot paired with its runtime index."""
@@ -236,9 +264,54 @@ class StatusBundle:
     snapshot: StatusSnapshot
     index: StatusRuntimeIndex
 
+    epub_audit: EpubAuditSummary | None = None
+
 
 def _chapter_map_for_workflow(proj: Project) -> ChapterMap:
     return ensure_chapter_map(proj)
+
+
+def epub_chapter_audit_summary(
+    proj: Project, chapter_map: ChapterMap
+) -> EpubAuditSummary | None:
+    """Recompute the EPUB chapter audit for the current source, or None.
+
+    Uses the already-ensured ``chapter_map`` so status and work-selection gates
+    always audit the current source level rather than trusting a persisted
+    report. Non-EPUB projects return ``None``.
+    """
+    if proj.config.format != "epub":
+        return None
+    from booktx.epub_toc_audit import audit_epub_chapter_map
+
+    try:
+        result = audit_epub_chapter_map(proj, chapter_map=chapter_map)
+    except Exception as exc:  # noqa: BLE001 - gates must not crash status
+        return EpubAuditSummary(
+            has_blocking_errors=True,
+            findings=[
+                EpubAuditFindingSummary(
+                    severity="error",
+                    code="epub_chapter_audit_unavailable",
+                    message=str(exc),
+                )
+            ],
+        )
+    return EpubAuditSummary(
+        error_count=len(result.error_findings),
+        warning_count=len(result.warning_findings),
+        has_blocking_errors=bool(result.error_findings),
+        findings=[
+            EpubAuditFindingSummary(
+                severity=finding.severity,
+                code=finding.code,
+                message=finding.message,
+                href=finding.href,
+                title=finding.title,
+            )
+            for finding in result.findings
+        ],
+    )
 
 
 def build_status_snapshot(
@@ -533,7 +606,8 @@ def build_status_snapshot(
         record_error_by_id=record_error_by_id,
     )
 
-    return StatusBundle(snapshot=snapshot, index=index)
+    epub_audit = epub_chapter_audit_summary(proj, chapter_map)
+    return StatusBundle(snapshot=snapshot, index=index, epub_audit=epub_audit)
 
 
 def build_profiles_overview(project: Project) -> ProfilesOverview:

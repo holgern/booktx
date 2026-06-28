@@ -19,7 +19,7 @@ import json
 import re
 from html import unescape
 from typing import TYPE_CHECKING, Literal
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -34,6 +34,7 @@ __all__ = [
     "audit_epub_chapter_map",
     "write_audit_report",
     "normalize_href",
+    "resolve_relative_href",
     "extract_toc_entries",
     "chapter_ordinal",
     "toc_document_start_boundaries",
@@ -182,6 +183,28 @@ def normalize_href(href: str) -> str:
     return path.strip()
 
 
+def resolve_relative_href(base: str, link: str) -> str:
+    """Resolve a TOC link href relative to the document that contains it.
+
+    The containing document path ``base`` (an ``EpubSpanRef.document_href``)
+    gives the directory context a relative link like ``ch01.xhtml`` or
+    ``../chapter/ch01.xhtml`` is interpreted against. Fragments and non-document
+    schemes are stripped the same way as :func:`normalize_href`, and distinct
+    same-basename documents are preserved (no basename collapse).
+    """
+    if not link:
+        return ""
+    lower = link.lower()
+    if lower.startswith("#"):
+        return ""
+    if lower.startswith(("mailto:", "http://", "https://", "ftp://")):
+        return normalize_href(link)
+    base_path = normalize_href(base)
+    if not base_path:
+        return normalize_href(link)
+    return normalize_href(urljoin(base_path, link))
+
+
 # --- TOC link extraction ----------------------------------------------------
 
 
@@ -293,50 +316,55 @@ def toc_document_start_boundaries(
 ) -> list[tuple[int, str]]:
     """Return ``[(span_index, title), ...]`` TOC-derived chapter starts.
 
-    Only numbered TOC entries whose target document has extracted spans produce
-    a boundary. Boundaries are placed at the first span of the target document,
-    deduplicated by ordinal, and ordered by span index. This is the last-resort
-    boundary source used when navigation is partial and headings are absent.
+    Only numbered TOC entries whose resolved target document has extracted
+    spans produce a boundary. Each TOC link is resolved relative to the document
+    that contains it. Boundaries carry the first target block's stored
+    ``EpubSpanRef.span_index`` (not a position in a sorted span list), are
+    deduplicated by ordinal, and are ordered by span index. This is the
+    last-resort boundary source used when navigation is partial and headings
+    are absent.
     """
     if not span_refs:
         return []
 
     ordered = sorted(span_refs, key=lambda item: item.span_index)
-    first_pos_by_href: dict[str, int] = {}
-    for pos, span_ref in enumerate(ordered):
+    first_span_index_by_href: dict[str, int] = {}
+    for span_ref in ordered:
         href = _span_document_href(span_ref)
-        if href and href not in first_pos_by_href:
-            first_pos_by_href[href] = pos
+        if href and href not in first_span_index_by_href:
+            first_span_index_by_href[href] = span_ref.span_index
 
-    toc_links: list[tuple[int, str, str]] = []  # (order, href, title)
+    toc_links: list[tuple[int, str, str]] = []  # (order, resolved_href, title)
     seen: set[tuple[str, str]] = set()
     for span_ref in ordered:
+        base = _span_document_href(span_ref)
         text = getattr(span_ref, "source_view_text", "") or getattr(
             span_ref, "source_text", ""
         )
         for href, title in extract_toc_entries(text):
             if not chapter_ordinal(title):
                 continue
-            key = (href, title.lower())
+            resolved = resolve_relative_href(base, href)
+            key = (resolved, title.lower())
             if key in seen:
                 continue
             seen.add(key)
-            toc_links.append((len(toc_links), href, title))
+            toc_links.append((len(toc_links), resolved, title))
 
     by_ordinal: dict[int, tuple[int, str]] = {}
     for _, href, title in toc_links:
         ordinal = chapter_ordinal(title)
         if ordinal is None:
             continue
-        if href not in first_pos_by_href:
+        if href not in first_span_index_by_href:
             continue
         if ordinal in by_ordinal:
             continue
-        by_ordinal[ordinal] = (first_pos_by_href[href], title)
+        by_ordinal[ordinal] = (first_span_index_by_href[href], title)
 
     return [
-        (pos, title)
-        for pos, title in sorted(by_ordinal.values(), key=lambda item: item[0])
+        (span_index, title)
+        for span_index, title in sorted(by_ordinal.values(), key=lambda item: item[0])
     ]
 
 
@@ -357,21 +385,36 @@ def _load_template(project: Project):
 
 
 def _collect_toc_entries(project: Project, span_refs: list[EpubSpanRef]):
-    """Return ordered, deduplicated TOC entries with optional record mapping."""
+    """Return ordered, deduplicated TOC entries with optional record mapping.
+
+    Each visible-TOC link is resolved relative to the document that contains it
+    (the ``EpubSpanRef.document_href`` of the contents page, or the document a
+    record was extracted from) before it is compared with extracted spans.
+    """
     from booktx.models import Chunk
 
-    ordered: list[tuple[int, str, str]] = []  # (order, href, title)
+    document_by_span_index: dict[int, str] = {}
+    for span_ref in span_refs:
+        if (
+            span_ref.span_index is not None
+            and span_ref.span_index not in document_by_span_index
+        ):
+            document_by_span_index[span_ref.span_index] = _span_document_href(span_ref)
+
+    ordered: list[tuple[int, str, str]] = []  # (order, resolved_href, title)
     seen: set[tuple[str, str]] = set()
     for span_ref in sorted(span_refs, key=lambda item: item.span_index):
+        base = _span_document_href(span_ref)
         text = getattr(span_ref, "source_view_text", "") or getattr(
             span_ref, "source_text", ""
         )
         for href, title in extract_toc_entries(text):
-            key = (href, title.lower())
+            resolved = resolve_relative_href(base, href)
+            key = (resolved, title.lower())
             if key in seen:
                 continue
             seen.add(key)
-            ordered.append((len(ordered), href, title))
+            ordered.append((len(ordered), resolved, title))
 
     record_by_key: dict[tuple[str, str], str] = {}
     for chunk_path in sorted(project.chunks(), key=lambda path: path.stem):
@@ -380,9 +423,14 @@ def _collect_toc_entries(project: Project, span_refs: list[EpubSpanRef]):
         except Exception:  # noqa: BLE001 - audit must not crash on a bad chunk
             continue
         for record in chunk.records:
+            base = (
+                document_by_span_index.get(record.span_index, "")
+                if record.span_index is not None
+                else ""
+            )
             for href, title in extract_toc_entries(record.source):
-                key = (href, title.lower())
-                record_by_key.setdefault(key, record.id)
+                resolved = resolve_relative_href(base, href)
+                record_by_key.setdefault((resolved, title.lower()), record.id)
 
     entries: list[EpubTocEntry] = []
     for order, href, title in ordered:

@@ -235,3 +235,102 @@ def test_selected_chapter_returns_next_for_none(tmp_path: Path):
 
     # Unknown id resolves to None; the CLI wrapper owns the die-on-unknown UX.
     assert selected_chapter(bundle, "does-not-exist") is None
+
+
+def _make_epub_project(tmp_path: Path, *, toc_count: int, spine_count: int) -> Path:
+    from ebooklib import epub
+
+    words = [
+        "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE",
+        "TEN", "ELEVEN", "TWELVE", "THIRTEEN", "FOURTEEN", "FIFTEEN",
+        "SIXTEEN", "SEVENTEEN", "EIGHTEEN", "NINETEEN", "TWENTY",
+        "TWENTY-ONE", "TWENTY-TWO", "TWENTY-THREE", "TWENTY-FOUR",
+        "TWENTY-FIVE", "TWENTY-SIX",
+    ]
+    book = epub.EpubBook()
+    book.set_identifier(f"status-{toc_count}-{spine_count}")
+    book.set_title("Status Fixture")
+    book.set_language("en")
+    book.add_author("Test")
+    contents = epub.EpubHtml(title="Contents", file_name="contents.xhtml", lang="en")
+    anchors = " ".join(
+        f'<a href="ch{n:02d}.xhtml">{words[n - 1]}</a>'
+        for n in range(1, toc_count + 1)
+    )
+    contents.content = (
+        '<html xmlns="http://www.w3.org/1999/xhtml">'
+        "<head><title>Contents</title></head><body>"
+        f"<p>{anchors}</p></body></html>"
+    )
+    book.add_item(contents)
+    spine = ["nav", contents]
+    items = []
+    for n in range(1, spine_count + 1):
+        ch = epub.EpubHtml(title=words[n - 1], file_name=f"ch{n:02d}.xhtml", lang="en")
+        ch.content = (
+            '<html xmlns="http://www.w3.org/1999/xhtml">'
+            f"<head><title>{words[n - 1]}</title></head><body>"
+            f"<h1>{words[n - 1]}</h1><p>Sentence one. Sentence two.</p></body></html>"
+        )
+        book.add_item(ch)
+        spine.append(ch)
+        items.append(ch)
+    book.spine = spine
+    book.add_item(epub.EpubNav())
+    book.add_item(epub.EpubNcx())
+    book.toc = tuple(items)
+    source = tmp_path / "book.epub"
+    epub.write_epub(str(source), book, {})
+    project_dir = tmp_path / "epub_book"
+    res = runner.invoke(
+        app,
+        [
+            "init",
+            str(project_dir),
+            "--target",
+            "de",
+            "--source-file",
+            str(source),
+            "--chunk-size",
+            "2",
+        ],
+    )
+    assert res.exit_code == 0, res.output
+    ext = runner.invoke(app, ["extract", str(project_dir)])
+    assert ext.exit_code == 0, ext.output
+    return project_dir
+
+
+def test_epub_status_recomputes_audit_summary(tmp_path):
+    project_dir = _make_epub_project(tmp_path, toc_count=26, spine_count=10)
+    proj = load_project(project_dir)
+    bundle = build_status_snapshot(proj, context_exists=False, context_ready=False)
+    assert bundle.epub_audit is not None
+    assert bundle.epub_audit.warning_count > 0
+    # The 26/10 preview case is warning-only: it does NOT block work.
+    assert not bundle.epub_audit.has_blocking_errors
+
+
+def test_status_audit_ignores_stale_persisted_report(tmp_path):
+    # Recomputed audit must not trust the on-disk report: corrupt it with a
+    # fabricated clean result and confirm the recomputed summary still reports
+    # the real warning findings.
+    project_dir = _make_epub_project(tmp_path, toc_count=26, spine_count=10)
+    reports_dir = Path(project_dir) / ".booktx" / "reports"
+    (reports_dir).mkdir(parents=True, exist_ok=True)
+    (reports_dir / "chapter-audit.json").write_text(
+        '{"findings": [], "numbered_toc_count": 0}', encoding="utf-8"
+    )
+    proj = load_project(project_dir)
+    bundle = build_status_snapshot(proj, context_exists=False, context_ready=False)
+    # The persisted (empty) report is ignored: the recomputed summary still
+    # carries the real 26-vs-10 warning findings.
+    assert bundle.epub_audit is not None
+    assert bundle.epub_audit.warning_count > 0
+
+
+def test_non_epub_status_has_no_audit_summary(tmp_path):
+    project_dir = _make_project(tmp_path)
+    proj = load_project(project_dir)
+    bundle = build_status_snapshot(proj, context_exists=False, context_ready=False)
+    assert bundle.epub_audit is None

@@ -224,8 +224,10 @@ Interpret the findings:
   skipped a spine document. Do not synthesize empty chapters; re-extract from a
   complete source.
 - `epub_toc_href_extracted_but_unmapped` means the target was extracted but no
-  chapter boundary covers it, so translation would skip it. This is a detection
-  bug; report it with the audit report attached.
+  chapter boundary covers it, so translation would skip it. It is a blocking
+  `error` finding: `next`, `next-chapter`, `translate next --chapter`, and todo
+  creation will refuse new work until it is resolved. Re-extract to refresh
+  upstream block annotations, or inspect the source with `booktx epub inspect .`.
 - `epub_navigation_partial` indicates navigation is a strict subset of the
   visible chapter signals.
 
