@@ -993,12 +993,13 @@ class EpubOutputConfig(BaseModel):
         default="auto",
         description="Deterministic CSS hyphenation policy.",
     )
-    inject_css: bool = Field(default=True, description="Inject the generated policy CSS.")
+    inject_css: bool = Field(
+        default=True, description="Inject the generated policy CSS."
+    )
     patch_body_language: bool = Field(
         default=False,
         description="Also patch body@lang/xml:lang; root attributes are always patched for non-preserve policy.",
     )
-
 
 
 class ProfileConfig(BaseModel):

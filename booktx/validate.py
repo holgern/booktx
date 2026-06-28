@@ -128,7 +128,6 @@ class Finding:
     candidate_ref: str = ""
     candidate_scope: str = ""
 
-
     def as_dict(self) -> dict[str, object]:
         data: dict[str, object] = {
             "chunk_id": self.chunk_id,
@@ -212,9 +211,7 @@ class ValidationReport:
         historical content findings are excluded: they describe candidates
         that are not the current output and must not fail a normal build.
         """
-        return [
-            f for f in self.findings if f.candidate_scope != "inactive"
-        ]
+        return [f for f in self.findings if f.candidate_scope != "inactive"]
 
     @property
     def inactive_findings(self) -> list[Finding]:
@@ -255,9 +252,7 @@ def validation_exits_nonzero(
         return True
     if fail_on_warnings and any(f.severity == Severity.WARN for f in blocking):
         return True
-    if fail_on_history_warnings and any(
-        f.severity == Severity.WARN for f in inactive
-    ):
+    if fail_on_history_warnings and any(f.severity == Severity.WARN for f in inactive):
         return True
     return False
 
@@ -1610,9 +1605,7 @@ def _epub_output_policy_findings(project: Project) -> list[Finding]:
     return findings
 
 
-def _soft_hyphen_findings(
-    project: Project, effective
-) -> list[Finding]:
+def _soft_hyphen_findings(project: Project, effective) -> list[Finding]:
     """Warn once per record whose target text contains a soft hyphen (U+00AD).
 
     Soft hyphens in target text cause unpredictable reader-side breaks. They

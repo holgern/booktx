@@ -79,7 +79,7 @@ fully preserving EPUB output policy and so remain byte-identical.
 Translation profiles, by contrast, apply an EPUB output policy that rewrites
 publication/content language and injects a deterministic hyphenation style
 sheet, so a translated build is **not** expected to be byte-identical to the
-source. See *EPUB output-language and hyphenation policy* below.
+source. See _EPUB output-language and hyphenation policy_ below.
 
 ## EPUB output-language and hyphenation policy
 
@@ -176,7 +176,6 @@ for documents that were actually extracted, so a truncated/preview EPUB
 never produces empty chapter entries. Relative visible-TOC hrefs are resolved
 against their containing XHTML document (no same-basename collapse).
 
-
 ### Chapter completeness audit
 
 A visible contents page can promise more chapters than were extracted or
@@ -214,8 +213,7 @@ algorithm is regenerated even when the source SHA is unchanged.
 
 `booktx status` recomputes the audit summary for the current source rather
 than trusting the persisted report, and shows it when findings exist. New
-chapter/task/todo selection (`next`, `next-chapter`, `translate next
---chapter`, todo creation) refuses to create new work only on `error` audit
+chapter/task/todo selection (`next`, `next-chapter`, `translate next --chapter`, todo creation) refuses to create new work only on `error` audit
 findings (for example `epub_toc_href_extracted_but_unmapped`); warning-only
 findings remain visible but non-blocking. This keeps the three counts distinct:
 
@@ -240,7 +238,6 @@ annotations. Re-extract to gain them:
 ```bash
 booktx extract .
 ```
-
 
 ## Common EPUB errors
 

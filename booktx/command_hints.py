@@ -319,7 +319,6 @@ GLOSSARY_WORKFLOW_RULES: list[str] = [
     ),
     (
         5,
-        "Never write temporary files to `/tmp`; write under profile-local "
-        "`ingest/`.",
+        "Never write temporary files to `/tmp`; write under profile-local `ingest/`.",
     ),
 ]

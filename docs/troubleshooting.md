@@ -234,7 +234,6 @@ Interpret the findings:
 Run `booktx chapters .` to refresh the map after fixing the source or
 re-extracting.
 
-
 ## Bad hyphenation in a translated EPUB, for example `le-icht`
 
 Build a complete output and inspect the reported EPUB policy:

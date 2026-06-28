@@ -148,8 +148,10 @@ def audit_glossary_term(
         forbidden_targets=list(entry.forbidden_targets),
     )
 
-    chapters = [chapter_id] if chapter_id is not None else list(
-        bundle.index.record_ids_by_chapter
+    chapters = (
+        [chapter_id]
+        if chapter_id is not None
+        else list(bundle.index.record_ids_by_chapter)
     )
     seen_record_ids: set[str] = set()
     for cid in chapters:

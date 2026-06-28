@@ -1496,6 +1496,7 @@ def test_outer_quotation_marks_finding_carries_source_and_target():
 # EPUB output policy + soft hyphen findings
 # ---------------------------------------------------------------------------
 
+
 def _epub_project_with_policy(
     tmp_path: Path,
     *,

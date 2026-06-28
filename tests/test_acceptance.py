@@ -317,7 +317,6 @@ def test_legacy_task_without_context_view_uses_live_context_fallback(tmp_path: P
     ctx.glossary[0].forbidden_targets = []
     write_context(proj, ctx)
 
-
     legacy_task = task.model_copy(deep=True)
     legacy_task.context_view_path = None
     legacy_task.context_view_sha256 = None

@@ -257,9 +257,9 @@ def test_scenario1_active_only_ignores_inactive_forbidden(tmp_path: Path) -> Non
     report = validate_project(load_project(proj_path))
 
     assert report.passed, [f.as_dict() for f in report.findings]
-    assert not any(
-        f.rule == "forbidden_term_used" for f in report.findings
-    ), [f.as_dict() for f in report.findings]
+    assert not any(f.rule == "forbidden_term_used" for f in report.findings), [
+        f.as_dict() for f in report.findings
+    ]
 
 
 # --- Scenario 4: structural integrity stays fatal in default mode --------------
@@ -297,9 +297,9 @@ def test_scenario4_structural_missing_ledger_remains_fatal(tmp_path: Path) -> No
         for f in report.findings
     )
     # No content findings for the inactive candidate in default mode.
-    assert not any(
-        f.rule == "forbidden_term_used" for f in report.findings
-    ), [f.as_dict() for f in report.findings]
+    assert not any(f.rule == "forbidden_term_used" for f in report.findings), [
+        f.as_dict() for f in report.findings
+    ]
 
 
 # --- Scenario 2: history validation labels inactive violations --------------
@@ -327,9 +327,7 @@ def test_scenario2_history_labels_inactive_forbidden(tmp_path: Path) -> None:
         tracked_refs={"1.1", "1.2"},
     )
 
-    report = validate_project(
-        load_project(proj_path), include_inactive_versions=True
-    )
+    report = validate_project(load_project(proj_path), include_inactive_versions=True)
 
     inactive_forbidden = [
         f
@@ -562,9 +560,7 @@ def test_scenario9_qa_matches_validation_and_is_effective_only(tmp_path: Path) -
     record_ids = {f.record_id for f in result.findings}
     # The unrelated record (0003) is NOT flagged even though it contains a
     # forbidden target string, because its source has no tenday/tendays.
-    assert "0001-000003" not in record_ids, [
-        f.as_dict() for f in result.findings
-    ]
+    assert "0001-000003" not in record_ids, [f.as_dict() for f in result.findings]
     # And the clean effective records are not flagged.
     assert record_ids == set(), [f.as_dict() for f in result.findings]
 
@@ -577,8 +573,17 @@ def test_scenario8_enforce_off_guard_rejects_mandatory(tmp_path: Path) -> None:
     res = runner.invoke(
         app,
         [
-            "context", "reset-term", str(proj_path), "tenday", "--create",
-            "--target", "Dekade", "--forbid", "Zehntag", "--enforce", "off",
+            "context",
+            "reset-term",
+            str(proj_path),
+            "tenday",
+            "--create",
+            "--target",
+            "Dekade",
+            "--forbid",
+            "Zehntag",
+            "--enforce",
+            "off",
         ],
     )
     assert res.exit_code != 0, res.output
@@ -590,9 +595,18 @@ def test_scenario8_enforce_off_guard_allows_with_flag(tmp_path: Path) -> None:
     res = runner.invoke(
         app,
         [
-            "context", "reset-term", str(proj_path), "tenday", "--create",
-            "--target", "Dekade", "--forbid", "Zehntag",
-            "--enforce", "off", "--allow-disable-enforcement",
+            "context",
+            "reset-term",
+            str(proj_path),
+            "tenday",
+            "--create",
+            "--target",
+            "Dekade",
+            "--forbid",
+            "Zehntag",
+            "--enforce",
+            "off",
+            "--allow-disable-enforcement",
         ],
     )
     assert res.exit_code == 0, res.output
@@ -619,9 +633,7 @@ def test_scenario8_advisory_target_only_enforce_off_is_warn_free(
     )
     report = validate_project(load_project(proj_path))
     assert report.passed, [f.as_dict() for f in report.findings]
-    assert not any(
-        f.rule == "glossary_target_missing" for f in report.findings
-    )
+    assert not any(f.rule == "glossary_target_missing" for f in report.findings)
 
 
 def test_scenario8_mandate_term_records_binding_decision(tmp_path: Path) -> None:
@@ -629,10 +641,20 @@ def test_scenario8_mandate_term_records_binding_decision(tmp_path: Path) -> None
     res = runner.invoke(
         app,
         [
-            "context", "mandate-term", str(proj_path), "tenday",
-            "--target", "Dekade", "--source-variant", "tendays",
-            "--target-variant", "Dekaden",
-            "--forbid", "Zehntag", "--forbid", "Zehntage",
+            "context",
+            "mandate-term",
+            str(proj_path),
+            "tenday",
+            "--target",
+            "Dekade",
+            "--source-variant",
+            "tendays",
+            "--target-variant",
+            "Dekaden",
+            "--forbid",
+            "Zehntag",
+            "--forbid",
+            "Zehntage",
         ],
     )
     assert res.exit_code == 0, res.output
@@ -652,8 +674,14 @@ def test_scenario8_mandate_term_rejects_enforce_off(tmp_path: Path) -> None:
     res = runner.invoke(
         app,
         [
-            "context", "mandate-term", str(proj_path), "tenday",
-            "--target", "Dekade", "--enforce", "off",
+            "context",
+            "mandate-term",
+            str(proj_path),
+            "tenday",
+            "--target",
+            "Dekade",
+            "--enforce",
+            "off",
         ],
     )
     assert res.exit_code != 0, res.output
@@ -703,8 +731,12 @@ def test_scenario10_audit_term_generates_safe_blocks(tmp_path: Path) -> None:
     res = runner.invoke(
         app,
         [
-            "context", "audit-term", str(proj_path), "tenday",
-            "--write-block", str(block_path),
+            "context",
+            "audit-term",
+            str(proj_path),
+            "tenday",
+            "--write-block",
+            str(block_path),
         ],
     )
     assert res.exit_code == 0, res.output
@@ -744,8 +776,14 @@ def _mandated_project(tmp_path: Path) -> tuple[Path, str]:
     res = runner.invoke(
         app,
         [
-            "init", str(project_dir), "--target", "de",
-            "--source-file", str(src), "--chunk-size", "5",
+            "init",
+            str(project_dir),
+            "--target",
+            "de",
+            "--source-file",
+            str(src),
+            "--chunk-size",
+            "5",
         ],
     )
     assert res.exit_code == 0, res.output
@@ -754,16 +792,29 @@ def _mandated_project(tmp_path: Path) -> tuple[Path, str]:
     runner.invoke(
         app,
         [
-            "context", "mandate-term", str(project_dir), "tenday",
-            "--target", "Dekade", "--source-variant", "tendays",
-            "--target-variant", "Dekaden", "--forbid", "Zehntag",
+            "context",
+            "mandate-term",
+            str(project_dir),
+            "tenday",
+            "--target",
+            "Dekade",
+            "--source-variant",
+            "tendays",
+            "--target-variant",
+            "Dekaden",
+            "--forbid",
+            "Zehntag",
         ],
     )
     runner.invoke(
         app,
         [
-            "context", "mark-ready", str(project_dir), "--force",
-            "--reason", "test setup",
+            "context",
+            "mark-ready",
+            str(project_dir),
+            "--force",
+            "--reason",
+            "test setup",
         ],
     )
     chunks = sorted((project_dir / ".booktx" / "chunks").glob("*.json"))

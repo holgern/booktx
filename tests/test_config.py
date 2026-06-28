@@ -511,7 +511,6 @@ def test_profile_config_quality_review_roundtrips_when_set(tmp_path: Path):
     assert loaded.quality_review.passes[1].base == "active_review"
 
 
-
 def test_profile_config_epub_output_omitted_when_unset(tmp_path: Path):
     """A profile created without epub_output must not gain a table on write."""
     from booktx.config import profile_config_path
@@ -571,6 +570,7 @@ def test_profile_config_epub_output_explicit_language_roundtrips(tmp_path: Path)
     assert loaded.epub_output is not None
     assert loaded.epub_output.language_policy == "explicit"
     assert loaded.epub_output.language == "de-DE"
+
 
 def test_review_path_helpers_resolve_profile_local(tmp_path: Path):
     from booktx.models import TranslationReviewTask, TranslationReviewTaskRecord

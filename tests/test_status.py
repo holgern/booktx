@@ -241,11 +241,32 @@ def _make_epub_project(tmp_path: Path, *, toc_count: int, spine_count: int) -> P
     from ebooklib import epub
 
     words = [
-        "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE",
-        "TEN", "ELEVEN", "TWELVE", "THIRTEEN", "FOURTEEN", "FIFTEEN",
-        "SIXTEEN", "SEVENTEEN", "EIGHTEEN", "NINETEEN", "TWENTY",
-        "TWENTY-ONE", "TWENTY-TWO", "TWENTY-THREE", "TWENTY-FOUR",
-        "TWENTY-FIVE", "TWENTY-SIX",
+        "ONE",
+        "TWO",
+        "THREE",
+        "FOUR",
+        "FIVE",
+        "SIX",
+        "SEVEN",
+        "EIGHT",
+        "NINE",
+        "TEN",
+        "ELEVEN",
+        "TWELVE",
+        "THIRTEEN",
+        "FOURTEEN",
+        "FIFTEEN",
+        "SIXTEEN",
+        "SEVENTEEN",
+        "EIGHTEEN",
+        "NINETEEN",
+        "TWENTY",
+        "TWENTY-ONE",
+        "TWENTY-TWO",
+        "TWENTY-THREE",
+        "TWENTY-FOUR",
+        "TWENTY-FIVE",
+        "TWENTY-SIX",
     ]
     book = epub.EpubBook()
     book.set_identifier(f"status-{toc_count}-{spine_count}")
@@ -254,8 +275,7 @@ def _make_epub_project(tmp_path: Path, *, toc_count: int, spine_count: int) -> P
     book.add_author("Test")
     contents = epub.EpubHtml(title="Contents", file_name="contents.xhtml", lang="en")
     anchors = " ".join(
-        f'<a href="ch{n:02d}.xhtml">{words[n - 1]}</a>'
-        for n in range(1, toc_count + 1)
+        f'<a href="ch{n:02d}.xhtml">{words[n - 1]}</a>' for n in range(1, toc_count + 1)
     )
     contents.content = (
         '<html xmlns="http://www.w3.org/1999/xhtml">'

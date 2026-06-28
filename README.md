@@ -389,9 +389,9 @@ booktx context remove-term . "empire"
 ### Mandatory glossary decisions
 
 For user terminology decisions (e.g. \u201calways translate `tenday` as `Dekade`\u201d),
-use ``mandate-term``. It sets ``require_target = true`` and defaults to
-``enforce = error`` so the approved target is positively enforced. It never
-accepts ``--enforce off``:
+use `mandate-term`. It sets `require_target = true` and defaults to
+`enforce = error` so the approved target is positively enforced. It never
+accepts `--enforce off`:
 
 ```bash
 booktx context mandate-term . "tenday" \
@@ -401,11 +401,11 @@ booktx context mandate-term . "tenday" \
   --category "calendar"
 ```
 
-``reset-term`` and ``add-term`` also accept ``--source-variant``,
-``--target-variant``, and ``--require-target``. Use
-``--allow-disable-enforcement`` to intentionally set ``--enforce off`` on a
+`reset-term` and `add-term` also accept `--source-variant`,
+`--target-variant`, and `--require-target`. Use
+`--allow-disable-enforcement` to intentionally set `--enforce off` on a
 mandatory rule. Advisory approved-target-only entries may use
-``enforce = off`` without warning.
+`enforce = off` without warning.
 
 ### Auditing a term
 
@@ -432,9 +432,9 @@ corrected translation.
 
 ### Active-only validation
 
-``booktx validate`` checks only the effective output by default. Historical
+`booktx validate` checks only the effective output by default. Historical
 inactive versions that contain forbidden terms no longer cause warnings. Use
-``--include-inactive`` for history audits:
+`--include-inactive` for history audits:
 
 ```bash
 booktx validate . --include-inactive --fail-on-history-warnings

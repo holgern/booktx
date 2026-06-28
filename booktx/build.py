@@ -356,9 +356,7 @@ def _build_epub(
                 upstream_css = list(
                     upstream_report.output_rewrite.css_injected_entries  # type: ignore[union-attr]
                 )
-                reconcile_css_injection(
-                    tmp_path, upstream_css_entries=upstream_css
-                )
+                reconcile_css_injection(tmp_path, upstream_css_entries=upstream_css)
         except PolicyError as exc:
             raise BuildError(str(exc)) from exc
 
@@ -372,13 +370,9 @@ def _build_epub(
     report: dict[str, object] = {
         "changed_entries": list(upstream.changed_entries) if upstream else [],
         "replacement_count": upstream.replacement_count if upstream else 0,
-        "unresolved_token_count": (
-            upstream.unresolved_token_count if upstream else 0
-        ),
+        "unresolved_token_count": (upstream.unresolved_token_count if upstream else 0),
     }
-    report["epub_output_policy"] = _policy_report_dict(
-        policy, audit, upstream_report
-    )
+    report["epub_output_policy"] = _policy_report_dict(policy, audit, upstream_report)
     return BuildResult(
         output_path=out_path,
         format="epub",
@@ -387,9 +381,7 @@ def _build_epub(
     )
 
 
-def _policy_report_dict(
-    policy, audit, upstream_report
-) -> dict[str, object]:
+def _policy_report_dict(policy, audit, upstream_report) -> dict[str, object]:
     """Serialize the resolved policy detail for the build report."""
     serialized_text2epub: dict[str, object] | None = None
     if (

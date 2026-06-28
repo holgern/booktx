@@ -304,9 +304,9 @@ def _collect_record_findings(
         for entry in glossary_entries:
             if entry.status != "approved" or entry.target is None:
                 continue
-            if source_rule_applies(
-                source_text, entry
-            ) and not target_contains_approved(target, entry):
+            if source_rule_applies(source_text, entry) and not target_contains_approved(
+                target, entry
+            ):
                 findings.append(
                     _finding(
                         record_id,
@@ -363,5 +363,3 @@ def _collect_record_findings(
             )
 
     return findings
-
-

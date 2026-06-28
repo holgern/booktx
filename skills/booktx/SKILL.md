@@ -561,7 +561,7 @@ booktx context chapter-note . 0006 \
 `--forbid` now replaces the full forbidden-target list. When the target changes, any forbidden term equal to the new target is pruned automatically. Use `--append-forbid` when you want to add terms without removing existing ones.
 
 For **user terminology decisions** (e.g. \u201calways translate `tenday` as
-`Dekade`\u201d), prefer ``mandate-term`` over ``add-term``/``reset-term``:
+`Dekade`\u201d), prefer `mandate-term` over `add-term`/`reset-term`:
 
 ```bash
 booktx context mandate-term . "tenday" \
@@ -572,13 +572,13 @@ booktx context mandate-term . "tenday" \
   --category "calendar"
 ```
 
-``mandate-term`` always sets ``require_target = true`` and defaults to
-``enforce = error`` so the approved target is positively enforced. It never
-accepts ``--enforce off``.
+`mandate-term` always sets `require_target = true` and defaults to
+`enforce = error` so the approved target is positively enforced. It never
+accepts `--enforce off`.
 
-**Never set ``--enforce off``** to silence validation warnings unless the
+**Never set `--enforce off`** to silence validation warnings unless the
 user explicitly says the term is advisory only. If you must intentionally
-disable a mandatory rule, use ``--allow-disable-enforcement``:
+disable a mandatory rule, use `--allow-disable-enforcement`:
 
 ```bash
 booktx context reset-term . "tenday" \
@@ -600,7 +600,7 @@ booktx context audit-term . "tenday" \
 ```
 
 This writes two files: the ingest block (editable targets only, parseable
-with ``parse_block_submission``) and a companion source block for reference.
+with `parse_block_submission`) and a companion source block for reference.
 Only violating effective records are included; the generator never guesses
 the corrected translation. Revise and validate:
 
@@ -610,9 +610,9 @@ booktx translation revise-block . \
 booktx validate . --fail-on-warnings
 ```
 
-**Active-only validation:** ``booktx validate`` checks only the effective
+**Active-only validation:** `booktx validate` checks only the effective
 (current) output by default. Historical inactive versions that contain
-forbidden terms no longer cause warnings. Use ``--include-inactive`` only
+forbidden terms no longer cause warnings. Use `--include-inactive` only
 for history audits:
 
 ```bash

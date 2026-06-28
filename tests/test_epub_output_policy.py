@@ -37,6 +37,7 @@ from booktx.models import EpubOutputConfig
 # Helpers to build minimal EPUBs
 # --------------------------------------------------------------------------- #
 
+
 def _write_epub(
     path: Path,
     *,
@@ -53,16 +54,12 @@ def _write_epub(
     """
     head_metas = ""
     if fixed_layout:
-        head_metas = (
-            '<meta name="viewport" content="width=800, height=1200"/>'
-        )
+        head_metas = '<meta name="viewport" content="width=800, height=1200"/>'
     head_css = ""
     manifest_css = ""
     if css is not None:
         head_css = f'<link rel="stylesheet" href="{css_href}"/>'
-        manifest_css = (
-            f'    <item id="css" href="{css_href}" media-type="text/css"/>\n'
-        )
+        manifest_css = f'    <item id="css" href="{css_href}" media-type="text/css"/>\n'
     body_attr = f' lang="{body_lang}" xml:lang="{body_lang}"' if body_lang else ""
     chapter = (
         '<?xml version="1.0" encoding="utf-8"?>\n'
@@ -152,6 +149,7 @@ def _patch_xhtml_root_lang(epub_path: Path, entry: str, new_lang: str) -> None:
 # validate_language_tag
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize("tag", ["en", "de", "de-DE", "pt-BR", "zh-Hans", "en-US"])
 def test_validate_language_tag_accepts_valid(tag: str) -> None:
     assert validate_language_tag(tag) == tag
@@ -176,6 +174,7 @@ def test_validate_language_tag_rejects_malformed(tag: str) -> None:
 # --------------------------------------------------------------------------- #
 # build_policy_css
 # --------------------------------------------------------------------------- #
+
 
 def test_css_auto_is_deterministic_and_complete() -> None:
     css = build_policy_css("auto")
@@ -214,6 +213,7 @@ def test_css_preserve_is_empty() -> None:
 # --------------------------------------------------------------------------- #
 # to_text2epub_output_rewrite mapping
 # --------------------------------------------------------------------------- #
+
 
 def test_preserving_policy_maps_to_no_rewrite() -> None:
     policy = EpubOutputPolicy("preserve", None, "preserve", False, False)
@@ -263,6 +263,7 @@ def test_inject_css_false_keeps_language_rewrite() -> None:
 # --------------------------------------------------------------------------- #
 # resolve_epub_output_policy defaults
 # --------------------------------------------------------------------------- #
+
 
 def _project(tmp_path: Path, *, kind: str = "translation", epub_output=None):
     proj = init_source_project(tmp_path / "book")
@@ -328,6 +329,7 @@ def test_resolve_explicit_policy_rejects_underscore_locale(tmp_path: Path) -> No
 # scan_css_conflicts
 # --------------------------------------------------------------------------- #
 
+
 def _zip_bytes(css_text: str) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
@@ -392,9 +394,8 @@ def test_scan_accepts_path(tmp_path: Path) -> None:
 # audit_epub_output_policy (integration with real text2epub rewrite)
 # --------------------------------------------------------------------------- #
 
-def _rebuild_with_policy(
-    src: Path, out: Path, policy: EpubOutputPolicy
-) -> None:
+
+def _rebuild_with_policy(src: Path, out: Path, policy: EpubOutputPolicy) -> None:
     """Use text2epub directly to rewrite a source EPUB per a booktx policy."""
     from text2epub import ReplacementPlan, rebuild_epub
 
@@ -496,7 +497,8 @@ def test_reconcile_css_injection_validates_upstream_entries(tmp_path: Path) -> N
     # Discover which entries actually got the style from text2epub.
     with zipfile.ZipFile(out) as zf:
         reported = [
-            n for n in zf.namelist()
+            n
+            for n in zf.namelist()
             if n.lower().endswith((".xhtml", ".html"))
             and f'id="{POLICY_STYLE_ID}"' in zf.read(n).decode("utf-8", "replace")
         ]

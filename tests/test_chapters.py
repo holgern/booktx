@@ -204,8 +204,7 @@ def _make_epub_with_links(
     book.add_item(epub.EpubNav())
     book.add_item(epub.EpubNcx())
     book.toc = tuple(
-        epub.Link(href, title, f"link-{i}")
-        for i, (href, title) in enumerate(toc_links)
+        epub.Link(href, title, f"link-{i}") for i, (href, title) in enumerate(toc_links)
     )
     epub.write_epub(str(path), book, {})
 
@@ -244,7 +243,9 @@ def test_unresolved_fragment_is_not_annotated(tmp_path: Path):
     source = tmp_path / "frag.epub"
     _make_epub_with_links(
         source,
-        chapters=[("ch1.xhtml", "Chapter One", "<p>Alice met Bob. A second sentence.</p>")],
+        chapters=[
+            ("ch1.xhtml", "Chapter One", "<p>Alice met Bob. A second sentence.</p>")
+        ],
         toc_links=[("ch1.xhtml#missing", "Chapter One")],
         headings=False,
     )
@@ -288,18 +289,19 @@ def test_v1_all_null_annotations_do_not_use_legacy_navigation():
     ]
     # v1 with all-None annotations is authoritative "no assignment": legacy
     # navigation is not consulted.
-    assert _epub_boundaries_from_refs(
-        spans, fallback_nav, chapter_mapping="epub2text-block-v1"
-    ) == []
+    assert (
+        _epub_boundaries_from_refs(
+            spans, fallback_nav, chapter_mapping="epub2text-block-v1"
+        )
+        == []
+    )
     # The legacy path does consult a whole-document (non-fallback) entry.
     whole_doc_nav = [
         EpubNavigationRef(
             id="n1", title="Chapter One", document_href="ch1.xhtml", spine_index=1
         )
     ]
-    legacy = _epub_boundaries_from_refs(
-        spans, whole_doc_nav, chapter_mapping="legacy"
-    )
+    legacy = _epub_boundaries_from_refs(spans, whole_doc_nav, chapter_mapping="legacy")
     assert any(b.title == "Chapter One" for b in legacy)
 
 
@@ -308,29 +310,85 @@ def test_legacy_navigation_mapper_is_conservative():
     from booktx.models import EpubNavigationRef, EpubSpanRef
 
     spans = [
-        EpubSpanRef(span_index=0, block_id="b0", document_href="ch1.xhtml", spine_index=1, tag_name="p", source_text="x", source_text_sha256="h", source_char_start=0),
-        EpubSpanRef(span_index=2, block_id="b1", document_href="ch1.xhtml", spine_index=1, tag_name="p", source_text="y", source_text_sha256="h", source_char_start=50),
+        EpubSpanRef(
+            span_index=0,
+            block_id="b0",
+            document_href="ch1.xhtml",
+            spine_index=1,
+            tag_name="p",
+            source_text="x",
+            source_text_sha256="h",
+            source_char_start=0,
+        ),
+        EpubSpanRef(
+            span_index=2,
+            block_id="b1",
+            document_href="ch1.xhtml",
+            spine_index=1,
+            tag_name="p",
+            source_text="y",
+            source_text_sha256="h",
+            source_char_start=50,
+        ),
     ]
     # fallback entry ignored
-    assert _navigation_span_index(
-        EpubNavigationRef(id="fb", title="FB", document_href="ch1.xhtml", spine_index=1, source="fallback"),
-        spans,
-    ) is None
+    assert (
+        _navigation_span_index(
+            EpubNavigationRef(
+                id="fb",
+                title="FB",
+                document_href="ch1.xhtml",
+                spine_index=1,
+                source="fallback",
+            ),
+            spans,
+        )
+        is None
+    )
     # unresolved fragment ignored
-    assert _navigation_span_index(
-        EpubNavigationRef(id="uf", title="UF", document_href="ch1.xhtml", fragment="missing", source_char_start=None, spine_index=1),
-        spans,
-    ) is None
+    assert (
+        _navigation_span_index(
+            EpubNavigationRef(
+                id="uf",
+                title="UF",
+                document_href="ch1.xhtml",
+                fragment="missing",
+                source_char_start=None,
+                spine_index=1,
+            ),
+            spans,
+        )
+        is None
+    )
     # whole-document href with known doc+spine -> document start span_index
-    assert _navigation_span_index(
-        EpubNavigationRef(id="wd", title="WD", document_href="ch1.xhtml", fragment=None, source_char_start=None, spine_index=1),
-        spans,
-    ) == 0
+    assert (
+        _navigation_span_index(
+            EpubNavigationRef(
+                id="wd",
+                title="WD",
+                document_href="ch1.xhtml",
+                fragment=None,
+                source_char_start=None,
+                spine_index=1,
+            ),
+            spans,
+        )
+        == 0
+    )
     # resolved offset beyond all matching spans -> None (not matches[0])
-    assert _navigation_span_index(
-        EpubNavigationRef(id="be", title="BE", document_href="ch1.xhtml", source_char_start=999, spine_index=1),
-        spans,
-    ) is None
+    assert (
+        _navigation_span_index(
+            EpubNavigationRef(
+                id="be",
+                title="BE",
+                document_href="ch1.xhtml",
+                source_char_start=999,
+                spine_index=1,
+            ),
+            spans,
+        )
+        is None
+    )
 
 
 def test_missing_record_mapping_raises():
@@ -360,7 +418,9 @@ def test_chapter_map_version_invalidation_regenerates(tmp_path: Path):
     project = load_project(project_dir)
     source_sha = project_source_sha256(project)
     # Stale-version map with the current source SHA.
-    write_chapter_map(project, ChapterMap(version=1, source_sha256=source_sha, chapters=[]))
+    write_chapter_map(
+        project, ChapterMap(version=1, source_sha256=source_sha, chapters=[])
+    )
     regenerated = ensure_chapter_map(project)
     assert regenerated.version == CURRENT_CHAPTER_MAP_VERSION
     assert regenerated.chapters  # regenerated, not the empty stale map

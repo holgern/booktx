@@ -1385,6 +1385,7 @@ def _die_disable_enforcement_guard(
             "use --allow-disable-enforcement if this is intentional"
         )
 
+
 # --- context -----------------------------------------------------------------
 
 
@@ -2330,7 +2331,9 @@ def context_audit_term(
     profile: str | None = typer.Option(
         None, "--profile", help="Translation profile name."
     ),
-    chapter: str | None = typer.Option(None, "--chapter", help="Scope to a chapter id."),
+    chapter: str | None = typer.Option(
+        None, "--chapter", help="Scope to a chapter id."
+    ),
     include_inactive: bool = typer.Option(
         False,
         "--include-inactive",
@@ -5370,8 +5373,7 @@ def validate(
         False,
         "--fail-on-history-warnings",
         help=(
-            "Imply --include-inactive and exit non-zero on inactive-version "
-            "warnings."
+            "Imply --include-inactive and exit non-zero on inactive-version warnings."
         ),
     ),
     all_versions_strict: bool = typer.Option(
@@ -5678,15 +5680,14 @@ def check(
         if as_json:
             console.print_json(json.dumps(audit_payload, indent=2, ensure_ascii=False))
         else:
-            _render_validate_findings(
-                type("R", (), {"findings": audit_findings})()
-            )
+            _render_validate_findings(type("R", (), {"findings": audit_findings})())
             console.print(
                 f"errors={sum(1 for f in audit_findings if f.severity == Severity.ERROR)} "
                 f"warnings={sum(1 for f in audit_findings if f.severity == Severity.WARN)}"
             )
         has_blocking = any(f.severity == Severity.ERROR for f in audit_findings) or (
-            fail_on_warnings and any(f.severity == Severity.WARN for f in audit_findings)
+            fail_on_warnings
+            and any(f.severity == Severity.WARN for f in audit_findings)
         )
         if has_blocking:
             raise typer.Exit(code=1)
@@ -6632,9 +6633,7 @@ def review_todo_next(
         _die("quality review is not enabled; run `booktx review configure . --enable`")
         return
 
-    from booktx.status import project_status_snapshot as _status_snap
-
-    bundle = _status_snap(proj)
+    bundle = _project_status_snapshot(proj)
     pass_numbers = [int(p.strip()) for p in passes.split(",") if p.strip()]
     if not pass_numbers:
         _die("at least one pass number is required")
@@ -6698,9 +6697,8 @@ def review_todo_status(
         latest_incomplete_review_todo,
         load_review_todo,
     )
-    from booktx.status import project_status_snapshot as _status_snap
 
-    bundle = _status_snap(proj)
+    bundle = _project_status_snapshot(proj)
 
     if review_todo_id is not None:
         todo = load_review_todo(proj, review_todo_id)
@@ -6769,9 +6767,8 @@ def review_todo_resume(
         return
 
     from booktx.review_todo import resume_review_todo
-    from booktx.status import project_status_snapshot as _status_snap
 
-    bundle = _status_snap(proj)
+    bundle = _project_status_snapshot(proj)
 
     try:
         task = resume_review_todo(
@@ -6840,9 +6837,8 @@ def qa_scan_cmd(
     proj = runtime.project
 
     from booktx.qa_scan import qa_scan
-    from booktx.status import project_status_snapshot as _status_snap
 
-    bundle = _status_snap(proj)
+    bundle = _project_status_snapshot(proj)
 
     try:
         result = qa_scan(
@@ -6917,10 +6913,9 @@ def translation_search_cmd(
     proj = runtime.project
 
     from booktx.config import load_translation_store
-    from booktx.status import project_status_snapshot as _status_snap
     from booktx.translation_store import effective_target_candidate
 
-    bundle = _status_snap(proj)
+    bundle = _project_status_snapshot(proj)
     store = load_translation_store(proj)
     store_records = store.records
     source_by_id = bundle.index.source_by_id

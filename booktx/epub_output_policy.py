@@ -128,9 +128,7 @@ def validate_language_tag(tag: str) -> str:
             f"use a hyphen BCP-47-style tag such as {raw.replace('_', '-')!r}"
         )
     if not _BCP47_RE.fullmatch(raw):
-        raise PolicyError(
-            f"language tag {raw!r} is not a valid BCP-47-style tag"
-        )
+        raise PolicyError(f"language tag {raw!r} is not a valid BCP-47-style tag")
     # Language subtags are case-insensitive; normalize the canonical lower-case
     # primary subtag while leaving the rest as given.
     parts = raw.split("-")
@@ -165,15 +163,14 @@ def resolve_language_tag(
         raise PolicyError(f"unknown language policy {policy!r}")
 
     if not tag or not tag.strip():
-        raise PolicyError(
-            f"could not resolve output language for policy {policy!r}"
-        )
+        raise PolicyError(f"could not resolve output language for policy {policy!r}")
     return validate_language_tag(tag)
 
 
 # --------------------------------------------------------------------------- #
 # Policy resolution
 # --------------------------------------------------------------------------- #
+
 
 def resolve_epub_output_policy(project: Project) -> EpubOutputPolicy:
     """Resolve the effective EPUB output policy for a project.
@@ -405,6 +402,7 @@ def _read_all(zf: ZipFile) -> list[tuple[str, str]]:
 # text2epub mapping
 # --------------------------------------------------------------------------- #
 
+
 def to_text2epub_output_rewrite(policy: EpubOutputPolicy):
     """Map a resolved policy to a text2epub ``OutputRewriteOptions`` or None.
 
@@ -415,9 +413,7 @@ def to_text2epub_output_rewrite(policy: EpubOutputPolicy):
     is_preserve_language = policy.language_policy == "preserve"
     # hyphenation='preserve' suppresses CSS injection regardless of inject_css.
     css = (
-        build_policy_css(policy.hyphenation)
-        if policy.hyphenation != "preserve"
-        else ""
+        build_policy_css(policy.hyphenation) if policy.hyphenation != "preserve" else ""
     )
     inject_css = policy.inject_css and bool(css)
 
@@ -438,6 +434,7 @@ def to_text2epub_output_rewrite(policy: EpubOutputPolicy):
 
 
 # --------------------------------------------------------------------------- #
+
 
 def is_effectively_preserving(policy: EpubOutputPolicy) -> bool:
     """True when the policy maps to no upstream rewrite (byte identity kept)."""
