@@ -14,7 +14,7 @@ translations/<profile>/context-history/views/<sha>/{context.json,context.md,mani
 2. Read `translations/<profile>/context.md` before opening a new task.
 3. Treat `context.json` as authoritative and `context.md` as rendered.
 4. Persist chapter notes with `booktx context chapter-note`, never by hand-editing `context.md`.
-5. Context is not shared across languages or model experiments.
+5. Context is not shared across languages or model experiments. Series-wide consistency is achieved by importing an explicit context pack (`booktx context export-pack` / `import-pack`), not by sharing profile state.
 6. If `context.md` already contains manual chapter notes, run `booktx context import-md ./book --profile PROFILE --write` before validating or rendering again.
 7. Chapter-note appends change the next task's effective context, but they do not create a new dotted version by themselves.
 8. Each new translation task snapshots its composed effective context view under `context-history/views/<sha>/` and accepted candidates preserve that task-time evidence.

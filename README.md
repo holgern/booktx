@@ -327,6 +327,12 @@ booktx translate task-status ./demo --profile de_gpt5_5 --task-id TASK
 booktx translation compare ./demo --profile de_gpt5_5 74@38 --versions 1.1,1.2
 booktx profile compare ./demo --profiles de_gpt5_5,de_glm_5_2 --record 0001-000001
 booktx source status ./demo
+
+# Series-wide context packs (style/global rules/glossary/approved answers):
+booktx context export-pack ./book1 --profile de_gpt5_5 \
+  --series-id shadows-of-apt --output ./soa.en-de.booktx-context-pack.json
+booktx context import-pack ./book2 --profile de_gpt5_5 \
+  --file ./soa.en-de.booktx-context-pack.json --write
 ```
 
 `booktx translate next` also snapshots the exact effective task context under

@@ -82,3 +82,8 @@ Each task composes a context view from the current baseline plus the chapter
 notes that come before the target chapter in chapter-map order. That composed
 view is snapshotted under `translations/<profile>/context-history/views/<sha>/`
 and becomes immutable task evidence.
+
+Context is profile-local and never shared by linking or symlinking. For books
+in the same series, export reusable policy (style, global rules, glossary,
+approved question answers) as a series context pack and import it into the
+other profile: see `booktx context export-pack` / `import-pack`.

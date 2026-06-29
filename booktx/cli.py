@@ -108,6 +108,17 @@ from booktx.context import (
     write_context,
     write_context_markdown,
 )
+from booktx.context_packs import (
+    ContextPackError,
+    ContextPackImportFinding,
+    ContextPackImportResult,
+    SeriesContextPack,
+    export_context_pack,
+    import_context_pack,
+    plan_context_pack_import,
+    read_context_pack,
+    write_context_pack,
+)
 from booktx.editor_indexes import (
     EditorIndexError,
     EditorIndexesResult,
@@ -2466,6 +2477,290 @@ def context_mark_ready(
     console.print(
         f"context ready: {display_path(context_markdown_path(proj), runtime.mode)}"
     )
+
+
+def _resolve_pack_path(
+    path_str: str,
+    runtime: RuntimeContext,
+    *,
+    must_exist: bool,
+) -> Path:
+    """Resolve a pack input/output path for the current runtime mode.
+
+    In profile-root isolated mode the path must resolve inside the current
+    profile root; absolute paths, parent-directory escapes, and symlink escapes
+    are rejected, and paths into sibling profiles cannot be expressed. In
+    collaborative project-root mode explicit paths may live outside the project.
+    """
+    raw = Path(path_str).expanduser()
+    if not runtime.mode.isolated_output:
+        if must_exist and not raw.is_file():
+            _die(f"pack file not found: {path_str}")
+        return raw
+    profile_root = runtime.mode.profile_root
+    if profile_root is None:
+        _die("profile root is not available in isolated mode")
+        raise AssertionError  # pragma: no cover - _die exits
+    if raw.is_absolute():
+        _die(
+            "absolute pack paths are not allowed in profile-root isolated "
+            "mode; use a path relative to the profile root"
+        )
+    if any(part == ".." for part in raw.parts):
+        _die("parent-directory escapes are not allowed in profile-root isolated mode")
+    candidate = profile_root / raw
+    try:
+        resolved_parent = candidate.parent.resolve(strict=True)
+    except OSError as exc:
+        _die(f"pack path is not reachable: {path_str}: {exc}")
+    profile_resolved = profile_root.resolve(strict=True)
+    try:
+        resolved_parent.relative_to(profile_resolved)
+    except ValueError:
+        _die("pack path escapes the profile root")
+    if must_exist and not candidate.is_file():
+        _die(f"pack file not found: {path_str}")
+    if candidate.is_symlink():
+        try:
+            link_target = candidate.resolve(strict=False)
+            link_target.relative_to(profile_resolved)
+        except ValueError:
+            _die("pack path escapes the profile root via symlink")
+        except OSError as exc:
+            _die(f"pack path is not reachable: {path_str}: {exc}")
+    return candidate
+
+
+@context_app.command(name="export-pack")
+def context_export_pack(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    series_id: str = typer.Option(..., "--series-id", help="Series identifier."),
+    title: str = typer.Option("", "--title", help="Optional pack title."),
+    output: Path = typer.Option(..., "--output", help="Output pack file path."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    questions: str = typer.Option(
+        "approved",
+        "--questions",
+        help="Question inclusion: none or approved (default).",
+    ),
+    no_style: bool = typer.Option(False, "--no-style", help="Exclude style."),
+    no_global_rules: bool = typer.Option(
+        False, "--no-global-rules", help="Exclude global rules."
+    ),
+    no_glossary: bool = typer.Option(False, "--no-glossary", help="Exclude glossary."),
+    allow_not_ready: bool = typer.Option(
+        False,
+        "--allow-not-ready",
+        help="Export a draft or forced-ready context (with a warning).",
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Overwrite an existing output file."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    """Export a series-wide context pack from the selected profile.
+
+    Builds a schema-validated pack carrying only reusable profile-local policy
+    (style, global rules, glossary, approved reusable question answers) and
+    writes it atomically. Refuses to overwrite an existing file without --force.
+    """
+    if questions not in {"none", "approved"}:
+        _die("--questions must be none or approved")
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    out_path = _resolve_pack_path(str(output), runtime, must_exist=False)
+    if out_path.exists() and not force:
+        _die(
+            f"output file already exists: "
+            f"{display_path(out_path, runtime.mode)}; pass --force to overwrite"
+        )
+    try:
+        pack = export_context_pack(
+            runtime.project,
+            series_id=series_id,
+            title=title,
+            include_style=not no_style,
+            include_global_rules=not no_global_rules,
+            include_glossary=not no_glossary,
+            include_questions=questions,  # type: ignore[arg-type]
+            allow_not_ready=allow_not_ready,
+        )
+    except ContextPackError as exc:
+        _handle_booktx_error(exc)
+        return
+    write_context_pack(out_path, pack)
+    summary = {
+        "series_id": pack.series_id,
+        "source": pack.source_language,
+        "target": pack.target_language,
+        "glossary": len(pack.glossary),
+        "questions": len(pack.questions),
+        "path": display_path(out_path, runtime.mode),
+        "format": pack.format,
+        "version": pack.version,
+    }
+    if allow_not_ready:
+        console.print("[yellow]warning:[/yellow] exported a draft/forced-ready context")
+    if as_json:
+        console.print_json(json.dumps(summary, ensure_ascii=False))
+        return
+    console.print(f"wrote series context pack: {display_path(out_path, runtime.mode)}")
+    console.print(
+        f"series_id={pack.series_id} source={pack.source_language} "
+        f"target={pack.target_language} glossary={len(pack.glossary)} "
+        f"questions={len(pack.questions)}"
+    )
+
+
+@context_app.command(name="import-pack")
+def context_import_pack(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    file: Path = typer.Option(..., "--file", help="Input pack file path."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    write: bool = typer.Option(
+        False, "--write", help="Commit the planned import (dry run by default)."
+    ),
+    init_missing_context: bool = typer.Option(
+        False,
+        "--init-missing-context",
+        help="Create a fresh context if none exists.",
+    ),
+    conflict: str = typer.Option(
+        "fail",
+        "--conflict",
+        help="Conflict mode: fail, keep-local, replace.",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> None:
+    """Import a series-wide context pack into the selected profile.
+
+    Dry run by default: plans the merge and reports findings without writing.
+    Pass --write to commit. The merge never mutates profile config, source
+    state, identity, stores, ledgers, or tasks; changed policy clears readiness
+    and regenerates context.md.
+    """
+    if conflict not in {"fail", "keep-local", "replace"}:
+        _die("--conflict must be fail, keep-local, or replace")
+    runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
+    pack_path = _resolve_pack_path(str(file), runtime, must_exist=True)
+    try:
+        pack = read_context_pack(pack_path)
+    except ContextPackError as exc:
+        _handle_booktx_error(exc)
+        return
+
+    planned_ctx: TranslationContext | None = None
+    result: ContextPackImportResult
+    try:
+        if write:
+            planned_ctx, result = import_context_pack(
+                runtime.project,
+                pack,
+                conflict=conflict,  # type: ignore[arg-type]
+                init_missing_context=init_missing_context,
+            )
+            wrote = True
+        else:
+            planned_ctx, result = plan_context_pack_import(
+                runtime.project,
+                pack,
+                conflict=conflict,  # type: ignore[arg-type]
+                init_missing_context=init_missing_context,
+            )
+            wrote = False
+    except ContextPackError as exc:
+        if as_json:
+            typer.echo(json.dumps({"error": exc.code, "message": str(exc)}))
+        else:
+            _handle_booktx_error(exc)
+        raise typer.Exit(code=1) from exc
+
+    failed = bool(result.errors or result.conflicts)
+    if as_json:
+        payload = _context_pack_import_payload(pack, result, wrote=wrote)
+        typer.echo(json.dumps(payload, ensure_ascii=False))
+    else:
+        _render_context_pack_import_human(pack, result, runtime, write=wrote)
+    if failed:
+        raise typer.Exit(code=1)
+
+
+def _context_pack_import_payload(
+    pack: SeriesContextPack,
+    result: ContextPackImportResult,
+    *,
+    wrote: bool,
+) -> dict[str, object]:
+    return {
+        "series_id": pack.series_id,
+        "source_language": pack.source_language,
+        "target_language": pack.target_language,
+        "changed": result.changed,
+        "dry_run": not wrote,
+        "summary": {
+            "add": result.added,
+            "update": result.updated,
+            "skip": result.skipped,
+            "conflict": result.conflicts,
+            "error": result.errors,
+            "warning": result.warnings,
+        },
+        "findings": [
+            {
+                "section": f.section,
+                "key": f.key,
+                "action": f.action,
+                "message": f.message,
+            }
+            for f in result.findings
+        ],
+    }
+
+
+def _render_context_pack_import_human(
+    pack: SeriesContextPack,
+    result: ContextPackImportResult,
+    runtime: RuntimeContext,
+    *,
+    write: bool,
+) -> None:
+    console.print(
+        f"Series context pack: {pack.series_id} "
+        f"({pack.source_language} -> {pack.target_language})"
+    )
+    console.print("Write." if write else "Dry run.")
+    console.print("")
+    for finding in result.findings:
+        _render_pack_finding(finding)
+    console.print("")
+    console.print(
+        f"summary: add={result.added} update={result.updated} "
+        f"skip={result.skipped} conflict={result.conflicts} "
+        f"error={result.errors} warning={result.warnings}"
+    )
+    if write and result.changed:
+        console.print(
+            "context updated; inspect with `booktx context status .` "
+            "and run `booktx context mark-ready .` after approval"
+        )
+    elif write:
+        console.print("No files changed.")
+    else:
+        console.print("No files written.")
+
+
+def _render_pack_finding(finding: ContextPackImportFinding) -> None:
+    action = finding.action
+    if action == "warning":
+        console.print(f"[yellow]warning:[/yellow] {finding.message}")
+        return
+    if action in {"conflict", "error"}:
+        console.print(f"[red]{action}[/red] {finding.message}")
+        return
+    console.print(f"{action} {finding.section}: {finding.message}")
 
 
 @context_app.command(name="import-md")

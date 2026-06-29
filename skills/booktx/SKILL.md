@@ -183,6 +183,26 @@ booktx context render . --profile PROFILE --write
 booktx context mark-ready . --profile PROFILE
 ```
 
+Context is profile-local; never symlink or hand-share `context.json` across
+books. For the same series across books, export reusable policy (style, global
+rules, glossary, approved answers) from an approved profile and import it into
+the next book's profile:
+
+```bash
+booktx context export-pack ./book1 --profile PROFILE \
+  --series-id SERIES --output ./series.booktx-context-pack.json
+booktx context import-pack ./book2 --profile PROFILE \
+  --file ./series.booktx-context-pack.json            # dry run
+booktx context import-pack ./book2 --profile PROFILE \
+  --file ./series.booktx-context-pack.json --write     # commit
+```
+
+Import is a dry run by default; `--write` commits. It never touches records,
+tasks, stores, ledgers, identity, or source state. Changed policy clears
+readiness, so re-run `booktx context mark-ready` after approval. A task
+created before a binding glossary import is rejected as stale; create a fresh
+task to use the imported policy.
+
 ## Translation workflow
 
 Request a durable block task:

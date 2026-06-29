@@ -278,4 +278,42 @@ booktx context chapter-note . 0006 \
   --translation-summary "..." \
   --decision "Keep Apt" \
   --open-issue "Check title rendering"
+```
+
+## Series context packs
+
+Context is normally profile-local. Series-wide consistency is achieved by
+importing an explicit context pack, not by sharing profile state. A pack
+carries only reusable policy (style, global rules, glossary entries, approved
+reusable question answers); it never carries records, candidates, tasks,
+todos, stores, ledgers, identity, chapter contexts, or source state.
+
+```bash
+# Export from an approved profile context (dry-run-safe; refuses overwrite
+# without --force; requires ready unless --allow-not-ready).
+booktx context export-pack ./book1 \
+  --profile de_gpt5_5 \
+  --series-id shadows-of-apt \
+  --title "Shadows of the Apt / German policy" \
+  --output ./shadows-of-apt.en-de.booktx-context-pack.json
+
+# Import into another book's profile. Dry run by default; --write commits.
+booktx context import-pack ./book2 \
+  --profile de_gpt5_5 \
+  --file ./shadows-of-apt.en-de.booktx-context-pack.json
+
+booktx context import-pack ./book2 \
+  --profile de_gpt5_5 \
+  --file ./shadows-of-apt.en-de.booktx-context-pack.json \
+  --write
+```
+
+Import never mutates profile config, source state, identity, stores,
+ledgers, or tasks. When policy changes it clears readiness and regenerates
+`context.md`; run `booktx context mark-ready` again after approval. Conflicts
+are reported as findings and can be resolved with `--conflict
+fail|keep-local|replace`. A task created before a binding glossary import is
+rejected by the existing stale-policy guard; create a fresh task to use the
+imported policy. In profile-root isolated mode, pack input and output paths
+must resolve inside the current profile root.
 ````
