@@ -92,7 +92,7 @@ def extract_epub(
 ) -> EpubExtraction:
     """Extract translatable EPUB spans through epub2text structured blocks."""
     _assert_epub2text_chapter_contract()
-    from epub2text import extract_epub_structure  # type: ignore[import-not-found]
+    from epub2text import extract_epub_structure
     from epub2text.structured import ExtractionPolicy  # type: ignore[import-not-found]
 
     try:

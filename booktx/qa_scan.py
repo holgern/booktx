@@ -187,7 +187,7 @@ def qa_scan(
         if ctx is not None:
             glossary_entries = list(ctx.glossary)
 
-    compiled_pattern: re.Pattern | None = None
+    compiled_pattern: re.Pattern[str] | None = None
     if pattern is not None:
         try:
             compiled_pattern = re.compile(pattern, re.IGNORECASE)
@@ -268,7 +268,7 @@ def _collect_record_findings(
     glossary: bool,
     glossary_entries: list[GlossaryEntry],
     target_contains: str | None,
-    compiled_pattern: re.Pattern | None,
+    compiled_pattern: re.Pattern[str] | None,
     pattern: str | None,
     leftover_words: set[str] | None,
 ) -> list[QaScanFinding]:

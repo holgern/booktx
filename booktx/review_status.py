@@ -7,6 +7,8 @@ status consumers are not affected by the optional quality-review feature.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -22,6 +24,8 @@ from booktx.translation_store import active_candidate, review_chain_is_stale
 __all__ = [
     "ReviewPassStatus",
     "ReviewStatusSnapshot",
+    "ReviewGapIndex",
+    "build_review_gap_index",
     "compute_review_snapshot",
 ]
 
@@ -80,9 +84,77 @@ def _needs_review_for_pass(
     Covers both genuinely missing and stale/rejected-only records. Blocked
     records (eligible base unavailable) are excluded.
     """
-    if not _eligible_for_pass(stored, pcfg):
-        return False
-    return not _accepted_review_for_pass(stored, pass_number)
+    return eligible_for_pass(stored, pcfg) and not accepted_review_for_pass(
+        stored, pass_number
+    )
+
+
+# Public aliases of the eligibility / accepted-review predicates. These were
+# previously private (``_eligible_for_pass`` / ``_accepted_review_for_pass``)
+# and re-imported under mangled names from ``booktx.review_todo``. Callers such
+# as the review-todo gap index now use these stable public names.
+eligible_for_pass = _eligible_for_pass
+accepted_review_for_pass = _accepted_review_for_pass
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewGapIndex:
+    """Precomputed per-chapter review-gap counts for a single selection.
+
+    Attributes:
+        missing_by_chapter_pass: ``(chapter_id, pass_number)`` -> number of records
+        in that chapter still needing review for that pass.
+        missing_by_chapter: aggregate missing count per ``chapter_id`` across all
+        active passes.
+    """
+
+    missing_by_chapter_pass: dict[tuple[str, int], int]
+    missing_by_chapter: dict[str, int]
+
+
+def build_review_gap_index(
+    store: TranslationStoreV2,
+    quality_cfg: QualityReviewConfig,
+    *,
+    record_order: list[tuple[str, str]] | None = None,
+    chapter_records: Mapping[str, list[str]] | None = None,
+) -> ReviewGapIndex:
+    """Compute review-gap counts in a single pass over the store.
+
+    Loads eligibility and accepted-review semantics once per record and
+    aggregates per ``(chapter, pass)`` and per chapter. Pass-through uses the
+    same eligibility/accepted predicates as ``compute_review_snapshot`` so the
+    numbers match the snapshot.
+
+    ``chapter_records`` defaults to None; callers that need a per-chapter split
+    should pass the bundle's ``record_ids_by_chapter`` map. ``record_order`` is a
+    ``(record_id, chapter_id)`` sequence in document order used when the chapter
+    map is not available.
+    """
+    pass_cfg_by_number = {p.pass_number: p for p in quality_cfg.passes}
+    by_cp: dict[tuple[str, int], int] = {}
+    by_c: dict[str, int] = {}
+    rid_to_chapter: dict[str, str] = {}
+    if record_order:
+        for rid, chapter in record_order:
+            rid_to_chapter[rid] = chapter
+    if chapter_records:
+        for chapter, rids in chapter_records.items():
+            for rid in rids:
+                rid_to_chapter.setdefault(rid, chapter)
+    for pass_number in quality_cfg.active_passes:
+        pcfg = pass_cfg_by_number.get(pass_number)
+        if pcfg is not None and not pcfg.enabled:
+            continue
+        for rid, stored in store.records.items():
+            if not eligible_for_pass(stored, pcfg):
+                continue
+            if accepted_review_for_pass(stored, pass_number):
+                continue
+            chapter = rid_to_chapter.get(rid, "")
+            by_cp[(chapter, pass_number)] = by_cp.get((chapter, pass_number), 0) + 1
+            by_c[chapter] = by_c.get(chapter, 0) + 1
+    return ReviewGapIndex(missing_by_chapter_pass=by_cp, missing_by_chapter=by_c)
 
 
 class ReviewPassStatus(BaseModel):
@@ -156,10 +228,10 @@ def compute_review_snapshot(
             snapshot.passes.append(status_obj)
             continue
         for stored in store.records.values():
-            if not _eligible_for_pass(stored, pcfg):
+            if not eligible_for_pass(stored, pcfg):
                 continue
             status_obj.eligible_records += 1
-            if _accepted_review_for_pass(stored, pass_number):
+            if accepted_review_for_pass(stored, pass_number):
                 status_obj.reviewed_records += 1
             elif _has_stale_or_rejected_review(stored, pass_number):
                 status_obj.stale_review_records += 1
@@ -169,7 +241,7 @@ def compute_review_snapshot(
                 if (
                     required is not None
                     and required != pass_number
-                    and not _accepted_review_for_pass(stored, required)
+                    and not accepted_review_for_pass(stored, required)
                 ):
                     status_obj.blocked_records += 1
                 else:

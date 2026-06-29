@@ -21,6 +21,7 @@ from booktx.command_hints import (
 from booktx.config import (
     Project,
     _err,
+    load_translation_store,
     review_todo_dir,
     review_todo_json_path,
     review_todo_markdown_path,
@@ -32,7 +33,7 @@ from booktx.models import (
     ReviewTodoChapter,
     ReviewTodoPass,
 )
-from booktx.review_status import compute_review_snapshot
+from booktx.review_status import ReviewGapIndex, build_review_gap_index
 from booktx.versioning import canonical_json_sha256
 
 if TYPE_CHECKING:
@@ -77,6 +78,7 @@ def make_review_todo_id(
 
 
 def select_review_todo_chapters(
+    project: Project,
     bundle: StatusBundle,
     quality_cfg: QualityReviewConfig,
     *,
@@ -90,6 +92,16 @@ def select_review_todo_chapters(
     if chapters < 1:
         raise ValueError("chapters must be >= 1")
 
+    # Load the store and compute the review-gap index once for the whole selection.
+    # Subsequent per-(chapter, pass) lookups are O(1) dict reads.
+
+    store = load_translation_store(project)
+    gap_index = build_review_gap_index(
+        store,
+        quality_cfg,
+        chapter_records=bundle.index.record_ids_by_chapter,
+    )
+
     all_chapters = bundle.index.chapter_summaries
 
     eligible: list[tuple[str, str, int]] = []
@@ -101,10 +113,8 @@ def select_review_todo_chapters(
             )
             if pcfg is not None and not pcfg.enabled:
                 continue
-            # Count records in this chapter that need review for this pass.
-            missing = _count_missing_review(
-                bundle, ch.chapter_id, pass_number, quality_cfg
-            )
+            # O(1) lookup into the precomputed gap index (built once below).
+            missing = _count_missing_review(ch.chapter_id, pass_number, gap_index)
             total_missing += missing
         if total_missing > 0:
             eligible.append((ch.chapter_id, ch.title, total_missing))
@@ -124,49 +134,16 @@ def select_review_todo_chapters(
 
 
 def _count_missing_review(
-    bundle: StatusBundle,
     chapter_id: str,
     pass_number: int,
-    quality_cfg: QualityReviewConfig,
+    gap_index: ReviewGapIndex,
 ) -> int:
-    """Count records in a chapter that need review for a pass."""
-    # Use the review snapshot for fast per-pass counts.
-    record_order: list[tuple[str, str]] = []
-    for cid, rids in bundle.index.record_ids_by_chapter.items():
-        record_order.extend((rid, cid) for rid in rids)
-    from booktx.config import load_translation_store
-
-    store = (
-        load_translation_store(bundle.project) if hasattr(bundle, "project") else None
-    )
-    if store is None:
-        return 0
-    snapshot = compute_review_snapshot(store, quality_cfg, record_order=record_order)
-    for p in snapshot.passes:
-        if p.pass_number == pass_number:
-            # Count records in this chapter that need review.
-            count = 0
-            rids = bundle.index.record_ids_by_chapter.get(chapter_id, [])
-
-            for rid in rids:
-                stored = store.records.get(rid)
-                if stored is None:
-                    continue
-                from booktx.review_status import (
-                    _accepted_review_for_pass as accepted_for_pass,
-                )
-                from booktx.review_status import (
-                    _eligible_for_pass,
-                )
-
-                if not _eligible_for_pass(
-                    stored, quality_cfg.passes_by_number.get(pass_number)
-                ):
-                    continue
-                if not accepted_for_pass(stored, pass_number):
-                    count += 1
-            return count
-    return 0
+    """Look up the missing-review count for a (chapter, pass) in the gap index.
+    return int(gap_index.missing_by_chapter_pass.get((chapter_id, pass_number), 0))
+    The gap index is built once per selection in :func:`select_review_todo_chapters`;
+    this helper is an O(1) lookup so the chapter-selection loop is cheap.
+    """
+    return gap_index.missing_by_chapter_pass.get((chapter_id, pass_number), 0)
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +170,7 @@ def build_review_todo(
         raise ValueError("batch_words must be >= 1")
 
     selected = select_review_todo_chapters(
+        project,
         bundle,
         quality_cfg,
         chapters=chapters,
@@ -520,7 +498,6 @@ def compute_review_todo_status(
     mode: RuntimeMode | None = None,
 ) -> ReviewTodoStatus:
     """Build the live status snapshot for one review todo."""
-    from booktx.config import load_translation_store
 
     store = load_translation_store(project)
     store_records = store.records
@@ -549,10 +526,10 @@ def compute_review_todo_status(
             missing_now = 0
             for pass_number in planned.pending_passes:
                 from booktx.review_status import (
-                    _accepted_review_for_pass as accepted_for_pass,
+                    accepted_review_for_pass as accepted_for_pass,
                 )
                 from booktx.review_status import (
-                    _eligible_for_pass,
+                    eligible_for_pass,
                 )
 
                 pcfg = next(
@@ -564,7 +541,7 @@ def compute_review_todo_status(
                     stored = store_records.get(rid)
                     if stored is None:
                         continue
-                    if not _eligible_for_pass(stored, pcfg):
+                    if not eligible_for_pass(stored, pcfg):
                         continue
                     if not accepted_for_pass(stored, pass_number):
                         missing_now += 1
@@ -620,7 +597,7 @@ def compute_review_todo_status(
 # ---------------------------------------------------------------------------
 
 
-def resume_review_todo(
+def resume_review_todo(  # type: ignore[no-untyped-def]  # Phase 0 baseline: returns a review task/workflow object; see docs/mypy-baseline.md
     project: Project,
     bundle: StatusBundle,
     quality_cfg: QualityReviewConfig,
@@ -675,7 +652,6 @@ def resume_review_todo(
     next_pass: int | None = None
     for pass_number in current.pending_passes_now:
         # Count missing records for this pass+chapter
-        from booktx.config import load_translation_store
 
         store = load_translation_store(project)
         rids = bundle.index.record_ids_by_chapter.get(current.chapter_id, [])
@@ -687,13 +663,13 @@ def resume_review_todo(
             if stored is None:
                 continue
             from booktx.review_status import (
-                _accepted_review_for_pass as accepted_for_pass,
+                accepted_review_for_pass as accepted_for_pass,
             )
             from booktx.review_status import (
-                _eligible_for_pass,
+                eligible_for_pass,
             )
 
-            if not _eligible_for_pass(stored, pcfg):
+            if not eligible_for_pass(stored, pcfg):
                 continue
             if not accepted_for_pass(stored, pass_number):
                 next_pass = pass_number

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 from booktx.models import (
     QualityReviewConfig,
     ReviewPassConfig,
@@ -261,3 +263,164 @@ def test_snapshot_first_missing_none_when_complete():
     snap = compute_review_snapshot(store, cfg, record_order=[("0001-000001", "0001")])
     assert snap.passes[0].first_missing_record is None
     assert snap.first_missing_record is None
+
+
+# ---------------------------------------------------------------------------
+# Public review-gap API (Phase 2).
+#
+# The public aliases ``eligible_for_pass`` / ``accepted_review_for_pass`` and the
+# ``ReviewGapIndex`` / ``build_review_gap_index`` API must be testable
+# independently of ``compute_review_snapshot``.
+# ---------------------------------------------------------------------------
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _make_stored(
+    *,
+    source: str = "Alice ran fast.",
+    has_active_translation: bool = True,
+    reviews: list | None = None,
+    chunk_id: int = 1,
+    part_id: int = 1,
+) -> StoredTranslationRecordV2:
+    from booktx.models import (
+        StoredTranslationRecordV2,
+        TranslationCandidate,
+    )
+
+    versions: list = []
+    if has_active_translation:
+        versions.append(
+            TranslationCandidate(
+                version=1,
+                subversion=1,
+                version_ref="1.1",
+                target=source,
+                status="accepted",
+                created_at="2026-06-22T12:00:00Z",
+                updated_at="2026-06-22T12:00:00Z",
+            )
+        )
+    return StoredTranslationRecordV2(
+        chunk_id=chunk_id,
+        part_id=part_id,
+        source_sha256=_sha(source),
+        source=source,
+        active_version="1.1" if has_active_translation else None,
+        versions=versions,
+        reviews=list(reviews or []),
+    )
+
+
+def _make_accepted_review(target: str = "reviewed") -> TranslationReviewCandidate:
+    from booktx.models import TranslationReviewCandidate
+
+    return TranslationReviewCandidate(
+        pass_number=1,
+        run_number=1,
+        review_ref="R1.1",
+        base_kind="translation",
+        base_ref="1.1",
+        base_target_sha256=_sha("Alice ran fast."),
+        target=target,
+        target_sha256=_sha(target),
+        status="accepted",
+        created_at="2026-06-22T12:00:00Z",
+        updated_at="2026-06-22T12:00:00Z",
+        review_task_id=None,
+        review_note="ok",
+    )
+
+
+def test_eligible_for_pass_accepts_active_translation():
+    from booktx.review_status import eligible_for_pass
+
+    stored = _make_stored()
+    assert eligible_for_pass(stored, None) is True
+    from booktx.models import ReviewPassConfig
+
+    assert (
+        eligible_for_pass(
+            stored, ReviewPassConfig(pass_number=1, base="active_translation")
+        )
+        is True
+    )
+
+
+def test_eligible_for_pass_rejects_missing_translation():
+    from booktx.review_status import eligible_for_pass
+
+    stored = _make_stored(has_active_translation=False)
+    assert eligible_for_pass(stored, None) is False
+
+
+def test_accepted_review_for_pass_finds_accepted_review():
+    from booktx.review_status import accepted_review_for_pass
+
+    stored = _make_stored(reviews=[_make_accepted_review()])
+    assert accepted_review_for_pass(stored, 1) is True
+    assert accepted_review_for_pass(stored, 2) is False
+
+
+def test_build_review_gap_index_counts_missing_per_chapter_pass():
+    from booktx.models import QualityReviewConfig, ReviewPassConfig
+    from booktx.review_status import build_review_gap_index
+    from booktx.translation_store import TranslationStoreV2
+
+    rec1 = _make_stored(source="rec-1", part_id=1)
+    rec2 = _make_stored(source="rec-2", part_id=2)
+    store = TranslationStoreV2(records={"0001-000001": rec1, "0001-000002": rec2})
+    cfg = QualityReviewConfig(
+        enabled=True,
+        active_passes=[1],
+        passes=[ReviewPassConfig(pass_number=1, enforce="warn")],
+    )
+    idx = build_review_gap_index(
+        store,
+        cfg,
+        chapter_records={"ch1": ["0001-000001", "0001-000002"]},
+    )
+    assert idx.missing_by_chapter == {"ch1": 2}
+    assert idx.missing_by_chapter_pass == {("ch1", 1): 2}
+
+
+def test_build_review_gap_index_respects_active_passes():
+    from booktx.models import QualityReviewConfig, ReviewPassConfig
+    from booktx.review_status import build_review_gap_index
+    from booktx.translation_store import TranslationStoreV2
+
+    store = TranslationStoreV2(records={"0001-000001": _make_stored()})
+    cfg = QualityReviewConfig(
+        enabled=True,
+        active_passes=[1, 2],
+        passes=[
+            ReviewPassConfig(pass_number=1, enforce="warn"),
+            ReviewPassConfig(pass_number=2, enforce="warn"),
+        ],
+    )
+    idx = build_review_gap_index(store, cfg, chapter_records={"ch1": ["0001-000001"]})
+    # 0001-000001 needs review for both active passes.
+    assert idx.missing_by_chapter == {"ch1": 2}
+    assert idx.missing_by_chapter_pass == {("ch1", 1): 1, ("ch1", 2): 1}
+
+
+def test_build_review_gap_index_skips_already_accepted_reviews():
+    from booktx.models import QualityReviewConfig, ReviewPassConfig
+    from booktx.review_status import build_review_gap_index
+    from booktx.translation_store import TranslationStoreV2
+
+    store = TranslationStoreV2(
+        records={"0001-000001": _make_stored(reviews=[_make_accepted_review()])}
+    )
+    cfg = QualityReviewConfig(
+        enabled=True,
+        active_passes=[1],
+        passes=[ReviewPassConfig(pass_number=1, enforce="warn")],
+    )
+    idx = build_review_gap_index(store, cfg, chapter_records={"ch1": ["0001-000001"]})
+    # 0001-000001 already has an accepted pass-1 review, so nothing is missing.
+    assert idx.missing_by_chapter == {}
+    assert idx.missing_by_chapter_pass == {}

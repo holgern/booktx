@@ -342,7 +342,7 @@ def _build_epub(
 
         # Post-build policy audit and reconciliation with the upstream report.
         extraction_hrefs = list(
-            epub_template.text2epub_manifest.get("documents", {}).keys()  # type: ignore[union-attr]
+            epub_template.text2epub_manifest.get("documents", {}).keys()
         )
         try:
             audit = audit_epub_output_policy(
@@ -353,9 +353,7 @@ def _build_epub(
                 and upstream_report is not None
                 and getattr(upstream_report, "output_rewrite", None) is not None
             ):
-                upstream_css = list(
-                    upstream_report.output_rewrite.css_injected_entries  # type: ignore[union-attr]
-                )
+                upstream_css = list(upstream_report.output_rewrite.css_injected_entries)
                 reconcile_css_injection(tmp_path, upstream_css_entries=upstream_css)
         except PolicyError as exc:
             raise BuildError(str(exc)) from exc
@@ -381,7 +379,7 @@ def _build_epub(
     )
 
 
-def _policy_report_dict(policy, audit, upstream_report) -> dict[str, object]:
+def _policy_report_dict(policy, audit, upstream_report) -> dict[str, object]:  # type: ignore[no-untyped-def]  # Phase 0 baseline: internal helper, param types span text2epub/booktx boundary objects; see docs/mypy-baseline.md
     """Serialize the resolved policy detail for the build report."""
     serialized_text2epub: dict[str, object] | None = None
     if (

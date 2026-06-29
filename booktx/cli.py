@@ -4867,8 +4867,8 @@ def translate_export_index(  # noqa: C901
     try:
         result = export_editor_indexes(
             proj,
-            kinds=requested,
-            fail_on_warn=fail_on_warn,  # type: ignore[arg-type]
+            kinds=requested,  # type: ignore[arg-type]  # validated against valid_kinds above; mypy cannot narrow set[str] -> set[Literal[...]]
+            fail_on_warn=fail_on_warn,
             write_jsonl=jsonl,
         )
     except EditorIndexError as exc:
@@ -5825,7 +5825,9 @@ def _render_validate_findings(report: ValidationReport) -> None:
         _render_finding(f)
 
 
-def _epub_output_audit_findings(proj) -> tuple[list[Finding], dict[str, object]]:
+def _epub_output_audit_findings(
+    proj: Project,
+) -> tuple[list[Finding], dict[str, object]]:
     """Non-writing audit of the expected EPUB output path.
 
     Returns validation-style findings plus a JSON payload. Errors clearly when
@@ -6347,14 +6349,14 @@ def review_configure(
                     updated if p.pass_number == pass_number else p
                     for p in quality.passes
                 ]
-        cfg.quality_review = quality
-        try:
-            cfg = cfg.model_validate(cfg.model_dump(mode="json"))
-        except ValidationError as exc:
-            _die("invalid quality review configuration: " + str(exc))
-            return
-        write_profile_config(proj.root, cfg.profile, cfg)
-        quality = cfg.quality_review or QualityReviewConfig()
+    cfg.quality_review = quality
+    try:
+        cfg = cfg.model_validate(cfg.model_dump(mode="json"))
+    except ValidationError as exc:
+        _die("invalid quality review configuration: " + str(exc))
+        return
+    write_profile_config(proj.root, cfg)
+    quality = cfg.quality_review or QualityReviewConfig()
 
     console.print("quality review: " + ("enabled" if quality.enabled else "disabled"))
     active = ", ".join(str(p) for p in quality.active_passes) or "none"
@@ -6768,7 +6770,6 @@ def review_revise_record(
     from booktx.translation_store import (
         find_review_candidate,
         review_chain_is_stale,
-        validate_record_pair,
     )
 
     if (target is None) == (not stdin):
@@ -7247,7 +7248,7 @@ def translation_search_cmd(
         else:
             console.print(
                 f"record: {record}"
-                f" chapter={source_view.chapter_id if source_view else '?'}"
+                f" chapter={bundle.index.record_to_chapter.get(record, '?')}"
             )
             console.print(f"source: {source_view.source if source_view else ''}")
             console.print(f"target: {eff.target if eff else ''}")
@@ -7257,6 +7258,13 @@ def translation_search_cmd(
                 )
                 console.print(f"ref: {ref}")
         return
+
+    def _neighbor_target(records: dict[str, Any], rid: str) -> str:
+        stored = records.get(rid)
+        if stored is None:
+            return ""
+        eff = effective_target_candidate(stored)
+        return eff.target if eff is not None else ""
 
     matches: list[dict[str, object]] = []
     for cid in chapters_to_search:
@@ -7299,24 +7307,14 @@ def translation_search_cmd(
                     before_records = [
                         {
                             "id": rid,
-                            "target": (
-                                effective_target_candidate(store_records[rid]).target
-                                if store_records.get(rid)
-                                and effective_target_candidate(store_records[rid])
-                                else ""
-                            ),
+                            "target": _neighbor_target(store_records, rid),
                         }
                         for rid in before_ids
                     ]
                     after_records = [
                         {
                             "id": rid,
-                            "target": (
-                                effective_target_candidate(store_records[rid]).target
-                                if store_records.get(rid)
-                                and effective_target_candidate(store_records[rid])
-                                else ""
-                            ),
+                            "target": _neighbor_target(store_records, rid),
                         }
                         for rid in after_ids
                     ]
@@ -7338,7 +7336,7 @@ def translation_search_cmd(
         console.print(f"found {len(matches)} matches")
         for match in matches:
             rec_id = match.get("id", "")
-            target_text = match.get("target", "")
+            target_text = str(match.get("target", ""))
             disp = f"{rec_id}: {target_text[:100]}"
             if len(disp) < len(target_text):
                 disp += "..."
@@ -7369,7 +7367,7 @@ def epub_inspect_cmd(
     runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
     proj = runtime.project
 
-    output_dir = proj.paths.output_dir
+    output_dir = proj.output_dir
     if output_dir is None or not output_dir.is_dir():
         _die(
             "no EPUB output directory; run `booktx build .` first. "
@@ -7419,7 +7417,7 @@ def epub_grep_cmd(
     runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
     proj = runtime.project
 
-    output_dir = proj.paths.output_dir
+    output_dir = proj.output_dir
     if output_dir is None or not output_dir.is_dir():
         _die(
             "no EPUB output directory; run `booktx build .` first. "
@@ -7461,7 +7459,7 @@ def epub_extract_text_cmd(
     runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
     proj = runtime.project
 
-    output_dir = proj.paths.output_dir
+    output_dir = proj.output_dir
     if output_dir is None or not output_dir.is_dir():
         _die(
             "no EPUB output directory; run `booktx build .` first. "

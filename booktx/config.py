@@ -64,10 +64,13 @@ from typing import Any, Literal
 
 import tomli_w
 
+from booktx.errors import BooktxError, _err
+from booktx.path_ids import safe_artifact_id
+
 try:
     import tomllib  # type: ignore[import-not-found]  # Python 3.11+ stdlib
 except ModuleNotFoundError:  # Python 3.10
-    import tomli as tomllib
+    import tomli as tomllib  # type: ignore[import-not-found]  # Phase 0 baseline: tomli has no type stubs; used only as Python 3.10 fallback for stdlib tomllib
 
 from booktx.epub_manifest import sha256_path
 from booktx.models import (
@@ -90,6 +93,7 @@ from booktx.models import (
 __all__ = [
     "SUPPORTED_SOURCE_SUFFIXES",
     "BooktxError",
+    "_err",
     "Project",
     "detect_format",
     "source_config_path",
@@ -174,16 +178,9 @@ PROFILE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 PROFILE_ROOT_MARKER_FILENAME = ".booktx-profile.json"
 
 
-class BooktxError(Exception):
-    """User-facing error from booktx. Carries a stable ``code`` attribute."""
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-
-
-def _err(code: str, message: str) -> BooktxError:
-    return BooktxError(code, message)
+# ``BooktxError`` / ``_err`` are imported from :mod:`booktx.errors` at the
+# top of this module (see import block) and re-exported via ``__all__`` so
+# existing ``from booktx.config import BooktxError`` keeps working.
 
 
 @dataclass(slots=True)
@@ -1165,13 +1162,12 @@ def translation_task_dir(project: Project) -> Path:
 
 
 def translation_task_path(project: Project, task_id: str) -> Path:
-    return translation_task_dir(project) / f"{task_id}.json"
+    safe_task_id = safe_artifact_id(task_id, kind="task")
+    return translation_task_dir(project) / f"{safe_task_id}.json"
 
 
 def translation_task_source_block_path(project: Project, task_id: str) -> Path:
-    safe_task_id = Path(task_id).name
-    if safe_task_id != task_id or not safe_task_id:
-        raise _err("invalid_task_id", f"Invalid task id for source path: {task_id!r}")
+    safe_task_id = safe_artifact_id(task_id, kind="task")
     return translation_task_dir(project) / f"{safe_task_id}.source.block.txt"
 
 
@@ -1183,16 +1179,12 @@ def translation_ingest_dir(project: Project) -> Path:
 
 
 def translation_ingest_path(project: Project, task_id: str) -> Path:
-    safe_task_id = Path(task_id).name
-    if safe_task_id != task_id or not safe_task_id:
-        raise _err("invalid_task_id", f"Invalid task id for ingest path: {task_id!r}")
+    safe_task_id = safe_artifact_id(task_id, kind="task")
     return translation_ingest_dir(project) / f"{safe_task_id}.json"
 
 
 def translation_ingest_block_path(project: Project, task_id: str) -> Path:
-    safe_task_id = Path(task_id).name
-    if safe_task_id != task_id or not safe_task_id:
-        raise _err("invalid_task_id", f"Invalid task id for ingest path: {task_id!r}")
+    safe_task_id = safe_artifact_id(task_id, kind="task")
     return translation_ingest_dir(project) / f"{safe_task_id}.block.txt"
 
 
@@ -1215,11 +1207,13 @@ def _profile_reviews_dir(root: Path, profile: str) -> Path:
 
 
 def translation_todo_json_path(project: Project, todo_id: str) -> Path:
-    return translation_todo_dir(project) / f"{todo_id}.json"
+    safe_todo_id = safe_artifact_id(todo_id, kind="todo")
+    return translation_todo_dir(project) / f"{safe_todo_id}.json"
 
 
 def translation_todo_markdown_path(project: Project, todo_id: str) -> Path:
-    return translation_todo_dir(project) / f"{todo_id}.md"
+    safe_todo_id = safe_artifact_id(todo_id, kind="todo")
+    return translation_todo_dir(project) / f"{safe_todo_id}.md"
 
 
 def _review_todo_dir(root: Path, profile: str) -> Path:
@@ -1237,11 +1231,13 @@ def review_todo_dir(project: Project) -> Path:
 
 
 def review_todo_json_path(project: Project, review_todo_id: str) -> Path:
-    return review_todo_dir(project) / f"{review_todo_id}.json"
+    safe_id = safe_artifact_id(review_todo_id, kind="review_todo")
+    return review_todo_dir(project) / f"{safe_id}.json"
 
 
 def review_todo_markdown_path(project: Project, review_todo_id: str) -> Path:
-    return review_todo_dir(project) / f"{review_todo_id}.md"
+    safe_id = safe_artifact_id(review_todo_id, kind="review_todo")
+    return review_todo_dir(project) / f"{safe_id}.md"
 
 
 def load_translation_task(project: Project, task_id: str) -> TranslationTask | None:
@@ -1268,23 +1264,17 @@ def translation_review_dir(project: Project) -> Path:
 
 
 def translation_review_task_path(project: Project, review_task_id: str) -> Path:
-    safe = Path(review_task_id).name
-    if safe != review_task_id or not safe:
-        raise _err("invalid_task_id", f"Invalid review task id: {review_task_id!r}")
+    safe = safe_artifact_id(review_task_id, kind="review_task")
     return translation_review_dir(project) / f"{safe}.json"
 
 
 def translation_review_source_block_path(project: Project, review_task_id: str) -> Path:
-    safe = Path(review_task_id).name
-    if safe != review_task_id or not safe:
-        raise _err("invalid_task_id", f"Invalid review task id: {review_task_id!r}")
+    safe = safe_artifact_id(review_task_id, kind="review_task")
     return translation_review_dir(project) / f"{safe}.source.block.txt"
 
 
 def translation_review_ingest_block_path(project: Project, review_task_id: str) -> Path:
-    safe = Path(review_task_id).name
-    if safe != review_task_id or not safe:
-        raise _err("invalid_task_id", f"Invalid review task id: {review_task_id!r}")
+    safe = safe_artifact_id(review_task_id, kind="review_task")
     return translation_review_dir(project) / f"{safe}.block.txt"
 
 

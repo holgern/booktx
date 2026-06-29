@@ -1605,7 +1605,7 @@ def _epub_output_policy_findings(project: Project) -> list[Finding]:
     return findings
 
 
-def _soft_hyphen_findings(project: Project, effective) -> list[Finding]:
+def _soft_hyphen_findings(project: Project, effective) -> list[Finding]:  # type: ignore[no-untyped-def]  # Phase 0 baseline: effective is an EffectiveTranslatedChunks bundle; see docs/mypy-baseline.md
     """Warn once per record whose target text contains a soft hyphen (U+00AD).
 
     Soft hyphens in target text cause unpredictable reader-side breaks. They

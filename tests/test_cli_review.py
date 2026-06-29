@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 from booktx.cli import app
 from booktx.config import (
     load_project,
+    load_translation_store,
     write_profile_config,
     write_translation_store,
     write_translation_version_ledger,
@@ -583,3 +584,244 @@ def test_review_insert_rejects_dropped_inline_tag_for_epub(tmp_path: Path):
     assert "accepted" not in insert_result.output
     store2 = load_translation_store(load_project(proj.root))
     assert all(len(st.reviews) == 0 for st in store2.records.values())
+
+
+# ---------------------------------------------------------------------------
+# review configure: behavioral coverage (Phase 0 defect repair)
+# ---------------------------------------------------------------------------
+
+
+def test_review_configure_enable_persists(tmp_path: Path):
+    """--enable --pass writes the profile config (regression for the
+    wrong-signature write_profile_config 3-arg call at cli.py)."""
+    project_dir = _make_project(tmp_path)
+    res = runner.invoke(
+        app,
+        [
+            "review",
+            "configure",
+            str(project_dir),
+            "--enable",
+            "--pass",
+            "1",
+            "--name",
+            "Flow review",
+            "--mode",
+            "manual",
+            "--enforce",
+            "warn",
+        ],
+    )
+    assert res.exit_code == 0, res.output
+    assert "quality review: enabled" in res.output
+    # Config must be persisted to disk, not just printed.
+    proj = load_project(project_dir)
+    qr = proj.profile_config.quality_review
+    assert qr is not None
+    assert qr.enabled is True
+    assert 1 in qr.active_passes
+    pass_cfg = next(p for p in qr.passes if p.pass_number == 1)
+    assert pass_cfg.name == "Flow review"
+    assert pass_cfg.mode == "manual"
+    assert pass_cfg.enforce == "warn"
+
+
+def test_review_configure_disable_persists(tmp_path: Path):
+    """--disable flips enabled to False AND persists the change."""
+    project_dir = _make_project(tmp_path)
+    enable = runner.invoke(
+        app,
+        ["review", "configure", str(project_dir), "--enable", "--pass", "1"],
+    )
+    assert enable.exit_code == 0, enable.output
+    res = runner.invoke(app, ["review", "configure", str(project_dir), "--disable"])
+    assert res.exit_code == 0, res.output
+    assert "quality review: disabled" in res.output
+    proj = load_project(project_dir)
+    qr = proj.profile_config.quality_review
+    assert qr is not None
+    assert qr.enabled is False
+
+
+def test_review_configure_show_reports_configured(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    runner.invoke(
+        app,
+        ["review", "configure", str(project_dir), "--enable", "--pass", "1"],
+    )
+    res = runner.invoke(app, ["review", "configure", str(project_dir), "--show"])
+    assert res.exit_code == 0, res.output
+    assert "quality review: enabled" in res.output
+    assert "pass 1" in res.output
+
+
+def test_review_configure_show_unconfigured(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    res = runner.invoke(app, ["review", "configure", str(project_dir), "--show"])
+    assert res.exit_code == 0, res.output
+    assert "quality review: not configured" in res.output
+
+
+def test_review_configure_rejects_enable_and_disable(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    res = runner.invoke(
+        app,
+        [
+            "review",
+            "configure",
+            str(project_dir),
+            "--enable",
+            "--disable",
+        ],
+    )
+    assert res.exit_code != 0
+    assert "only one of --enable or --disable" in res.output
+
+
+def test_review_configure_rejects_pass_through_profile(tmp_path: Path):
+    """A pass-through profile cannot configure quality review."""
+    from booktx.pass_through import ensure_pass_through_profile
+
+    project_dir = _make_project(tmp_path)
+    ensure_pass_through_profile(project_dir, "pt", create=True, select=True)
+    res = runner.invoke(
+        app,
+        [
+            "review",
+            "configure",
+            str(project_dir),
+            "--profile",
+            "pt",
+            "--enable",
+        ],
+    )
+    assert res.exit_code != 0
+    assert "pass-through" in res.output
+
+
+# ---------------------------------------------------------------------------
+# review revise-record: behavioral coverage (Phase 0 import-path repair)
+# ---------------------------------------------------------------------------
+
+
+def _setup_accepted_review(tmp_path: Path):
+    """Full setup through review next + insert; returns
+    (project_dir, record_id, base_review_ref)."""
+    project_dir = _setup_store(tmp_path)
+    proj = load_project(project_dir)
+    _enable_quality_review(proj)
+    runner.invoke(app, ["context", "init", str(project_dir), "--non-interactive"])
+    runner.invoke(
+        app,
+        [
+            "context",
+            "mark-ready",
+            str(project_dir),
+            "--force",
+            "--reason",
+            "test",
+        ],
+    )
+    next_result = runner.invoke(
+        app, ["review", "next", str(project_dir), "--pass", "1"]
+    )
+    assert next_result.exit_code == 0, next_result.output
+    review_task_id = [
+        line.split(": ", 1)[1].strip()
+        for line in next_result.output.splitlines()
+        if line.startswith("review task: btr-")
+    ][0]
+    proj2 = load_project(project_dir)
+    import tempfile
+
+    from booktx.config import load_translation_review_task
+
+    task = load_translation_review_task(proj2, review_task_id)
+    assert task is not None and task.records
+    record_id = task.records[0].id
+    block_file = Path(tempfile.mktemp(suffix=".block.txt"))
+    lines = [f"# review_task: {review_task_id}", ""]
+    for rec in task.records:
+        lines.append(f">>> {rec.id}")
+        lines.append(rec.base_target + " revised")
+        lines.append("")
+    block_file.write_text("\n".join(lines), encoding="utf-8")
+    insert_result = runner.invoke(
+        app,
+        [
+            "review",
+            "insert",
+            str(project_dir),
+            "--review-task-id",
+            review_task_id,
+            "--file",
+            str(block_file),
+        ],
+    )
+    assert insert_result.exit_code == 0, insert_result.output
+    store = load_translation_store(load_project(project_dir))
+    stored = store.records[record_id]
+    base_review = stored.active_review
+    assert base_review is not None
+    return project_dir, record_id, base_review
+
+
+def test_review_revise_record_creates_revision(tmp_path: Path):
+    project_dir, record_id, base_review = _setup_accepted_review(tmp_path)
+    res = runner.invoke(
+        app,
+        [
+            "review",
+            "revise-record",
+            str(project_dir),
+            record_id,
+            "--base-review",
+            base_review,
+            "--target",
+            "A carefully revised review target.",
+        ],
+    )
+    assert res.exit_code == 0, res.output
+    assert "revised:" in res.output
+    store = load_translation_store(load_project(project_dir))
+    stored = store.records[record_id]
+    # A new review candidate with a higher run number was appended.
+    assert len(stored.reviews) >= 2
+    assert stored.active_review is not None
+    assert stored.active_review != base_review
+
+
+def test_review_revise_record_rejects_unknown_base(tmp_path: Path):
+    project_dir, record_id, _base_review = _setup_accepted_review(tmp_path)
+    res = runner.invoke(
+        app,
+        [
+            "review",
+            "revise-record",
+            str(project_dir),
+            record_id,
+            "--base-review",
+            "R9.9",
+            "--target",
+            "text",
+        ],
+    )
+    assert res.exit_code != 0
+
+
+def test_review_revise_record_rejects_missing_target_source(tmp_path: Path):
+    project_dir, _record_id, _base_review = _setup_accepted_review(tmp_path)
+    res = runner.invoke(
+        app,
+        [
+            "review",
+            "revise-record",
+            str(project_dir),
+            "99@99",
+            "--base-review",
+            "R1.1",
+            "--target",
+            "text",
+        ],
+    )
+    assert res.exit_code != 0

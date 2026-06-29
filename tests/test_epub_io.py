@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import zipfile
+from pathlib import Path
 
 import pytest
 from ebooklib import epub
 from text2epub.validation import sha256_path
+from typer.testing import CliRunner
 
 from booktx.chunking import spans_to_chunks
+from booktx.cli import app
+from booktx.config import load_project
 from booktx.epub_io import build_epub, extract_epub, read_epub
 from booktx.placeholders import restore
 
@@ -357,3 +361,124 @@ def test_build_identity_preserves_inline_tag_spanning_sentence_boundary(tmp_path
 
     assert "<em>First sentence. Second sentence.</em>" in rebuilt_xhtml
     assert "<em>First sentence.</em> <em>Second sentence.</em>" not in rebuilt_xhtml
+
+
+# ---------------------------------------------------------------------------
+# epub inspect / grep / extract-text: behavioral coverage (Phase 0 defect)
+#
+# These commands previously read proj.paths.output_dir, but Project has no
+# .paths attribute. They crashed with AttributeError on every invocation.
+# ---------------------------------------------------------------------------
+
+_runner = CliRunner()
+
+
+def _epub_output_project(tmp_path: Path) -> Path:
+    """Markdown profile project with a populated EPUB output directory."""
+    src = tmp_path / "book.md"
+    src.write_text("# One\n\nAlice ran fast.\n", encoding="utf-8")
+    project_dir = tmp_path / "book"
+    res = _runner.invoke(
+        app,
+        ["init", str(project_dir), "--target", "de", "--source-file", str(src)],
+    )
+    assert res.exit_code == 0, res.output
+    ext = _runner.invoke(app, ["extract", str(project_dir)])
+    assert ext.exit_code == 0, ext.output
+    proj = load_project(project_dir)
+    assert proj.output_dir is not None
+    proj.output_dir.mkdir(parents=True, exist_ok=True)
+    (proj.output_dir / "chapter_1.xhtml").write_text(
+        '<html xmlns="http://www.w3.org/1999/xhtml">'
+        "<body><p>Alice ran fast.</p></body></html>",
+        encoding="utf-8",
+    )
+    (proj.output_dir / "chapter_2.xhtml").write_text(
+        '<html xmlns="http://www.w3.org/1999/xhtml">'
+        "<body><p>Bob walked slowly.</p></body></html>",
+        encoding="utf-8",
+    )
+    return project_dir
+
+
+def test_epub_inspect_reads_output_dir(tmp_path: Path):
+    project_dir = _epub_output_project(tmp_path)
+    res = _runner.invoke(app, ["epub", "inspect", str(project_dir)])
+    assert res.exit_code == 0, res.output
+    assert "--- chapter_1.xhtml ---" in res.output
+    assert "--- chapter_2.xhtml ---" in res.output
+
+
+def test_epub_inspect_contains_filter(tmp_path: Path):
+    project_dir = _epub_output_project(tmp_path)
+    res = _runner.invoke(
+        app, ["epub", "inspect", str(project_dir), "--contains", "Bob"]
+    )
+    assert res.exit_code == 0, res.output
+    assert "chapter_2.xhtml" in res.output
+    assert "chapter_1.xhtml" not in res.output
+
+
+def test_epub_inspect_chapter_filter(tmp_path: Path):
+    project_dir = _epub_output_project(tmp_path)
+    res = _runner.invoke(app, ["epub", "inspect", str(project_dir), "--chapter", "1"])
+    assert res.exit_code == 0, res.output
+    assert "chapter_1.xhtml" in res.output
+    assert "chapter_2.xhtml" not in res.output
+
+
+def test_epub_grep_finds_pattern(tmp_path: Path):
+    project_dir = _epub_output_project(tmp_path)
+    res = _runner.invoke(app, ["epub", "grep", str(project_dir), "Alice"])
+    assert res.exit_code == 0, res.output
+    assert "chapter_1.xhtml" in res.output
+    assert "Alice ran fast" in res.output
+    # Sibling chapter without the pattern is not falsely reported.
+    assert "Bob" not in res.output
+
+
+def test_epub_extract_text(tmp_path: Path):
+    project_dir = _epub_output_project(tmp_path)
+    res = _runner.invoke(app, ["epub", "extract-text", str(project_dir)])
+    assert res.exit_code == 0, res.output
+    assert "Alice ran fast." in res.output
+    assert "Bob walked slowly." in res.output
+
+
+def test_epub_inspect_requires_build(tmp_path: Path):
+    """Failure path: no output directory yet -> clear error."""
+    src = tmp_path / "book.md"
+    src.write_text("# One\n\nAlice ran fast.\n", encoding="utf-8")
+    project_dir = tmp_path / "book"
+    _runner.invoke(
+        app,
+        ["init", str(project_dir), "--target", "de", "--source-file", str(src)],
+    )
+    _runner.invoke(app, ["extract", str(project_dir)])
+    proj = load_project(project_dir)
+    assert proj.output_dir is not None
+    if proj.output_dir.exists():
+        # Force the "no output dir" branch: extract created an empty dir.
+        import shutil
+
+        shutil.rmtree(proj.output_dir)
+    res = _runner.invoke(app, ["epub", "inspect", str(project_dir)])
+    assert res.exit_code != 0
+    assert "no EPUB output directory" in res.output
+
+
+def test_epub_grep_no_files(tmp_path: Path):
+    src = tmp_path / "book.md"
+    src.write_text("# One\n\nAlice ran fast.\n", encoding="utf-8")
+    project_dir = tmp_path / "book"
+    _runner.invoke(
+        app,
+        ["init", str(project_dir), "--target", "de", "--source-file", str(src)],
+    )
+    _runner.invoke(app, ["extract", str(project_dir)])
+    proj = load_project(project_dir)
+    assert proj.output_dir is not None
+    proj.output_dir.mkdir(parents=True, exist_ok=True)
+    res = _runner.invoke(app, ["epub", "grep", str(project_dir), "anything"])
+    assert res.exit_code != 0
+    assert "no XHTML files" in res.output

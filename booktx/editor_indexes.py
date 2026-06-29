@@ -645,10 +645,11 @@ def export_editor_indexes(
     return result
 
 
-def _write_jsonl_index(path: Path, records: list[Any]) -> None:
-    """Write a list of model records as one JSON object per line."""
+def _write_jsonl_index(path: Path, records: list[Any] | Mapping[str, Any]) -> None:
+    """Write model records (a list or mapping's values) as one JSON object per line."""
+    record_iter = records.values() if isinstance(records, Mapping) else records
     lines: list[str] = []
-    for rec in records:
+    for rec in record_iter:
         if hasattr(rec, "model_dump"):
             lines.append(json.dumps(rec.model_dump(mode="json"), ensure_ascii=False))
         elif hasattr(rec, "as_dict"):

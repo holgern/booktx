@@ -701,3 +701,182 @@ def test_check_epub_output_rejects_markdown_project(tmp_path: Path) -> None:
     payload = json.loads(res.output)
     rules = [f["rule"] for f in payload["findings"]]
     assert "not_an_epub_project" in rules
+
+
+# ---------------------------------------------------------------------------
+# Command-tree snapshot (Phase 0): pin the full Typer command surface so
+# accidental removal/rename of a command (or the translate/translation alias)
+# fails loudly. Uses live Typer/Click introspection, not grep.
+# ---------------------------------------------------------------------------
+
+
+def _command_tree() -> tuple[set[str], dict[str, set[str]]]:
+    import click
+    import typer
+
+    group = typer.main.get_command(app)
+    assert isinstance(group, click.Group)
+    top = set(group.commands.keys())
+    sub: dict[str, set[str]] = {}
+    for name in sorted(top):
+        cmd = group.commands[name]
+        if isinstance(cmd, click.Group):
+            sub[name] = set(cmd.commands.keys())
+    return top, sub
+
+
+def test_command_tree_top_level_snapshot():
+    top, _ = _command_tree()
+    expected = {
+        "actor",
+        "build",
+        "chapters",
+        "check",
+        "context",
+        "doctor",
+        "epub",
+        "extract",
+        "harness",
+        "identity",
+        "init",
+        "inspect",
+        "mode",
+        "model",
+        "next",
+        "next-chapter",
+        "pass-through",
+        "profile",
+        "qa-scan",
+        "review",
+        "source",
+        "status",
+        "translate",
+        "translation",
+        "validate",
+        "version",
+        "whoami",
+    }
+    assert top == expected, (
+        f"top-level command set changed.\n"
+        f"  missing: {sorted(expected - top)}\n"
+        f"  added:   {sorted(top - expected)}"
+    )
+
+
+def test_translation_alias_matches_translate():
+    _, sub = _command_tree()
+    assert "translate" in sub and "translation" in sub
+    assert sub["translate"] == sub["translation"], (
+        "translation alias group diverged from translate"
+    )
+
+
+def test_command_tree_group_snapshots():
+    _, sub = _command_tree()
+    expected = {
+        "actor": {"clear", "set", "whoami"},
+        "harness": {"clear", "set", "whoami"},
+        "model": {"clear", "set", "whoami"},
+        "identity": {"whoami"},
+        "doctor": {"isolation"},
+        "epub": {"extract-text", "grep", "inspect"},
+        "review": {
+            "activate",
+            "configure",
+            "deactivate",
+            "insert",
+            "next",
+            "revise-record",
+            "status",
+            "todo-next",
+            "todo-resume",
+            "todo-status",
+        },
+        "source": {"chapter", "record", "status"},
+        "context": {
+            "add-question",
+            "add-term",
+            "answer",
+            "approve",
+            "audit-term",
+            "chapter-note",
+            "export-pack",
+            "import-md",
+            "import-pack",
+            "init",
+            "mandate-term",
+            "mark-ready",
+            "questionnaire",
+            "questions",
+            "recommend",
+            "remove-term",
+            "render",
+            "reset-term",
+            "status",
+        },
+        "profile": {
+            "compare",
+            "create",
+            "create-pass-through",
+            "list",
+            "migrate-current",
+            "select",
+            "show",
+        },
+        "version": {
+            "current",
+            "fork-context",
+            "list",
+            "select",
+            "set-label",
+            "show",
+        },
+        "translate": {
+            "activate",
+            "audit-inline",
+            "compare",
+            "export",
+            "export-index",
+            "get-record",
+            "import-legacy",
+            "insert",
+            "list",
+            "migrate-inline-xhtml",
+            "migrate-store",
+            "next",
+            "review",
+            "revise-block",
+            "revise-record",
+            "search",
+            "set-record",
+            "task-status",
+            "todo-next",
+            "todo-resume",
+            "todo-status",
+        },
+    }
+    for group_name, cmds in expected.items():
+        assert group_name in sub, f"group {group_name!r} disappeared"
+        assert sub[group_name] == cmds, (
+            f"group {group_name!r} changed.\n"
+            f"  missing: {sorted(cmds - sub[group_name])}\n"
+            f"  added:   {sorted(sub[group_name] - cmds)}"
+        )
+
+
+def test_fixed_commands_present_in_tree():
+    """The Phase 0 defect-repair commands must all remain registered."""
+    top, sub = _command_tree()
+    assert {"review", "translate", "epub"} <= top
+    assert {"configure", "revise-record", "todo-next"} <= sub["review"]
+    assert {"search", "revise-record"} <= sub["translate"]
+    assert {"inspect", "grep", "extract-text"} <= sub["epub"]
+
+
+def test_cli_help_runs_for_each_group():
+    """`<group> --help` exits 0 for every top-level group (smoke)."""
+    top, sub = _command_tree()
+    groups = [name for name in top if name in sub]
+    for name in groups:
+        res = runner.invoke(app, [name, "--help"])
+        assert res.exit_code == 0, f"`{name} --help` failed: {res.output}"

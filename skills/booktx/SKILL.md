@@ -5,7 +5,7 @@ description: Use this skill when working in a booktx project or when the user as
 
 # booktx
 
-Context answers are user policy, not agent policy. Treat all agent-proposed answers as drafts until the user approves them. Skill
+Context answers are user policy, not agent policy. Treat all agent-proposed answers as drafts until the user approves them.
 
 ## Purpose
 
@@ -66,8 +66,6 @@ booktx build .
 
 `profile list` in profile-root mode shows only the current profile to avoid dead-ending the user; it never prints sibling profile names, absolute paths, or `../`. Cross-profile commands (`profile compare`, `profile select`, `profile create`, `profile migrate-current`) remain blocked in isolated mode.
 
-````
-
 The todo commands (`todo-next`, `todo-status`, `todo-resume`) are runtime-aware: in
 profile-root mode they omit `--profile`, use profile-local paths (`todos/`,
 `ingest/`, `tasks/`, `context.md`), and never print `translations/`, absolute
@@ -83,7 +81,7 @@ Run:
 ```bash
 booktx status .
 booktx profile list .
-````
+```
 
 Then determine the target profile.
 
@@ -130,9 +128,6 @@ navigation document can make the map end early (for example at `TEN` while
 the TOC lists `ONE` through `TWENTY-SIX`), which silently skips chapters.
 `booktx extract` already writes the chapter map and audit and warns on
 findings; `booktx status` recomputes the audit and shows it.
-visible contents page. A truncated/preview EPUB or a partial navigation
-document can make the map end early (for example at `TEN` while the TOC lists
-`ONE` through `TWENTY-SIX`), which silently skips chapters.
 
 ```bash
 booktx chapters . --audit
@@ -145,9 +140,6 @@ chapter/task/todo selection until resolved), or
 chapters from missing TOC targets; re-extract from a complete source instead.
 Existing projects must re-run `booktx extract` to gain upstream block
 annotations.
-`epub_toc_href_extracted_but_unmapped`, or `epub_toc_href_missing_from_extracted_spans`.
-Do not synthesize empty chapters from missing TOC targets; re-extract from a
-complete source instead.
 
 ## Context gate
 

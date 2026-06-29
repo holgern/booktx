@@ -1961,3 +1961,165 @@ def test_translate_revise_record_rejects_missing_final_quote(tmp_path: Path):
         if v["version_ref"] == active_after
     ]
     assert len(active_versions) == 1 and active_versions[0]["target"].endswith("“")
+
+
+# ---------------------------------------------------------------------------
+# translate search: behavioral coverage (Phase 0 defect repair)
+#
+# The --record non-jsonl branch previously crashed with
+# AttributeError: 'SourceRecordView' has no attribute 'chapter_id'.
+# ---------------------------------------------------------------------------
+
+
+def _write_one_record_v2_store(project_dir: Path) -> str:
+    """Write a v2 store with one accepted translation for the first record.
+
+    Returns the record id."""
+    from booktx.config import (
+        write_translation_store,
+        write_translation_version_ledger,
+    )
+    from booktx.models import (
+        StoredTranslationRecordV2,
+        TranslationCandidate,
+        TranslationStoreV2,
+        TranslationSubversionLedgerEntry,
+        TranslationTrackLedgerEntry,
+        TranslationVersionLedger,
+    )
+    from booktx.progress import source_record_sha256
+
+    proj = _proj(project_dir)
+    chunk = json.loads(sorted(proj.chunks_dir.glob("*.json"))[0].read_text("utf-8"))
+    rec = chunk["records"][0]
+    target = rec["source"] + " [de]"
+    store = TranslationStoreV2(
+        records={
+            rec["id"]: StoredTranslationRecordV2(
+                chunk_id=1,
+                part_id=1,
+                source_sha256=source_record_sha256(rec["source"]),
+                source=rec["source"],
+                active_version="1.1",
+                versions=[
+                    TranslationCandidate(
+                        version=1,
+                        subversion=1,
+                        version_ref="1.1",
+                        target=target,
+                        status="accepted",
+                        created_at="2026-06-22T12:00:00Z",
+                        updated_at="2026-06-22T12:00:00Z",
+                    )
+                ],
+            )
+        }
+    )
+    write_translation_store(proj, store)
+    write_translation_version_ledger(
+        proj,
+        TranslationVersionLedger(
+            active_version="1.1",
+            tracks={
+                "1": TranslationTrackLedgerEntry(
+                    version=1,
+                    actor="user:test",
+                    harness="pi",
+                    model="human",
+                    created_at="2026-06-22T12:00:00Z",
+                    updated_at="2026-06-22T12:00:00Z",
+                    subversions={
+                        "1": TranslationSubversionLedgerEntry(
+                            version=1,
+                            subversion=1,
+                            version_ref="1.1",
+                            context_sha256="a" * 64,
+                            created_at="2026-06-22T12:00:00Z",
+                            updated_at="2026-06-22T12:00:00Z",
+                        )
+                    },
+                )
+            },
+        ),
+    )
+    return rec["id"]
+
+
+def test_translate_search_record_human_mode(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    record_id = _write_one_record_v2_store(project_dir)
+    res = runner.invoke(
+        app, ["translate", "search", str(project_dir), "--record", record_id]
+    )
+    assert res.exit_code == 0, res.output
+    # No crash; chapter is printed from record_to_chapter, not source_view.
+    assert "record:" in res.output
+    assert "chapter=" in res.output
+    assert "source:" in res.output
+    assert "target:" in res.output
+    assert "ref:" in res.output
+
+
+def test_translate_search_record_jsonl(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    record_id = _write_one_record_v2_store(project_dir)
+    res = runner.invoke(
+        app,
+        [
+            "translate",
+            "search",
+            str(project_dir),
+            "--record",
+            record_id,
+            "--jsonl",
+        ],
+    )
+    assert res.exit_code == 0, res.output
+    payload = json.loads(res.output)
+    assert payload["id"] == record_id
+    assert payload["target"].endswith("[de]")
+    assert payload["effective_ref"]
+
+
+def test_translate_search_target_match(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    _write_one_record_v2_store(project_dir)
+    res = runner.invoke(
+        app,
+        ["translate", "search", str(project_dir), "--target", "[de]"],
+    )
+    assert res.exit_code == 0, res.output
+    assert "found" in res.output
+    assert "[de]" in res.output
+
+
+def test_translate_search_source_match(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    _write_one_record_v2_store(project_dir)
+    res = runner.invoke(
+        app,
+        ["translate", "search", str(project_dir), "--source", "First"],
+    )
+    assert res.exit_code == 0, res.output
+    assert "found" in res.output
+
+
+def test_translate_search_no_match(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    _write_one_record_v2_store(project_dir)
+    res = runner.invoke(
+        app,
+        ["translate", "search", str(project_dir), "--target", "zzz-nope"],
+    )
+    assert res.exit_code == 0, res.output
+    assert "found 0 matches" in res.output
+
+
+def test_translate_search_record_rejects_unknown(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    res = runner.invoke(
+        app,
+        ["translate", "search", str(project_dir), "--record", "9999-999999"],
+    )
+    assert res.exit_code != 0
+    assert "not found" in res.output

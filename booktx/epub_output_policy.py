@@ -348,7 +348,7 @@ def scan_css_conflicts(
 
 def _scan_one(name: str, text: str) -> list[CssConflict]:
     found: list[CssConflict] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for pattern in _CONFLICT_PATTERNS:
         for match in pattern.finditer(text):
             declaration = " ".join(match.group(0).split())
@@ -403,7 +403,7 @@ def _read_all(zf: ZipFile) -> list[tuple[str, str]]:
 # --------------------------------------------------------------------------- #
 
 
-def to_text2epub_output_rewrite(policy: EpubOutputPolicy):
+def to_text2epub_output_rewrite(policy: EpubOutputPolicy):  # type: ignore[no-untyped-def]  # Phase 0 baseline: return type is a lazily-imported text2epub OutputRewriteOptions; see docs/mypy-baseline.md
     """Map a resolved policy to a text2epub ``OutputRewriteOptions`` or None.
 
     Returns ``None`` for a fully preserving policy so text2epub retains its

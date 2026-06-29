@@ -22,8 +22,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from bs4 import BeautifulSoup, NavigableString, Tag  # type: ignore[import-untyped]
-from bs4.formatter import XMLFormatter  # type: ignore[import-untyped]
+from bs4 import (  # type: ignore[attr-defined]  # Phase 0: bs4 stubs don't re-export NavigableString explicitly
+    BeautifulSoup,
+    NavigableString,
+    Tag,
+)
+from bs4.formatter import XMLFormatter
 
 from booktx.chunking import ProseSpan
 from booktx.models import Placeholder
@@ -93,7 +97,7 @@ def _is_inline(tag: Tag) -> bool:
 _SPANTX_RE = SPANTX_RE  # backward-compatible alias
 
 
-class _RawTextFormatter(XMLFormatter):  # type: ignore[misc]
+class _RawTextFormatter(XMLFormatter):
     """Don't HTML-escape placeholder underscores or quotes we just wrote."""
 
     def __init__(self) -> None:

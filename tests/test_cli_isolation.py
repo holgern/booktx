@@ -503,3 +503,73 @@ def test_todo_status_from_profile_root_uses_local_next_command(
     assert "translations/" not in status.output
     assert str(project_dir) not in status.output
     assert "../" not in status.output
+
+
+# ---------------------------------------------------------------------------
+# Phase 0 isolation: commands fixed/tested in Phase 0 must stay redacted when
+# invoked from profile-root mode. Output must never include the parent project
+# path, an absolute path, a sibling profile name, or "../".
+# ---------------------------------------------------------------------------
+
+
+def _assert_no_leak(res, project_dir, sibling="fr_default"):
+    assert res.exit_code == 0, res.output
+    assert "../" not in res.output
+    assert str(project_dir) not in res.output
+    assert sibling not in res.output
+
+
+def test_review_configure_show_isolated_from_profile_root(monkeypatch, tmp_path: Path):
+    project_dir, profile_root = _make_project(tmp_path)
+    # Enable quality review for the active (de_default) profile.
+    enable = runner.invoke(
+        app,
+        ["review", "configure", str(project_dir), "--enable", "--pass", "1"],
+    )
+    assert enable.exit_code == 0, enable.output
+    monkeypatch.chdir(profile_root)
+    res = runner.invoke(app, ["review", "configure", ".", "--show"])
+    _assert_no_leak(res, project_dir)
+
+
+def test_review_status_isolated_from_profile_root(monkeypatch, tmp_path: Path):
+    project_dir, profile_root = _make_project(tmp_path)
+    enable = runner.invoke(
+        app,
+        ["review", "configure", str(project_dir), "--enable", "--pass", "1"],
+    )
+    assert enable.exit_code == 0, enable.output
+    monkeypatch.chdir(profile_root)
+    res = runner.invoke(app, ["review", "status", "."])
+    _assert_no_leak(res, project_dir)
+
+
+def test_translate_search_isolated_from_profile_root(monkeypatch, tmp_path: Path):
+    project_dir, profile_root = _make_project(tmp_path)
+    monkeypatch.chdir(profile_root)
+    # search returns 0 with "found N matches"; output must stay redacted.
+    res = runner.invoke(app, ["translate", "search", ".", "--source", "First"])
+    _assert_no_leak(res, project_dir)
+
+
+def test_epub_inspect_grep_extract_isolated_from_profile_root(
+    monkeypatch, tmp_path: Path
+):
+    from booktx.config import load_project
+
+    project_dir, profile_root = _make_project(tmp_path)
+    # Populate the profile-local output dir with xhtml.
+    proj = load_project(project_dir)
+    assert proj.output_dir is not None
+    proj.output_dir.mkdir(parents=True, exist_ok=True)
+    (proj.output_dir / "chapter_1.xhtml").write_text(
+        "<html><body><p>Alice ran fast.</p></body></html>", encoding="utf-8"
+    )
+    monkeypatch.chdir(profile_root)
+    for args in (
+        ["epub", "inspect", "."],
+        ["epub", "grep", ".", "Alice"],
+        ["epub", "extract-text", "."],
+    ):
+        res = runner.invoke(app, args)
+        _assert_no_leak(res, project_dir)

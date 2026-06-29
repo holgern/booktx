@@ -1,7 +1,7 @@
 [![PyPI - Version](https://img.shields.io/pypi/v/booktx)](https://pypi.org/project/booktx/)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/booktx)
 ![PyPI - Downloads](https://img.shields.io/pypi/dm/booktx)
-[![codecov](https://codecov.io/gh/holgern/booktx/graph/badge.svg?token=EFO4GQF52W)](https://codecov.io/gh/holgern/booktx)
+[![codecov](https://codecov.io/gh/buchwandler/booktx/graph/badge.svg?token=EFO4GQF52W)](https://codecov.io/gh/buchwandler/booktx)
 
 # booktx
 

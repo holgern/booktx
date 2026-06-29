@@ -293,7 +293,7 @@ def review_todo_resume_command(
 # ---------------------------------------------------------------------------
 
 
-GLOSSARY_WORKFLOW_RULES: list[str] = [
+GLOSSARY_WORKFLOW_RULES: list[tuple[int, str]] = [
     (
         1,
         "For user terminology decisions such as \u201calways translate X as Y\u201d, "

@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import re
 from html import unescape
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import unquote, urljoin, urlsplit
 
@@ -371,7 +372,7 @@ def toc_document_start_boundaries(
 # --- audit ------------------------------------------------------------------
 
 
-def _load_template(project: Project):
+def _load_template(project: Project):  # type: ignore[no-untyped-def]  # Phase 0 baseline: returns EpubTemplateData|None from a lazy manifest loader; see docs/mypy-baseline.md
     from booktx.config import load_manifest
     from booktx.epub_manifest import load_epub_template_from_manifest
 
@@ -384,7 +385,7 @@ def _load_template(project: Project):
         return None
 
 
-def _collect_toc_entries(project: Project, span_refs: list[EpubSpanRef]):
+def _collect_toc_entries(project: Project, span_refs: list[EpubSpanRef]):  # type: ignore[no-untyped-def]  # Phase 0 baseline: returns list[EpubTocEntry]; see docs/mypy-baseline.md
     """Return ordered, deduplicated TOC entries with optional record mapping.
 
     Each visible-TOC link is resolved relative to the document that contains it
@@ -463,7 +464,7 @@ def _missing_numbered_titles(
     return missing
 
 
-def audit_epub_chapter_map(project: Project, *, chapter_map=None) -> EpubTocAuditResult:
+def audit_epub_chapter_map(project: Project, *, chapter_map=None) -> EpubTocAuditResult:  # type: ignore[no-untyped-def]  # Phase 0 baseline: chapter_map is ChapterMap|None (lazy import); see docs/mypy-baseline.md
     """Audit the visible EPUB TOC against extracted spans and the chapter map.
 
     ``chapter_map`` defaults to the on-disk chapter map. Pass a freshly detected
@@ -511,12 +512,13 @@ def audit_epub_chapter_map(project: Project, *, chapter_map=None) -> EpubTocAudi
     missing_titles = _missing_numbered_titles(toc_entries, mapped_ordinals)
 
     heading_ordinals = {
-        chapter_ordinal(span_ref.source_text)
+        o
         for span_ref in span_refs
         if getattr(span_ref, "tag_name", "") in _HEADING_TAGS
         and span_ref.source_text.strip()
+        for o in (chapter_ordinal(span_ref.source_text),)
+        if o is not None
     }
-    heading_ordinals = {o for o in heading_ordinals if o is not None}
 
     findings: list[EpubTocAuditFinding] = []
 
@@ -574,9 +576,12 @@ def audit_epub_chapter_map(project: Project, *, chapter_map=None) -> EpubTocAudi
             )
 
     nav_ordinals = {
-        chapter_ordinal(entry.title) for entry in navigation_refs if entry.title.strip()
+        o
+        for entry in navigation_refs
+        if entry.title.strip()
+        for o in (chapter_ordinal(entry.title),)
+        if o is not None
     }
-    nav_ordinals = {o for o in nav_ordinals if o is not None}
     signal_ordinals = heading_ordinals | numbered_toc_ordinals
     if nav_ordinals and signal_ordinals and nav_ordinals < signal_ordinals:
         extra = sorted(signal_ordinals - nav_ordinals)
@@ -623,7 +628,7 @@ def audit_epub_chapter_map(project: Project, *, chapter_map=None) -> EpubTocAudi
     )
 
 
-def write_audit_report(project: Project, result: EpubTocAuditResult):
+def write_audit_report(project: Project, result: EpubTocAuditResult) -> Path:
     """Persist the audit result to ``.booktx/reports/chapter-audit.json``."""
     from booktx.io_utils import write_json_text_atomic
 

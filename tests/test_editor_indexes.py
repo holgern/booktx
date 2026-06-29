@@ -516,3 +516,40 @@ def test_kind_rejects_invalid_value(project):
     res = _export(project_dir, "--kind", "bogus")
     assert res.exit_code != 0
     assert "invalid --kind" in res.output
+
+
+# ---------------------------------------------------------------------------
+# Phase 0 regression: _write_jsonl_index previously iterated a dict (yielding
+# keys/strings) instead of its values, producing EMPTY jsonl alias files.
+# ---------------------------------------------------------------------------
+
+
+def test_14_jsonl_alias_files_are_nonempty(project):
+    project_dir, _, _ = project
+    proj = load_project(project_dir)
+    res = _export(project_dir, "--jsonl", "--json")
+    assert res.exit_code == 0, res.output
+    from booktx.config import (
+        translation_source_index_path,
+        translation_source_target_index_path,
+        translation_target_index_path,
+    )
+
+    paths = {
+        "source": translation_source_index_path(proj).with_suffix(".jsonl"),
+        "target": translation_target_index_path(proj).with_suffix(".jsonl"),
+        "source-target": translation_source_target_index_path(proj).with_suffix(
+            ".jsonl"
+        ),
+    }
+    for kind, jsonl_path in paths.items():
+        assert jsonl_path.is_file(), f"missing {kind} jsonl alias"
+        lines = [ln for ln in jsonl_path.read_text("utf-8").splitlines() if ln.strip()]
+        # Before the fix this was empty because dict keys (strings) have no
+        # model_dump/as_dict and are not dicts.
+        assert lines, f"{kind} jsonl alias is empty"
+        first = json.loads(lines[0])
+        assert isinstance(first, dict)
+        # Non-empty record: before the Phase 0 fix these files contained no
+        # JSON lines at all (dict iteration yielded bare key strings).
+        assert len(first) > 1, f"{kind} jsonl record looks empty"
