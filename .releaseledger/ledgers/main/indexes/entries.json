@@ -30,6 +30,20 @@
   {
     "audience": null,
     "breaking": false,
+    "entry_id": "entry-0001",
+    "internal": false,
+    "kind": "added",
+    "order": 1,
+    "record_revision": 1,
+    "release_version": "v0.3.1",
+    "scopes": [],
+    "source_refs": ["git:4d8b71178f46cda30740750aae25752f0c7b04d8"],
+    "status": "accepted",
+    "summary": "Added agents write, status, and clean commands to generate per-harness AGENTS.md files and remove only booktx-generated files"
+  },
+  {
+    "audience": null,
+    "breaking": false,
     "entry_id": "entry-0002",
     "internal": false,
     "kind": "added",
@@ -54,6 +68,20 @@
     "source_refs": ["git:0d0b183fdfe0b69452b9a0efaa6b39f2d69670c4"],
     "status": "accepted",
     "summary": "Added isolated profile-root mode with independent state management per workspace"
+  },
+  {
+    "audience": null,
+    "breaking": false,
+    "entry_id": "entry-0002",
+    "internal": false,
+    "kind": "added",
+    "order": 2,
+    "record_revision": 1,
+    "release_version": "v0.3.1",
+    "scopes": [],
+    "source_refs": ["git:8c8202d207e1c931705b9d8e93ac1b0e7d884fc3"],
+    "status": "accepted",
+    "summary": "Added context export-pack and import-pack commands for sharing series-wide policy (style, global rules, glossary, approved answers) across book profiles"
   },
   {
     "audience": null,
@@ -89,6 +117,20 @@
   {
     "audience": null,
     "breaking": false,
+    "entry_id": "entry-0003",
+    "internal": false,
+    "kind": "added",
+    "order": 3,
+    "record_revision": 1,
+    "release_version": "v0.3.1",
+    "scopes": [],
+    "source_refs": ["git:37361b7ca6b81ba568432a269bc635cf4e5361bd"],
+    "status": "accepted",
+    "summary": "Added EPUB output target-language metadata and a deterministic best-effort hyphenation stylesheet configurable via the [epub_output] hyphenation policy"
+  },
+  {
+    "audience": null,
+    "breaking": false,
     "entry_id": "entry-0004",
     "internal": false,
     "kind": "added",
@@ -113,6 +155,23 @@
     "source_refs": ["git:cd6842c20ba3ad266db12c41d80b5646d57b0d52"],
     "status": "accepted",
     "summary": "Improved inline XHTML fragment handling with EPUB validation"
+  },
+  {
+    "audience": null,
+    "breaking": false,
+    "entry_id": "entry-0004",
+    "internal": false,
+    "kind": "added",
+    "order": 4,
+    "record_revision": 1,
+    "release_version": "v0.3.1",
+    "scopes": [],
+    "source_refs": [
+      "git:9676d56d78c0a5aba33a19781984f015eb18a2a8",
+      "git:872394a1dfa66d84f88c2e0cc650044d42af4481"
+    ],
+    "status": "accepted",
+    "summary": "Added booktx chapters detection with --audit comparing the EPUB table of contents against extracted chapter spans and the chapter map"
   },
   {
     "audience": null,
@@ -145,6 +204,24 @@
   {
     "audience": null,
     "breaking": false,
+    "entry_id": "entry-0005",
+    "internal": false,
+    "kind": "added",
+    "order": 5,
+    "record_revision": 2,
+    "release_version": "v0.3.1",
+    "scopes": [],
+    "source_refs": [
+      "git:2d59f78d4815241cd688374a9e726e232b26948b",
+      "git:ce452bec9df6ee5b929403a204294e53f4a0f2e5",
+      "git:24636a15295c1283ce87089d43605007a600c858"
+    ],
+    "status": "accepted",
+    "summary": "Added review configure, rerun, deactivate, and revise-record commands plus bounded multi-pass review tasks, a qa-scan command, and EPUB output inspection"
+  },
+  {
+    "audience": null,
+    "breaking": false,
     "entry_id": "entry-0006",
     "internal": false,
     "kind": "added",
@@ -169,6 +246,23 @@
     "source_refs": ["git:27e3669cf60da2c6e12ca5d04cdd4ee9ccfb9c4d"],
     "status": "accepted",
     "summary": "Fixed unit test coverage across acceptance, CLI, and translation modules"
+  },
+  {
+    "audience": null,
+    "breaking": false,
+    "entry_id": "entry-0006",
+    "internal": false,
+    "kind": "added",
+    "order": 6,
+    "record_revision": 1,
+    "release_version": "v0.3.1",
+    "scopes": [],
+    "source_refs": [
+      "git:3788911dd7ef68f212fbee770bce5d34b810cac6",
+      "git:30099b847267fcc5abb8a2f09f20c391e6eec027"
+    ],
+    "status": "accepted",
+    "summary": "Added context mandate-term and audit-term with active-only validation by default and improved glossary matching for terminology correction"
   },
   {
     "audience": null,
@@ -201,6 +295,20 @@
   {
     "audience": null,
     "breaking": false,
+    "entry_id": "entry-0007",
+    "internal": false,
+    "kind": "fixed",
+    "order": 7,
+    "record_revision": 1,
+    "release_version": "v0.3.1",
+    "scopes": [],
+    "source_refs": ["git:aa8e4741193c8b69e8fd15a057aeb6609a8f5abf"],
+    "status": "accepted",
+    "summary": "Fixed translation validation to detect quotation mismatches in translated targets"
+  },
+  {
+    "audience": null,
+    "breaking": false,
     "entry_id": "entry-0008",
     "internal": false,
     "kind": "added",
@@ -225,6 +333,28 @@
     "source_refs": ["git:9281a1553693f47c0ac5a6b36a6cad9e9334e39a"],
     "status": "accepted",
     "summary": "Added system hardening and bug fixes across CLI and task workflows"
+  },
+  {
+    "audience": null,
+    "breaking": false,
+    "entry_id": "entry-0008",
+    "internal": true,
+    "kind": "internal",
+    "order": 8,
+    "record_revision": 1,
+    "release_version": "v0.3.1",
+    "scopes": [],
+    "source_refs": [
+      "git:7e0810c2b2080245307d92d51e11b8a78e1d8f5c",
+      "git:8112cdeaa161eb9f29dab0481e2a715f24dd59cf",
+      "git:67f77657fe57b36d41dd8c94ad41f2cf7bf19c4a",
+      "git:0e53958b3b65619dc8f5ea730c859cec2d1542b2",
+      "git:5f72719eb8e560845eb6784a945b9211a431ecf9",
+      "git:1de37bc04e9f3b2edd562e17151cc486f2b46a1b",
+      "git:048fbc13218c084b74d2d71b03455ea0c9ae98ff"
+    ],
+    "status": "accepted",
+    "summary": "Refactored the monolithic CLI into command and workflow modules and applied pre-commit formatting and test compatibility fixes"
   },
   {
     "audience": null,
