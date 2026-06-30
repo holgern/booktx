@@ -711,16 +711,15 @@ def test_check_epub_output_rejects_markdown_project(tmp_path: Path) -> None:
 
 
 def _command_tree() -> tuple[set[str], dict[str, set[str]]]:
-    import click
     import typer
 
     group = typer.main.get_command(app)
-    assert isinstance(group, click.Group)
+    assert hasattr(group, "commands")
     top = set(group.commands.keys())
     sub: dict[str, set[str]] = {}
     for name in sorted(top):
         cmd = group.commands[name]
-        if isinstance(cmd, click.Group):
+        if hasattr(cmd, "commands"):
             sub[name] = set(cmd.commands.keys())
     return top, sub
 

@@ -656,7 +656,10 @@ def _check_forbidden_terms(
             for finding in entry_findings:
                 finding.severity = Severity.WARN
                 finding.rule = "glossary_alignment_ambiguous"
-                finding.message = f"source-to-target alignment ambiguous for {entry.source}: {finding.message}"
+                finding.message = (
+                    f"source-to-target alignment ambiguous for {entry.source}:"
+                    f" {finding.message}"
+                )
         findings.extend(entry_findings)
     return findings
 

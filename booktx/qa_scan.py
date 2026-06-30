@@ -128,7 +128,8 @@ class QaScanFinding:
 
     id: str
     chapter_id: str
-    rule: str  # forbidden_target, glossary_mismatch, advisory_glossary, pattern_match, language_leftover
+    rule: str  # forbidden_target, glossary_mismatch, advisory_glossary,
+    # pattern_match, language_leftover
     term: str = ""
     source: str = ""
     target: str = ""

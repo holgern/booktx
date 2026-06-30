@@ -15,7 +15,7 @@ from typing import Any
 
 import typer
 
-from booktx.agents_md import AGENTS_FILENAME
+from booktx.agents_md import AGENTS_FILENAME, AgentsMdStatusEntry, AgentsMdSyncResult
 from booktx.cli_support import (
     _load_runtime_or_exit,
     console,
@@ -142,7 +142,7 @@ def agents_write_cmd(
 
 
 def _sync_result_to_payload(
-    result, root: Path, *, profile_root: bool
+    result: AgentsMdSyncResult, root: Path, *, profile_root: bool
 ) -> dict[str, Any]:
     return {
         "mode": result.mode,
@@ -163,7 +163,9 @@ def _sync_result_to_payload(
     }
 
 
-def _render_write_human(result, root: Path, *, profile_root: bool) -> None:
+def _render_write_human(
+    result: AgentsMdSyncResult, root: Path, *, profile_root: bool
+) -> None:
     console.print(f"mode: {result.mode}")
     if result.profile is not None:
         console.print(f"profile: {result.profile}")
@@ -180,11 +182,7 @@ def _render_write_human(result, root: Path, *, profile_root: bool) -> None:
             console.print("next: start the agent harness in this directory")
         else:
             target_dir = result.written[0].parent if result.written else None
-            rel = (
-                project_relative(target_dir, root)
-                if target_dir is not None
-                else "."
-            )
+            rel = project_relative(target_dir, root) if target_dir is not None else "."
             console.print(f"next: cd {rel} and start the agent harness")
     else:  # collaborative
         console.print("next: start the agent harness at the project root")
@@ -220,7 +218,7 @@ def agents_status_cmd(
 
 
 def _status_entry_to_payload(
-    entry, root: Path, *, profile_root: bool
+    entry: AgentsMdStatusEntry, root: Path, *, profile_root: bool
 ) -> dict[str, Any]:
     meta = entry.inspection.metadata
     return {
@@ -234,12 +232,12 @@ def _status_entry_to_payload(
     }
 
 
-def _render_status_human(entries, root: Path, *, profile_root: bool) -> None:
+def _render_status_human(
+    entries: tuple[AgentsMdStatusEntry, ...], root: Path, *, profile_root: bool
+) -> None:
     for entry in entries:
         rendered = _render_path(entry.path, root, profile_root=profile_root)
-        scope_label = (
-            f"profile {entry.profile}" if entry.profile else "project"
-        )
+        scope_label = f"profile {entry.profile}" if entry.profile else "project"
         line = f"{rendered} ({scope_label}): {entry.inspection.state}"
         meta = entry.inspection.metadata
         if meta is not None:
@@ -287,7 +285,9 @@ def agents_clean_cmd(
     _render_clean_human(result, root, profile_root=profile_root)
 
 
-def _render_clean_human(result, root: Path, *, profile_root: bool) -> None:
+def _render_clean_human(
+    result: AgentsMdSyncResult, root: Path, *, profile_root: bool
+) -> None:
     console.print(f"mode: {result.mode}")
     if result.profile is not None:
         console.print(f"profile: {result.profile}")

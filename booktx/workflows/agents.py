@@ -33,6 +33,7 @@ from typing import Literal
 from booktx.agents_md import (
     AGENTS_FILENAME,
     AgentMode,
+    AgentsMdMetadata,
     AgentsMdSkippedPath,
     AgentsMdStatusEntry,
     AgentsMdSyncResult,
@@ -78,7 +79,9 @@ def _sanitized_profile_root_not_ready() -> BooktxError:
     )
 
 
-def _resolve_runtime_or_sanitized(project_dir: Path, profile: str | None):
+def _resolve_runtime_or_sanitized(
+    project_dir: Path, profile: str | None
+) -> RuntimeContext:
     """Resolve runtime; sanitize profile-root resolution failures."""
     resolved = project_dir.expanduser().resolve()
     profile_root_present = _looks_like_profile_root(resolved)
@@ -173,9 +176,7 @@ def _write_project_root(
 
     if mode == "collaborative":
         target = root / AGENTS_FILENAME
-        text = render_agents_md(
-            mode="collaborative", profile=None, source_id=source_id
-        )
+        text = render_agents_md(mode="collaborative", profile=None, source_id=source_id)
         write_managed_agents_md(target, text, replace_unmanaged=replace_unmanaged)
         deleted: list[Path] = []
         skipped: list[AgentsMdSkippedPath] = []
@@ -449,7 +450,7 @@ def agents_status_workflow(
     root = runtime.project.root
     current_source_id = _current_source_id(root)
 
-    def stale_for(metadata) -> bool | None:
+    def stale_for(metadata: AgentsMdMetadata | None) -> bool | None:
         if metadata is None:
             return None
         if current_source_id == "unavailable":

@@ -683,13 +683,18 @@ def _render_glossary_section(glossary: list[GlossaryEntry]) -> list[str]:
     lines += [
         "## Binding glossary",
         "",
-        "| Source | Approved target | Required | Forbidden targets | Enforcement | Status | Notes |",
+        "| Source | Approved target | Required | Forbidden targets |"
+        " Enforcement | Status | Notes |"
         "|---|---|---|---|---|---|---|",
     ]
     if binding:
         for entry in binding:
             lines.append(
-                f"| {_escape_cell(entry.source)} | {_escape_cell(_approved(entry))} | {str(entry.require_target).lower()} | {_escape_cell(_forbidden(entry))} | {entry.enforce} | {entry.status} | {_escape_cell(entry.notes or '')} |"
+                f"| {_escape_cell(entry.source)} | {_escape_cell(_approved(entry))} |"
+                f" {str(entry.require_target).lower()} |"
+                f" {_escape_cell(_forbidden(entry))} |"
+                f" {entry.enforce} | {entry.status} |"
+                f" {_escape_cell(entry.notes or '')} |"
             )
     else:
         lines.append(
@@ -705,7 +710,9 @@ def _render_glossary_section(glossary: list[GlossaryEntry]) -> list[str]:
     if advisory:
         for entry in advisory:
             lines.append(
-                f"| {_escape_cell(entry.source)} | {_escape_cell(_approved(entry))} | {entry.enforce} | {entry.status} | {_escape_cell(entry.notes or '')} |"
+                f"| {_escape_cell(entry.source)} | {_escape_cell(_approved(entry))} |"
+                f" {entry.enforce} | {entry.status} |"
+                f" {_escape_cell(entry.notes or '')} |"
             )
     else:
         lines.append("| _(no advisory glossary entries)_ | | | | |")
@@ -719,7 +726,10 @@ def _render_glossary_section(glossary: list[GlossaryEntry]) -> list[str]:
     if disabled:
         for entry in disabled:
             lines.append(
-                f"| {_escape_cell(entry.source)} | {_escape_cell(_approved(entry))} | {str(entry.require_target).lower()} | {_escape_cell(_forbidden(entry))} | {entry.status} | {_escape_cell(entry.notes or '')} |"
+                f"| {_escape_cell(entry.source)} | {_escape_cell(_approved(entry))} |"
+                f" {str(entry.require_target).lower()} |"
+                f" {_escape_cell(_forbidden(entry))} |"
+                f" {entry.status} | {_escape_cell(entry.notes or '')} |"
             )
     else:
         lines.append("| _(no disabled glossary rules)_ | | | | | |")

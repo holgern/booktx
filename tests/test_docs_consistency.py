@@ -70,7 +70,10 @@ def test_markdown_fences_balanced(path: Path) -> None:
 
 
 def _pyproject() -> dict:
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib
 
     with (ROOT / "pyproject.toml").open("rb") as fh:
         return tomllib.load(fh)
@@ -123,15 +126,14 @@ def test_profile_invariant_documented(path: Path) -> None:
 
 
 def _command_tree() -> tuple[set[str], dict[str, set[str]]]:
-    import click
 
     group = typer.main.get_command(app)
-    assert isinstance(group, click.Group)
+    assert hasattr(group, "commands")
     top = set(group.commands.keys())
     sub: dict[str, set[str]] = {}
     for name in sorted(top):
         cmd = group.commands[name]
-        if isinstance(cmd, click.Group):
+        if hasattr(cmd, "commands"):
             sub[name] = set(cmd.commands.keys())
     return top, sub
 
@@ -200,9 +202,13 @@ def test_github_org_consistent() -> None:
     """README Codecov badge must point at the same org as pyproject URLs."""
     import re
 
-    import tomllib
-
     readme = (ROOT / "README.md").read_text("utf-8")
+
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib
+
     with (ROOT / "pyproject.toml").open("rb") as fh:
         pyproject = tomllib.load(fh)
 

@@ -147,9 +147,7 @@ def _parse_managed_block(data: bytes) -> AgentsMdMetadata:
     try:
         text = body.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise _ManagedParseError(
-            f"metadata comment is not valid UTF-8: {exc}"
-        ) from exc
+        raise _ManagedParseError(f"metadata comment is not valid UTF-8: {exc}") from exc
 
     seen: dict[str, str] = {}
     for raw_line in text.splitlines():

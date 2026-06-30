@@ -70,7 +70,7 @@ from booktx.path_ids import safe_artifact_id
 try:
     import tomllib  # type: ignore[import-not-found]  # Python 3.11+ stdlib
 except ModuleNotFoundError:  # Python 3.10
-    import tomli as tomllib  # type: ignore[import-not-found]  # Phase 0 baseline: tomli has no type stubs; used only as Python 3.10 fallback for stdlib tomllib
+    import tomli as tomllib  # Phase 0 baseline: tomli has no type stubs; used only as Python 3.10 fallback for stdlib tomllib
 
 from booktx.epub_manifest import sha256_path
 from booktx.models import (

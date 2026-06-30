@@ -1999,17 +1999,17 @@ def translation_search_cmd_workflow(
     if jsonl:
         import json as _json
 
-        for match in matches:
+        for m in matches:
             console.print(
-                _json.dumps(match, ensure_ascii=False),
+                _json.dumps(m, ensure_ascii=False),
                 soft_wrap=True,
                 markup=False,
             )
     else:
         console.print(f"found {len(matches)} matches")
-        for match in matches:
-            rec_id = match.get("id", "")
-            target_text = str(match.get("target", ""))
+        for m in matches:
+            rec_id = m.get("id", "")
+            target_text = str(m.get("target", ""))
             disp = f"{rec_id}: {target_text[:100]}"
             if len(disp) < len(target_text):
                 disp += "..."

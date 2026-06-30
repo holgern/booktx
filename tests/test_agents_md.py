@@ -38,8 +38,7 @@ def _managed_block(body: str = "") -> str:
         "profile: de_gpt5_5\n"
         "generated_by: booktx\n"
         "source_id: sha256:abc\n"
-        "-->\n"
-        + body
+        "-->\n" + body
     )
 
 
@@ -183,10 +182,7 @@ def test_malformed_managed_file_is_not_treated_as_unmanaged(tmp_path):
     path = tmp_path / AGENTS_FILENAME
     write_text_atomic(
         path,
-        "<!-- booktx-agents-md\n"
-        "schema: booktx.agents-md.v1\n"
-        "mode: isolated\n"
-        "-->\n",
+        "<!-- booktx-agents-md\nschema: booktx.agents-md.v1\nmode: isolated\n-->\n",
     )
     assert inspect_agents_md(path).state == "managed-malformed"
 
@@ -218,10 +214,7 @@ def test_replace_unmanaged_does_not_replace_malformed(tmp_path):
     path = tmp_path / AGENTS_FILENAME
     write_text_atomic(
         path,
-        "<!-- booktx-agents-md\n"
-        "schema: booktx.agents-md.v1\n"
-        "mode: isolated\n"
-        "-->\n",
+        "<!-- booktx-agents-md\nschema: booktx.agents-md.v1\nmode: isolated\n-->\n",
     )
     with pytest.raises(BooktxError) as exc:
         write_managed_agents_md(
