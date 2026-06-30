@@ -1029,7 +1029,10 @@ def qa_scan_cmd(
         False, "--forbidden", help="Check for forbidden glossary terms in targets."
     ),
     glossary: bool = typer.Option(
-        False, "--glossary", help="Report glossary target mismatches."
+        False, "--glossary", help="Report required glossary target mismatches."
+    ),
+    include_advisory: bool = typer.Option(
+        False, "--include-advisory", help="Include non-binding approved glossary suggestions."
     ),
     target_contains: str | None = typer.Option(
         None,
@@ -1068,6 +1071,7 @@ def qa_scan_cmd(
             target_contains=target_contains,
             pattern=pattern,
             language_leftovers=language_leftovers,
+            include_advisory=include_advisory,
         )
     except ValueError as exc:
         _die(str(exc))
@@ -1089,10 +1093,10 @@ def qa_scan_cmd(
         )
         for finding in result.findings:
             console.print(
-                f"  {finding.id} [{finding.rule}] {finding.term}"
+                f"  {finding.id} [{finding.rule}/{finding.severity}] {finding.term}"
                 f" -> {finding.target[:80]}..."
                 if len(finding.target) > 80
-                else f"  {finding.id} [{finding.rule}] {finding.term} -> {finding.target}",
+                else f"  {finding.id} [{finding.rule}/{finding.severity}] {finding.term} -> {finding.target}",
                 soft_wrap=True,
                 markup=False,
             )

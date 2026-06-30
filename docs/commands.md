@@ -339,3 +339,9 @@ are reported as findings and can be resolved with `--conflict fail|keep-local|re
 rejected by the existing stale-policy guard; create a fresh task to use the
 imported policy. In profile-root isolated mode, pack input and output paths
 must resolve inside the current profile root.
+
+## Terminology search and correction blocks
+
+`booktx translation search` supports `--match any` (default, compatibility) and `--match all` for requiring every populated positive group, plus `--source-regex`, `--target-regex`, `--exclude-source`, `--exclude-source-regex`, and `--write-block ingest/name.block.txt`. Generated correction blocks are editable target-only blocks suitable for `translation revise-block`; the companion `.sources.txt` file is reference-only.
+
+In isolated profile-root mode, generated and submitted block paths must be profile-local relative paths. Absolute paths, `..` traversal, and escaping paths are rejected.

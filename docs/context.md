@@ -85,3 +85,9 @@ booktx context chapter-note . 0006 \
   --decision "Keep Apt" \
   --open-issue "Check title rendering"
 ```
+
+## Binding, advisory, and disabled glossary entries
+
+Rendered context separates glossary entries into binding, advisory, and disabled sections. A glossary entry is binding only when `enforce != "off"` and it has `require_target = true` or at least one `forbidden_targets` value. `enforce` alone does not create an enforceable rule.
+
+Source applicability uses longest-source-match spans across the whole glossary. Longer configured terms such as `Wasp-kinden` suppress contained shorter terms such as `wasp`; explicit plurals and hyphenated forms should be modeled with `source_variants`. When one record mixes a valid longer compound and a standalone shorter term, booktx may emit `glossary_alignment_ambiguous` because it cannot prove which target occurrence maps to which source occurrence.

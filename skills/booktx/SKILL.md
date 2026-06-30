@@ -630,3 +630,23 @@ for history audits:
 ```bash
 booktx validate . --include-inactive --fail-on-history-warnings
 ```
+
+## Deterministic terminology correction
+
+When the user asks to fix a specific terminology decision and update context:
+
+```bash
+booktx mode .
+booktx context status .
+booktx translation search . --source "TERM" --jsonl
+booktx translation search . --target "WRONG_TARGET" --jsonl
+booktx translation search . --source "TERM" --target "WRONG_TARGET" --match all --write-block ingest/term-fix.block.txt
+booktx translation revise-block . --file ingest/term-fix.block.txt --format block --activate
+booktx check . --chapter CHAPTER --fail-on-warnings
+booktx validate . --fail-on-warnings
+booktx build .
+```
+
+Use booktx commands, not raw Python/store scripts. In isolated profile-root mode, if a needed search or inspection requires parent `.booktx/` data, use a profile-local booktx command (`source record`, `source chapter`, `translation search`, `translate export-index`). If no command exists, stop and report the missing booktx command instead of reading parent files directly.
+
+Glossary entries are binding only when `enforce != "off"` and `require_target` or `forbidden_targets` is set. `enforce` alone is advisory. If `glossary_alignment_ambiguous` is reported, inspect the companion `.sources.txt` block before revising; booktx is warning that a mixed compound/standalone record cannot be deterministically aligned at target-occurrence level.

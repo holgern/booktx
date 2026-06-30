@@ -48,7 +48,9 @@ from booktx.context import (
 )
 from booktx.epub_manifest import load_epub_template_from_manifest
 from booktx.glossary_match import (
+    applicable_entry_indexes,
     contains_term,
+    source_glossary_matches,
     source_rule_applies,
     target_contains_approved,
     target_terms,
@@ -637,15 +639,20 @@ def _check_forbidden_terms(
     if context is None:
         return []
     findings: list[Finding] = []
-    for entry in context.glossary:
-        if entry.enforce == "off" or not entry.forbidden_targets:
-            continue
-        if not source_rule_applies(source_rec.source, entry):
+    applicable = applicable_entry_indexes(source_rec.source, context.glossary)
+    spans = source_glossary_matches(source_rec.source, context.glossary)
+    shadowed_entries = {span.entry_index for span in spans if span.shadowed}
+    for idx, entry in enumerate(context.glossary):
+        if entry.enforce == "off" or not entry.forbidden_targets or idx not in applicable:
             continue
         severity = Severity.ERROR if entry.enforce == "error" else Severity.WARN
-        findings.extend(
-            _forbidden_target_findings(entry, target_rec, chunk_id, severity)
-        )
+        entry_findings = _forbidden_target_findings(entry, target_rec, chunk_id, severity)
+        if idx in shadowed_entries and entry_findings:
+            for finding in entry_findings:
+                finding.severity = Severity.WARN
+                finding.rule = "glossary_alignment_ambiguous"
+                finding.message = f"source-to-target alignment ambiguous for {entry.source}: {finding.message}"
+        findings.extend(entry_findings)
     return findings
 
 
@@ -693,14 +700,13 @@ def _check_required_glossary_targets(
     if context is None:
         return []
     findings: list[Finding] = []
-    for entry in context.glossary:
-        if entry.enforce == "off" or not entry.require_target:
+    applicable = applicable_entry_indexes(source_rec.source, context.glossary)
+    for idx, entry in enumerate(context.glossary):
+        if entry.enforce == "off" or not entry.require_target or idx not in applicable:
             continue
         approved = target_terms(entry)
         if not approved:
             # Cannot require a target that is undefined.
-            continue
-        if not source_rule_applies(source_rec.source, entry):
             continue
         if target_contains_approved(target_rec.target, entry):
             continue

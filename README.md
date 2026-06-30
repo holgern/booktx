@@ -445,3 +445,7 @@ inactive versions that contain forbidden terms no longer cause warnings. Use
 ```bash
 booktx validate . --include-inactive --fail-on-history-warnings
 ```
+
+### Deterministic terminology correction
+
+Use `booktx translation search` for terminology fixes instead of inspecting stores directly. Combine source and target criteria with `--match all`, add regex/exclusion filters when needed, and write profile-local correction blocks with `--write-block`. Glossary rendering distinguishes binding rules from advisory and disabled entries; `enforce` alone is not binding without `require_target` or forbidden targets. Revision commands preserve baseline and chapter-scoped context-view metadata.

@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from dataclasses import dataclass
 
 from booktx.context import GlossaryEntry
 
@@ -31,19 +32,19 @@ def _edge_suffix(term: str) -> str:
     return r"(?!\w)" if term[-1].isalnum() or term[-1] == "_" else ""
 
 
-def contains_term(text: str, term: str, *, case_sensitive: bool) -> bool:
-    """Return True if ``term`` occurs in ``text`` as a boundary-delimited token.
-
-    ``tenday`` matches ``a tenday later`` but not ``pretenday`` or ``ten days``.
-    Multi-word phrases such as ``zehn Tage`` are matched as a phrase, with word
-    boundaries applied only on the alnum edges.
-    """
+def iter_term_matches(text: str, term: str, *, case_sensitive: bool) -> list[re.Match[str]]:
+    """Return boundary-delimited matches for ``term`` in ``text``."""
     term = term.strip()
     if not term:
-        return False
+        return []
     pattern = f"{_edge_prefix(term)}{re.escape(term)}{_edge_suffix(term)}"
     flags = 0 if case_sensitive else re.IGNORECASE
-    return re.search(pattern, text, flags) is not None
+    return list(re.finditer(pattern, text, flags))
+
+
+def contains_term(text: str, term: str, *, case_sensitive: bool) -> bool:
+    """Return True if ``term`` occurs in ``text`` as a boundary-delimited token."""
+    return bool(iter_term_matches(text, term, case_sensitive=case_sensitive))
 
 
 def _dedupe_terms(values: list[str]) -> list[str]:
@@ -71,13 +72,71 @@ def target_terms(entry: GlossaryEntry) -> list[str]:
     return _dedupe_terms(raw)
 
 
-def source_rule_applies(source_text: str, entry: GlossaryEntry) -> bool:
-    """Return True if the entry's source term or any variant occurs in source.
+@dataclass(frozen=True, slots=True)
+class TermSpan:
+    entry_index: int
+    term_index: int
+    matched_term: str
+    start: int
+    end: int
+    is_primary: bool
+    shadowed: bool = False
 
-    This gates every per-record glossary check: forbidden targets and required
-    targets are only evaluated for records whose source actually contains the
-    term (or one of its source variants).
+
+def source_glossary_matches(source_text: str, glossary: list[GlossaryEntry]) -> list[TermSpan]:
+    """Return source glossary spans with global longest-match suppression.
+
+    All candidate primary/variant terms are discovered first.  Spans are then
+    accepted in deterministic order: earlier start, longer span, primary before
+    variant, then entry/term order. Fully contained later spans are returned as
+    ``shadowed=True`` so callers can detect mixed short/long ambiguity.
     """
+    candidates: list[TermSpan] = []
+    for entry_index, entry in enumerate(glossary):
+        for term_index, term in enumerate(source_terms(entry)):
+            for match in iter_term_matches(source_text, term, case_sensitive=entry.case_sensitive):
+                candidates.append(
+                    TermSpan(
+                        entry_index=entry_index,
+                        term_index=term_index,
+                        matched_term=match.group(0),
+                        start=match.start(),
+                        end=match.end(),
+                        is_primary=term_index == 0,
+                    )
+                )
+    ordered = sorted(
+        candidates,
+        key=lambda span: (
+            span.start,
+            -(span.end - span.start),
+            0 if span.is_primary else 1,
+            span.entry_index,
+            span.term_index,
+        ),
+    )
+    accepted: list[TermSpan] = []
+    result: list[TermSpan] = []
+    for span in ordered:
+        contained = any(span.start >= a.start and span.end <= a.end for a in accepted)
+        if contained:
+            result.append(
+                TermSpan(
+                    span.entry_index, span.term_index, span.matched_term, span.start, span.end, span.is_primary, True
+                )
+            )
+        else:
+            accepted.append(span)
+            result.append(span)
+    return sorted(result, key=lambda span: (span.start, span.end, span.entry_index, span.term_index))
+
+
+def applicable_entry_indexes(source_text: str, glossary: list[GlossaryEntry]) -> set[int]:
+    return {span.entry_index for span in source_glossary_matches(source_text, glossary) if not span.shadowed}
+
+
+def source_rule_applies(source_text: str, entry: GlossaryEntry) -> bool:
+    """Compatibility wrapper for single-entry applicability checks."""
     return any(
         contains_term(source_text, term, case_sensitive=entry.case_sensitive)
         for term in source_terms(entry)
@@ -102,7 +161,6 @@ def entry_is_binding(entry: GlossaryEntry) -> bool:
     """
     if entry.enforce == "off":
         return False
-    return bool(entry.require_target or entry.forbidden_targets)
     return bool(entry.require_target or entry.forbidden_targets)
 
 

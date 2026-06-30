@@ -686,6 +686,12 @@ def translation_search_cmd(
     source: str | None = typer.Option(
         None, "--source", help="Literal text to find in source text."
     ),
+    target_regex: str | None = typer.Option(None, "--target-regex", help="Regex to find in effective targets."),
+    source_regex: str | None = typer.Option(None, "--source-regex", help="Regex to find in source text."),
+    exclude_source: str | None = typer.Option(None, "--exclude-source", help="Reject records containing this source literal."),
+    exclude_source_regex: str | None = typer.Option(None, "--exclude-source-regex", help="Reject records matching this source regex."),
+    match: str = typer.Option("any", "--match", help="Positive group match semantics: any or all."),
+    write_block: Path | None = typer.Option(None, "--write-block", help="Write editable correction block."),
     chapter: str | None = typer.Option(
         None, "--chapter", help="Scope to one chapter id."
     ),
@@ -709,4 +715,10 @@ def translation_search_cmd(
         before,
         after,
         jsonl,
+        target_regex=target_regex,
+        source_regex=source_regex,
+        exclude_source=exclude_source,
+        exclude_source_regex=exclude_source_regex,
+        match=match,
+        write_block=write_block,
     )

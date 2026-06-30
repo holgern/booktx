@@ -115,3 +115,7 @@ translation versions. They live under a separate `reviews[]` array in
 Final output resolves as: `active_review (if valid) -> active_version -> missing`.
 A stale or invalid active review is reported as an error during validation.
 Review candidates are stored under `translations/<profile>/reviews/`.
+
+## Revision provenance
+
+`translation revise-record` and `translation revise-block` preserve provenance for revised candidates. The commands resolve the current translation version and baseline once, create chapter-scoped context-view snapshots for affected records, and write `baseline_ref`, `baseline_sha256`, `context_view_sha256`, `context_view_path`, and context-note scope metadata to the candidate. Revising an existing candidate at the same version amends that candidate; immutable correction-history references are not part of this contract.

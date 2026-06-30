@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -78,7 +79,7 @@ from booktx.config import (
     write_identity,
     write_translation_store,
 )
-from booktx.context import load_context
+from booktx.context import ensure_context_view_snapshot, load_context
 from booktx.editor_indexes import EditorIndexError, export_editor_indexes
 from booktx.errors import BooktxError
 from booktx.models import (
@@ -1403,6 +1404,46 @@ def translate_set_record_workflow(
         )
 
 
+@dataclass(frozen=True)
+class CurrentWriteContext:
+    version_ref: str
+    baseline_ref: str
+    baseline_sha256: str
+    context_view_sha256: str
+    context_view_path: str
+    context_notes_scope: str
+    context_target_chapter_id: str
+    context_notes_through_chapter_id: str | None
+
+
+def _current_write_contexts_for_records(proj: Any, *, bundle: Any, record_ids: set[str]) -> dict[str, CurrentWriteContext]:
+    missing = sorted(rid for rid in record_ids if rid not in bundle.index.source_by_id or rid not in bundle.index.record_to_chapter)
+    if missing:
+        _die("unknown or unmapped record(s): " + ", ".join(missing))
+        raise typer.Exit(code=1)
+    resolution = resolve_current_version(proj)
+    by_chapter = {bundle.index.record_to_chapter[rid] for rid in record_ids}
+    contexts: dict[str, CurrentWriteContext] = {}
+    for chapter_id in sorted(by_chapter):
+        snap = ensure_context_view_snapshot(
+            proj,
+            baseline_ref=resolution.version_ref,
+            baseline_sha256=resolution.baseline_sha256,
+            target_chapter_id=chapter_id,
+        )
+        contexts[chapter_id] = CurrentWriteContext(
+            version_ref=resolution.version_ref,
+            baseline_ref=resolution.version_ref,
+            baseline_sha256=resolution.baseline_sha256,
+            context_view_sha256=snap.context_view_sha256,
+            context_view_path=snap.context_path,
+            context_notes_scope=snap.notes_scope,
+            context_target_chapter_id=snap.target_chapter_id,
+            context_notes_through_chapter_id=snap.notes_through_chapter_id,
+        )
+    return contexts
+
+
 def translation_revise_record_workflow(
     project_dir: Path,
     record_ref: str,
@@ -1493,9 +1534,11 @@ def translation_revise_record_workflow(
         fail_on_warnings=True,
     )
 
-    # Write through the store API.
-    resolution = resolve_current_version(proj)
-    version_ref = resolution.version_ref
+    # Resolve provenance and create chapter context snapshots before mutating the store.
+    write_context = _current_write_contexts_for_records(proj, bundle=bundle, record_ids={record_id})[
+        bundle.index.record_to_chapter[record_id]
+    ]
+    version_ref = write_context.version_ref
     ensure_store_record(
         store,
         record_id,
@@ -1508,6 +1551,13 @@ def translation_revise_record_workflow(
         target_text,
         updated_at=utc_timestamp(),
         activate=activate,
+        baseline_ref=write_context.baseline_ref,
+        baseline_sha256=write_context.baseline_sha256,
+        context_view_sha256=write_context.context_view_sha256,
+        context_view_path=write_context.context_view_path,
+        context_notes_scope=write_context.context_notes_scope,
+        context_target_chapter_id=write_context.context_target_chapter_id,
+        context_notes_through_chapter_id=write_context.context_notes_through_chapter_id,
     )
     write_translation_store(proj, store)
 
@@ -1551,7 +1601,19 @@ def translation_revise_block_workflow(
     from booktx.io_utils import utc_timestamp
     from booktx.submissions import parse_block_submission
 
-    text = sys.stdin.read() if stdin else file.read_text("utf-8")  # type: ignore[union-attr]
+    if stdin:
+        text = sys.stdin.read()
+    else:
+        assert file is not None
+        if file.is_absolute() or ".." in file.parts:
+            _die("--file must be a profile-local relative path")
+            return
+        file_path = (proj.root / file).resolve()
+        root = proj.root.resolve()
+        if root not in [file_path, *file_path.parents]:
+            _die("--file must stay inside the active profile")
+            return
+        text = file_path.read_text("utf-8")
     parsed = parse_block_submission(text)
     if not parsed.records:
         _die("block submission contains no records")
@@ -1615,9 +1677,11 @@ def translation_revise_block_workflow(
         raise typer.Exit(code=1)
     _staged_preflight_check(proj, submitted, submitted_ids, fail_on_warnings=True)
 
-    version_ref = resolve_current_version(proj).version_ref
+    write_contexts = _current_write_contexts_for_records(proj, bundle=bundle, record_ids=submitted_ids)
+    version_ref = next(iter(write_contexts.values())).version_ref
     for item in submitted:
         source_view = source_views[item.id]
+        write_context = write_contexts[bundle.index.record_to_chapter[item.id]]
         ensure_store_record(
             store,
             item.id,
@@ -1630,6 +1694,13 @@ def translation_revise_block_workflow(
             item.target,
             updated_at=utc_timestamp(),
             activate=activate,
+            baseline_ref=write_context.baseline_ref,
+            baseline_sha256=write_context.baseline_sha256,
+            context_view_sha256=write_context.context_view_sha256,
+            context_view_path=write_context.context_view_path,
+            context_notes_scope=write_context.context_notes_scope,
+            context_target_chapter_id=write_context.context_target_chapter_id,
+            context_notes_through_chapter_id=write_context.context_notes_through_chapter_id,
         )
     write_translation_store(proj, store)
     chapters = sorted(
@@ -1717,10 +1788,31 @@ def translation_search_cmd_workflow(
     before: int = 0,
     after: int = 0,
     jsonl: bool = False,
+    *,
+    target_regex: str | None = None,
+    source_regex: str | None = None,
+    exclude_source: str | None = None,
+    exclude_source_regex: str | None = None,
+    match: str = "any",
+    write_block: Path | None = None,
 ) -> None:
     """Search effective translations without scripting against translation-store.json."""
     runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
     proj = runtime.project
+    if match not in {"any", "all"}:
+        _die("--match must be 'any' or 'all'")
+        return
+    import re as _re
+    try:
+        source_pat = _re.compile(source_regex, _re.IGNORECASE) if source_regex else None
+        target_pat = _re.compile(target_regex, _re.IGNORECASE) if target_regex else None
+        exclude_source_pat = _re.compile(exclude_source_regex, _re.IGNORECASE) if exclude_source_regex else None
+    except _re.error as exc:
+        _die(f"invalid regex: {exc}")
+        return
+    if record is None and not any([source, target, source_pat, target_pat]):
+        _die("provide at least one positive search criterion or --record")
+        return
 
     from booktx.config import load_translation_store
     from booktx.translation_store import effective_target_candidate
@@ -1794,25 +1886,40 @@ def translation_search_cmd_workflow(
             source_text = source_view.source if source_view else ""
             target_text = eff.target
 
-            matched = False
-            if target is not None and target.lower() in target_text.lower():
-                matched = True
+            source_hits = []
+            target_hits = []
             if source is not None and source.lower() in source_text.lower():
-                matched = True
+                source_hits.append(source)
+            if source_pat is not None and source_pat.search(source_text):
+                source_hits.append(source_regex or "")
+            if target is not None and target.lower() in target_text.lower():
+                target_hits.append(target)
+            if target_pat is not None and target_pat.search(target_text):
+                target_hits.append(target_regex or "")
+            if exclude_source is not None and exclude_source.lower() in source_text.lower():
+                continue
+            if exclude_source_pat is not None and exclude_source_pat.search(source_text):
+                continue
+            groups: list[bool] = []
+            if source is not None or source_pat is not None:
+                groups.append(bool(source_hits))
+            if target is not None or target_pat is not None:
+                groups.append(bool(target_hits))
+            matched = all(groups) if match == "all" else any(groups)
 
             if matched:
-                match = {
+                match_item = {
                     "id": record_id,
                     "chapter_id": cid,
-                    "source": source_text
-                    if not (target is not None and source is None)
-                    else "",
+                    "source": source_text if not (target is not None and source is None and source_pat is None) else "",
                     "target": target_text,
                     "effective_ref": (
                         getattr(eff, "review_ref", None)
                         or getattr(eff, "version_ref", None)
                         or ""
                     ),
+                    "matched_source": source_hits,
+                    "matched_target": target_hits,
                 }
 
                 if before > 0 or after > 0:
@@ -1832,10 +1939,30 @@ def translation_search_cmd_workflow(
                         }
                         for rid in after_ids
                     ]
-                    match["before"] = before_records
-                    match["after"] = after_records
+                    match_item["before"] = before_records
+                    match_item["after"] = after_records
 
-                matches.append(match)
+                matches.append(match_item)
+
+    if write_block is not None:
+        if write_block.is_absolute() or ".." in write_block.parts:
+            _die("--write-block must be a profile-local relative path")
+            return
+        block_path = (proj.root / write_block).resolve()
+        root = proj.root.resolve()
+        if root not in [block_path, *block_path.parents]:
+            _die("--write-block must stay inside the active profile")
+            return
+        block_path.parent.mkdir(parents=True, exist_ok=True)
+        lines: list[str] = []
+        source_lines: list[str] = []
+        for item in matches:
+            rid = str(item["id"])
+            lines.extend([f">>> {rid}", str(item["target"]), ""])
+            source_lines.extend([f">>> {rid}", f"source: {item.get('source', '')}", f"target: {item.get('target', '')}", ""])
+        block_path.write_text("\n".join(lines).rstrip() + "\n", "utf-8")
+        block_path.with_suffix(block_path.suffix + ".sources.txt").write_text("\n".join(source_lines).rstrip() + "\n", "utf-8")
+        console.print(f"wrote block: {write_block}")
 
     if jsonl:
         import json as _json

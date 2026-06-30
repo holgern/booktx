@@ -16,8 +16,12 @@ from booktx.glossary_match import (
     contains_term as glossary_contains_term,
 )
 from booktx.glossary_match import (
+    applicable_entry_indexes,
+    entry_is_binding,
+    source_glossary_matches,
     source_rule_applies,
     target_contains_approved,
+    target_terms,
 )
 from booktx.translation_store import effective_target_candidate
 
@@ -126,10 +130,11 @@ class QaScanFinding:
 
     id: str
     chapter_id: str
-    rule: str  # forbidden_target, glossary_mismatch, pattern_match, language_leftover
+    rule: str  # forbidden_target, glossary_mismatch, advisory_glossary, pattern_match, language_leftover
     term: str = ""
     source: str = ""
     target: str = ""
+    severity: str = "error"
 
     def as_dict(self) -> dict[str, str]:
         return {
@@ -139,6 +144,7 @@ class QaScanFinding:
             "term": self.term,
             "source": self.source,
             "target": self.target,
+            "severity": self.severity,
         }
 
 
@@ -162,6 +168,7 @@ def qa_scan(
     target_contains: str | None = None,
     pattern: str | None = None,
     language_leftovers: str | None = None,
+    include_advisory: bool = False,
 ) -> QaScanResult:
     """Scan effective targets for QA findings.
 
@@ -226,6 +233,7 @@ def qa_scan(
                     compiled_pattern=compiled_pattern,
                     pattern=pattern,
                     leftover_words=leftover_words,
+                    include_advisory=include_advisory,
                 )
             )
 
@@ -245,6 +253,7 @@ def _finding(
     *,
     rule: str,
     term: str,
+    severity: str = "error",
 ) -> QaScanFinding:
     """Build a finding using the shared source/target convention."""
     return QaScanFinding(
@@ -254,6 +263,7 @@ def _finding(
         term=term,
         source="" if target_only else source_text,
         target=target,
+        severity=severity,
     )
 
 
@@ -271,53 +281,53 @@ def _collect_record_findings(
     compiled_pattern: re.Pattern[str] | None,
     pattern: str | None,
     leftover_words: set[str] | None,
+    include_advisory: bool = False,
 ) -> list[QaScanFinding]:
     """Run all enabled checks for one record and return the findings."""
     findings: list[QaScanFinding] = []
 
+    applicable = applicable_entry_indexes(source_text, glossary_entries) if glossary_entries else set()
+    spans = source_glossary_matches(source_text, glossary_entries) if glossary_entries else []
+    shadowed_by_entry = {span.entry_index for span in spans if span.shadowed}
     if forbidden:
-        for entry in glossary_entries:
-            if not entry.forbidden_targets:
+        for idx, entry in enumerate(glossary_entries):
+            if entry.enforce == "off" or not entry.forbidden_targets or idx not in applicable:
                 continue
-            # Forbidden targets are scoped to records whose source contains
-            # the entry's source term or one of its source variants, using
-            # the same matcher as validation.
-            if not source_rule_applies(source_text, entry):
-                continue
+            ambiguous_terms = set()
+            if idx in applicable and idx in shadowed_by_entry:
+                ambiguous_terms.update(entry.forbidden_targets)
             for ft in entry.forbidden_targets:
-                if glossary_contains_term(
-                    target, ft, case_sensitive=entry.case_sensitive
-                ):
+                if glossary_contains_term(target, ft, case_sensitive=entry.case_sensitive):
+                    rule = "glossary_alignment_ambiguous" if ft in ambiguous_terms else "forbidden_target"
                     findings.append(
                         _finding(
-                            record_id,
-                            chapter_id,
-                            source_text,
-                            target,
-                            target_only,
-                            rule="forbidden_target",
-                            term=ft,
+                            record_id, chapter_id, source_text, target, target_only,
+                            rule=rule, term=ft, severity="warn" if rule.endswith("ambiguous") else "error",
                         )
                     )
 
     if glossary:
-        for entry in glossary_entries:
-            if entry.status != "approved" or entry.target is None:
+        for idx, entry in enumerate(glossary_entries):
+            if entry.status != "approved" or entry.target is None or idx not in applicable:
                 continue
-            if source_rule_applies(source_text, entry) and not target_contains_approved(
-                target, entry
-            ):
-                findings.append(
-                    _finding(
-                        record_id,
-                        chapter_id,
-                        source_text,
-                        target,
-                        target_only,
-                        rule="glossary_mismatch",
-                        term=f"{entry.source} -> {entry.target}",
+            if entry.enforce == "off":
+                continue
+            if entry.require_target:
+                if not target_contains_approved(target, entry):
+                    findings.append(
+                        _finding(
+                            record_id, chapter_id, source_text, target, target_only,
+                            rule="glossary_mismatch", term=f"{entry.source} -> {entry.target}",
+                        )
                     )
-                )
+            elif include_advisory and not entry_is_binding(entry):
+                if not target_contains_approved(target, entry):
+                    findings.append(
+                        _finding(
+                            record_id, chapter_id, source_text, target, target_only,
+                            rule="advisory_glossary", term=f"{entry.source} -> {entry.target}", severity="info",
+                        )
+                    )
 
     if target_contains is not None and target_contains.lower() in target.lower():
         findings.append(

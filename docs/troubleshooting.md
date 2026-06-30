@@ -260,3 +260,7 @@ without rebuilding, run:
 ```bash
 booktx check ./book --profile de_default --epub-output --json
 ```
+
+## glossary_alignment_ambiguous
+
+This warning means a source record contains both a longer glossary occurrence and a shorter standalone occurrence, and a target form could belong to either. Review the companion source block from `translation search --write-block` or `context audit-term --write-block`, then revise deliberately. Use `--fail-on-warnings` to block final validation until the ambiguity has been reviewed.
