@@ -689,6 +689,21 @@ booktx judge create-profile ./book de_judge_gpt5_5 \
   --select
 ```
 
+Before judging, initialize and ready the selection profile context. Sync policy
+from a compatible source profile or configure equivalent policy explicitly:
+
+```bash
+booktx context init ./book --profile de_judge_gpt5_5 --non-interactive
+booktx context sync ./book \
+  --from de_gpt5_5 \
+  --to de_judge_gpt5_5 \
+  --section glossary \
+  --section style \
+  --section global-rules \
+  --write
+booktx context mark-ready ./book --profile de_judge_gpt5_5
+```
+
 Run judging with:
 
 ```bash

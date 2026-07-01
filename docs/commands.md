@@ -318,6 +318,16 @@ booktx judge create-profile ./book de_judge_gpt5_5 \
   --model gpt-5.5 \
   --select
 
+booktx context init ./book --profile de_judge_gpt5_5 --non-interactive
+booktx context sync ./book \
+  --from de_gpt5_5 \
+  --to de_judge_gpt5_5 \
+  --section glossary \
+  --section style \
+  --section global-rules \
+  --write
+booktx context mark-ready ./book --profile de_judge_gpt5_5
+
 booktx judge status ./book --profile de_judge_gpt5_5 --sources de_gpt5_5,de_glm_5_2
 
 booktx judge next ./book \

@@ -368,6 +368,15 @@ booktx judge create-profile ./demo de_judge_gpt5_5 \
   --sources de_gpt5_5,de_glm_5_2 \
   --model gpt-5.5 \
   --select
+booktx context init ./demo --profile de_judge_gpt5_5 --non-interactive
+booktx context sync ./demo \
+  --from de_gpt5_5 \
+  --to de_judge_gpt5_5 \
+  --section glossary \
+  --section style \
+  --section global-rules \
+  --write
+booktx context mark-ready ./demo --profile de_judge_gpt5_5
 booktx judge status ./demo --profile de_judge_gpt5_5 --sources de_gpt5_5,de_glm_5_2
 booktx judge next ./demo --profile de_judge_gpt5_5 --sources de_gpt5_5,de_glm_5_2 --unit chapter --chapter 0001 --format block
 ```

@@ -288,13 +288,29 @@ def _candidate_evidence(candidate: JudgeTaskCandidate) -> JudgeCandidateEvidence
         version_ref=candidate.version_ref,
         review_ref=candidate.review_ref,
         target_sha256=candidate.target_sha256,
-        target=candidate.target,
         validation_status=status,  # type: ignore[arg-type]
         findings=[
             f"{finding.severity}:{finding.rule}:{finding.message}"
             for finding in candidate.validation_findings
         ],
     )
+
+
+def _validate_edited_targets_allowed(
+    project: Project, item: SubmittedJudgeRecord
+) -> None:
+    if item.decision_kind != "edited":
+        return
+    cfg = project.profile_config
+    selection_cfg = cfg.selection if cfg is not None else None
+    allow_edited = (
+        selection_cfg.allow_edited_targets if selection_cfg is not None else True
+    )
+    if not allow_edited:
+        raise _err(
+            "judge_edited_disabled",
+            f"record {item.id} edited judge targets are disabled for this profile",
+        )
 
 
 def accept_judge_submission(
@@ -343,6 +359,7 @@ def accept_judge_submission(
                 "judge_decision_kind",
                 f"record {item.id} decision_kind must be copy or edited",
             )
+        _validate_edited_targets_allowed(project, item)
         selected_candidate: JudgeTaskCandidate | None = None
         if item.selected and item.selected != "edited":
             selected_candidate = _candidate_for_label(task_record, item.selected)

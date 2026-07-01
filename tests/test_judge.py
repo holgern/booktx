@@ -385,6 +385,63 @@ def test_judge_next_require_all_sources_blocks_missing_candidate(tmp_path: Path)
     assert "missing effective candidates" in res.output
 
 
+def test_judge_next_honors_config_require_all_sources(tmp_path: Path):
+    project_dir, record_ids = _judge_project(tmp_path)
+    _write_source_candidate(
+        project_dir, "de_a", record_ids[0], "Imperium marschiert vor."
+    )
+    cfg = load_profile_config(project_dir, "de_judge")
+    assert cfg.selection is not None
+    cfg.selection.require_all_sources = True
+    write_profile_config(project_dir, cfg)
+
+    res = runner.invoke(
+        app,
+        [
+            "judge",
+            "next",
+            str(project_dir),
+            "--profile",
+            "de_judge",
+            "--sources",
+            "de_a,de_b",
+            "--unit",
+            "chapter",
+            "--chapter",
+            "0001",
+        ],
+    )
+
+    assert res.exit_code != 0
+    assert "missing effective candidates" in res.output
+
+
+def test_judge_record_prints_submit_command(tmp_path: Path):
+    project_dir, record_ids = _judge_project(tmp_path)
+    _write_source_candidate(
+        project_dir, "de_a", record_ids[0], "Imperium marschiert vor."
+    )
+
+    res = runner.invoke(
+        app,
+        [
+            "judge",
+            "record",
+            str(project_dir),
+            "--profile",
+            "de_judge",
+            "--sources",
+            "de_a,de_b",
+            "--record",
+            record_ids[0],
+        ],
+    )
+
+    assert res.exit_code == 0, res.output
+    assert "submit: booktx judge insert" in res.output
+    assert "--format block" in res.output
+
+
 def test_judge_insert_copy_accepts_exact_selected_candidate(tmp_path: Path):
     project_dir, record_ids = _judge_project(tmp_path)
     _write_source_candidate(
@@ -569,6 +626,70 @@ def test_judge_insert_edited_accepts_valid_rewrite(tmp_path: Path):
     assert res.exit_code == 0, res.output
     store = load_translation_store(load_profile_project(project_dir, "de_judge"))
     assert "weiter voran" in store.records[record_ids[0]].versions[0].target
+
+
+def test_judge_insert_rejects_edited_when_config_disallows_edits(tmp_path: Path):
+    project_dir, record_ids = _judge_project(tmp_path)
+    _write_source_candidate(
+        project_dir, "de_a", record_ids[0], "Imperium marschiert vor."
+    )
+    cfg = load_profile_config(project_dir, "de_judge")
+    assert cfg.selection is not None
+    cfg.selection.allow_edited_targets = False
+    write_profile_config(project_dir, cfg)
+    next_res = runner.invoke(
+        app,
+        [
+            "judge",
+            "next",
+            str(project_dir),
+            "--profile",
+            "de_judge",
+            "--sources",
+            "de_a,de_b",
+        ],
+    )
+    assert next_res.exit_code == 0, next_res.output
+    task_id = _judge_task_id(project_dir)
+    ingest = judge_ingest_json_path(
+        load_profile_project(project_dir, "de_judge"), task_id
+    )
+    ingest.write_text(
+        json.dumps(
+            {
+                "judge_task_id": task_id,
+                "records": [
+                    {
+                        "id": record_ids[0],
+                        "selected": "A",
+                        "decision_kind": "edited",
+                        "target": "Das Imperium marschiert weiter voran.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    res = runner.invoke(
+        app,
+        [
+            "judge",
+            "insert",
+            str(project_dir),
+            "--profile",
+            "de_judge",
+            "--judge-task-id",
+            task_id,
+            "--file",
+            str(ingest),
+            "--format",
+            "json",
+        ],
+    )
+
+    assert res.exit_code != 0
+    assert "edited judge targets are disabled" in res.output
 
 
 def test_judge_insert_rejects_candidate_hash_drift(tmp_path: Path):
@@ -771,6 +892,13 @@ def test_judge_insert_writes_selection_ledger_and_status_counts(tmp_path: Path):
         load_profile_project(project_dir, "de_judge")
     )
     assert ledger.records[record_ids[0]].selected_profile == "de_a"
+    evidence = ledger.records[record_ids[0]].candidate_evidence[0]
+    assert evidence.target_sha256 == sha256_text("Imperium marschiert vor.")
+    assert not hasattr(evidence, "target")
+    ledger_text = (
+        project_dir / "translations" / "de_judge" / "translation-selection-ledger.json"
+    ).read_text("utf-8")
+    assert "Imperium marschiert vor." not in ledger_text
     status = runner.invoke(
         app,
         [
@@ -853,6 +981,122 @@ def test_judge_profile_build_uses_selected_store_output(tmp_path: Path):
     assert build_res.exit_code == 0, build_res.output
     output = next((project_dir / "translations" / "de_judge" / "output").glob("*.md"))
     assert "Imperium marschiert vor." in output.read_text("utf-8")
+
+
+def test_judge_rejects_source_target_language_mismatch(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    create_profile(project_dir, "fr_a", target_language="fr")
+    _create_selection_profile(project_dir, "de_judge", ["fr_a"])
+    _ready_context(project_dir, "de_judge")
+
+    res = runner.invoke(
+        app,
+        [
+            "judge",
+            "next",
+            str(project_dir),
+            "--profile",
+            "de_judge",
+            "--sources",
+            "fr_a",
+        ],
+    )
+
+    assert res.exit_code != 0
+    assert "target language" in res.output
+
+
+def test_judge_rejects_source_source_language_mismatch(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    _create_translation_profile(project_dir, "de_a")
+    cfg = load_profile_config(project_dir, "de_a")
+    cfg.source_language = "fr"
+    write_profile_config(project_dir, cfg)
+    _create_selection_profile(project_dir, "de_judge", ["de_a"])
+
+    res = runner.invoke(
+        app,
+        [
+            "judge",
+            "status",
+            str(project_dir),
+            "--profile",
+            "de_judge",
+            "--sources",
+            "de_a",
+        ],
+    )
+
+    assert res.exit_code != 0
+    assert "source language" in res.output
+
+
+def test_judge_rejects_pass_through_source_by_default(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    create_profile(project_dir, "de_pass", target_language="de", kind="pass-through")
+    _create_selection_profile(project_dir, "de_judge", ["de_pass"])
+
+    res = runner.invoke(
+        app,
+        [
+            "judge",
+            "status",
+            str(project_dir),
+            "--profile",
+            "de_judge",
+            "--sources",
+            "de_pass",
+        ],
+    )
+
+    assert res.exit_code != 0
+    assert "must be a translation profile" in res.output
+    assert "pass-through" in res.output
+
+
+def test_judge_rejects_selection_profile_as_source_by_default(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    _create_translation_profile(project_dir, "de_a")
+    _create_selection_profile(project_dir, "de_judge_source", ["de_a"])
+    _create_selection_profile(project_dir, "de_judge", ["de_judge_source"])
+
+    res = runner.invoke(
+        app,
+        [
+            "judge",
+            "status",
+            str(project_dir),
+            "--profile",
+            "de_judge",
+            "--sources",
+            "de_judge_source",
+        ],
+    )
+
+    assert res.exit_code != 0
+    assert "must be a translation profile" in res.output
+    assert "selection" in res.output
+
+
+def test_judge_rejects_selection_profile_as_own_source(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    _create_selection_profile(project_dir, "de_judge", ["de_judge"])
+
+    res = runner.invoke(
+        app,
+        [
+            "judge",
+            "status",
+            str(project_dir),
+            "--profile",
+            "de_judge",
+            "--sources",
+            "de_judge",
+        ],
+    )
+
+    assert res.exit_code != 0
+    assert "selection profile cannot be a judge source" in res.output
 
 
 def test_judge_rejects_non_selection_profile(tmp_path: Path):

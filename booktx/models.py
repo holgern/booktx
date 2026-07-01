@@ -1092,7 +1092,6 @@ class JudgeCandidateEvidence(BaseModel):
     version_ref: str | None = None
     review_ref: str | None = None
     target_sha256: str
-    target: str = ""
     validation_status: Literal["ok", "warning", "error", "missing"] = "ok"
     findings: list[str] = Field(default_factory=list)
 

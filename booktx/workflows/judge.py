@@ -39,6 +39,7 @@ __all__ = [
     "create_next_judge_task_workflow",
     "create_record_judge_task_workflow",
     "judge_task_block_paths",
+    "judge_task_json_path",
     "accept_judge_submission_workflow",
 ]
 
@@ -85,7 +86,7 @@ def build_judge_status_workflow(
     sources_csv: str | None,
 ) -> dict[str, Any]:
     source_profiles = resolve_selection_sources(proj, sources_csv)
-    source_projects = load_source_profile_projects(proj.root, source_profiles)
+    source_projects = load_source_profile_projects(proj, source_profiles)
     selected_ids = selected_record_ids(proj)
     chapters: list[dict[str, Any]] = []
     candidate_gaps = 0
@@ -142,6 +143,9 @@ def create_next_judge_task_workflow(
     require_all_sources: bool,
 ) -> object:
     source_profiles = resolve_selection_sources(proj, sources_csv)
+    effective_require_all_sources = _effective_require_all_sources(
+        proj, require_all_sources
+    )
     try:
         return create_judge_task(
             proj,
@@ -150,10 +154,18 @@ def create_next_judge_task_workflow(
             chapter_id=chapter,
             record_id=None,
             max_words=max_words,
-            require_all_sources=require_all_sources,
+            require_all_sources=effective_require_all_sources,
         )
     except ValueError as exc:
         raise _err("judge_next", str(exc)) from exc
+
+
+def _effective_require_all_sources(proj: Project, cli_value: bool) -> bool:
+    cfg = proj.profile_config
+    selection = cfg.selection if cfg is not None else None
+    return cli_value or (
+        selection.require_all_sources if selection is not None else False
+    )
 
 
 def create_record_judge_task_workflow(
@@ -165,6 +177,9 @@ def create_record_judge_task_workflow(
     require_all_sources: bool,
 ) -> object:
     source_profiles = resolve_selection_sources(proj, sources_csv)
+    effective_require_all_sources = _effective_require_all_sources(
+        proj, require_all_sources
+    )
     try:
         return create_judge_task(
             proj,
@@ -173,7 +188,7 @@ def create_record_judge_task_workflow(
             chapter_id=None,
             record_id=record_id,
             max_words=10**9,
-            require_all_sources=require_all_sources,
+            require_all_sources=effective_require_all_sources,
         )
     except ValueError as exc:
         raise _err("judge_record", str(exc)) from exc
@@ -187,6 +202,12 @@ def judge_task_block_paths(proj: Project, task: object) -> tuple[str, str]:
         str(judge_task_source_block_path(proj, judge_task_id)),
         str(judge_ingest_block_path(proj, judge_task_id)),
     )
+
+
+def judge_task_json_path(proj: Project, task: object) -> str:
+    from booktx.config import judge_ingest_json_path
+
+    return str(judge_ingest_json_path(proj, task.judge_task_id))
 
 
 def accept_judge_submission_workflow(

@@ -180,7 +180,7 @@ def create_judge_task(
         baseline_sha256=resolution.baseline_sha256,
         target_chapter_id=task_chapter_id,
     )
-    source_projects = load_source_profile_projects(project.root, source_profiles)
+    source_projects = load_source_profile_projects(project, source_profiles)
     validation_context = load_validation_context(
         project,
         context_view_path=context_view.context_path,
@@ -199,6 +199,7 @@ def create_judge_task(
             selection_context=validation_context,
             source_projects=source_projects,
             source_record=source_record,
+            chunk_id=source_view.chunk_id,
         )
         if require_all_sources and missing_profiles:
             raise ValueError(

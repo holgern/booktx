@@ -208,6 +208,22 @@ booktx judge create-profile ./book de_judge_gpt5_5 \
   --select
 ```
 
+Before judging, initialize the selection profile context, sync policy from a
+compatible source profile (or otherwise configure the same policy), and mark it
+ready:
+
+```bash
+booktx context init ./book --profile de_judge_gpt5_5 --non-interactive
+booktx context sync ./book \
+  --from de_gpt5_5 \
+  --to de_judge_gpt5_5 \
+  --section glossary \
+  --section style \
+  --section global-rules \
+  --write
+booktx context mark-ready ./book --profile de_judge_gpt5_5
+```
+
 Judge workflows are cross-profile and therefore project-root only:
 
 ```bash

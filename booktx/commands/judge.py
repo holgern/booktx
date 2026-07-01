@@ -27,6 +27,7 @@ from booktx.workflows.judge import (
     create_next_judge_task_workflow,
     create_record_judge_task_workflow,
     judge_task_block_paths,
+    judge_task_json_path,
 )
 
 judge_app = typer.Typer(help="Judge and selection-profile workflows.")
@@ -150,14 +151,7 @@ def judge_next(
         return
     src_path, ingest_block = judge_task_block_paths(proj, task)
     edit_path = (
-        ingest_block
-        if output_format == "block"
-        else str(
-            (
-                proj.root
-                / f"translations/{proj.profile}/judge-ingest/{task.judge_task_id}.json"
-            ).resolve()
-        )
+        ingest_block if output_format == "block" else judge_task_json_path(proj, task)
     )
     console.print(f"judge task: {task.judge_task_id}")
     console.print(f"records: {len(task.records)}")
@@ -223,6 +217,14 @@ def judge_record(
     )
     console.print(
         f"edit:   {_project_relative(Path(ingest_block), proj.root)}",
+        soft_wrap=True,
+        markup=False,
+    )
+    console.print(
+        f"submit: booktx judge insert . --profile {proj.profile} "
+        f"--judge-task-id {task.judge_task_id} "
+        f"--file {_project_relative(Path(ingest_block), proj.root)} "
+        "--format block",
         soft_wrap=True,
         markup=False,
     )

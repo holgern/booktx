@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from booktx.config import Project, _err, load_profile_project, load_translation_store
 from booktx.models import JudgeTaskCandidate, JudgeTaskFinding, Record, TranslatedRecord
 from booktx.translation_store import (
@@ -17,6 +15,7 @@ __all__ = [
     "parse_sources_csv",
     "resolve_selection_sources",
     "require_selection_profile",
+    "validate_judge_source_profile",
     "load_source_profile_projects",
     "selected_record_ids",
     "record_has_candidate_gap",
@@ -64,13 +63,50 @@ def resolve_selection_sources(project: Project, sources_csv: str | None) -> list
     return list(selection.sources)
 
 
+def validate_judge_source_profile(
+    selection_project: Project, source_project: Project
+) -> None:
+    selection_cfg = selection_project.profile_config
+    source_cfg = source_project.profile_config
+    assert selection_cfg is not None
+    assert source_cfg is not None
+    if source_project.profile == selection_project.profile:
+        raise _err(
+            "judge_source_profile_self",
+            "selection profile cannot be a judge source",
+        )
+    if source_cfg.kind != "translation":
+        raise _err(
+            "judge_source_profile_kind",
+            f"source profile {source_project.profile} must be a translation profile, "
+            f"got {source_cfg.kind}",
+        )
+    if source_cfg.source_language != selection_cfg.source_language:
+        raise _err(
+            "judge_source_language_mismatch",
+            f"source profile {source_project.profile} source language "
+            f"{source_cfg.source_language!r} does not match selection profile "
+            f"{selection_cfg.source_language!r}",
+        )
+    if source_cfg.target_language != selection_cfg.target_language:
+        raise _err(
+            "judge_target_language_mismatch",
+            f"source profile {source_project.profile} target language "
+            f"{source_cfg.target_language!r} does not match selection profile "
+            f"{selection_cfg.target_language!r}",
+        )
+
+
 def load_source_profile_projects(
-    root: Path, source_profiles: list[str]
+    selection_project: Project, source_profiles: list[str]
 ) -> dict[str, Project]:
-    return {
-        profile_name: load_profile_project(root, profile_name)
+    projects = {
+        profile_name: load_profile_project(selection_project.root, profile_name)
         for profile_name in source_profiles
     }
+    for project in projects.values():
+        validate_judge_source_profile(selection_project, project)
+    return projects
 
 
 def selected_record_ids(project: Project) -> set[str]:
@@ -103,6 +139,7 @@ def collect_source_candidates(
     selection_context: object | None,
     source_projects: dict[str, Project],
     source_record: Record,
+    chunk_id: str,
 ) -> tuple[list[JudgeTaskCandidate], list[str]]:
     candidates: list[JudgeTaskCandidate] = []
     missing_profiles: list[str] = []
@@ -130,7 +167,7 @@ def collect_source_candidates(
                 TranslatedRecord(
                     id=source_record.id, target=selection.candidate.target
                 ),
-                source_record.id.split("-", 1)[0],
+                chunk_id,
                 selection_context,
             )
         candidates.append(
@@ -157,5 +194,5 @@ def collect_source_candidates(
             )
         )
         label_ord += 1
-    _ = selection_project
+
     return candidates, missing_profiles
