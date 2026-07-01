@@ -26,6 +26,14 @@ from booktx.cli_support import (
     console,
     resolve_profile_local_path,
 )
+from booktx.config import list_profiles, load_project
+from booktx.context import context_markdown_path, load_context
+from booktx.context_organization import (
+    audit_context_organization,
+    compare_profile_contexts,
+    render_context_organization_report,
+    safe_report_path,
+)
 from booktx.context_packs import ContextPackImportResult, SeriesContextPack
 from booktx.errors import BooktxError
 from booktx.path_display import display_path
@@ -242,6 +250,122 @@ def context_status(
     )
 
 
+def _context_doctor_payload(issues: list[object]) -> dict[str, object]:
+    counts = {"error": 0, "warning": 0, "info": 0}
+    for issue in issues:
+        severity = issue.severity
+        counts[severity] += 1
+    return {
+        "summary": {**counts, "total": len(issues)},
+        "issues": [issue.model_dump() for issue in issues],
+    }
+
+
+def _print_context_doctor_human(issues: list[object]) -> None:
+    payload = _context_doctor_payload(issues)
+    summary = payload["summary"]
+    console.print(
+        f"context organization: errors={summary['error']} "
+        f"warnings={summary['warning']} info={summary['info']} "
+        f"total={summary['total']}"
+    )
+    for issue in issues:
+        profile = f" [{issue.profile}]" if issue.profile else ""
+        console.print(
+            f"- {issue.severity}: {issue.code}{profile} at {issue.location}: "
+            f"{issue.message}"
+        )
+        if issue.suggested_action:
+            console.print(f"  action: {issue.suggested_action}")
+
+
+def _doctor_report_path(
+    runtime: RuntimeContext, path: Path | None, compare: bool
+) -> Path:
+    if path is not None:
+        if path.is_absolute():
+            return path
+        if runtime.mode.isolated_output and runtime.mode.profile_root is not None:
+            return runtime.mode.profile_root / path
+        return runtime.mode.project_root / path
+    if compare:
+        return (
+            runtime.mode.project_root
+            / ".booktx"
+            / "reports"
+            / "context-organization-report.md"
+        )
+    reports_dir = runtime.project.reports_dir or (
+        runtime.project.booktx_dir / "reports"
+    )
+    return reports_dir / "context-organization-report.md"
+
+
+@context_app.command(name="doctor")
+def context_doctor(
+    project_dir: Path = typer.Argument(..., help="Project directory."),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Translation profile name."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON."
+    ),
+    compare_profiles: bool = typer.Option(
+        False, "--compare-profiles", help="Compare sibling profile contexts."
+    ),
+    write_report: Path | None = typer.Option(
+        None, "--write-report", help="Write a Markdown report."
+    ),
+) -> None:
+    """Audit context organization without mutating context state."""
+    runtime = _load_runtime_or_exit(
+        project_dir, profile=profile, require_profile=not compare_profiles
+    )
+    if compare_profiles and runtime.mode.isolated_output:
+        _die("--compare-profiles is not available in isolated profile-root mode")
+    try:
+        if compare_profiles:
+            profiles = list_profiles(runtime.mode.project_root)
+            contexts = {}
+            for prof in profiles:
+                project = load_project(
+                    runtime.mode.project_root, profile=prof, require_profile=True
+                )
+                ctx = load_context(project)
+                if ctx is not None:
+                    contexts[prof] = ctx
+            issues = compare_profile_contexts(contexts)
+        else:
+            ctx = load_context_or_die(runtime.project)
+            md_path = context_markdown_path(runtime.project)
+            rendered = md_path.read_text("utf-8") if md_path.is_file() else None
+            issues = audit_context_organization(
+                ctx, profile=runtime.project.profile, rendered_markdown=rendered
+            )
+        if write_report is not None:
+            report_path = _doctor_report_path(runtime, write_report, compare_profiles)
+            safe_report_path(report_path)
+            from booktx.io_utils import write_text_atomic
+
+            write_text_atomic(report_path, render_context_organization_report(issues))
+            if not json_output:
+                console.print(
+                    f"wrote {display_path(report_path, runtime.mode)}",
+                    soft_wrap=True,
+                )
+    except BooktxError as exc:
+        _handle_booktx_error(exc)
+        return
+    except ValueError as exc:
+        _die(str(exc))
+    if json_output:
+        typer.echo(
+            json.dumps(_context_doctor_payload(issues), indent=2, sort_keys=True)
+        )
+        return
+    _print_context_doctor_human(issues)
+
+
 @context_app.command(name="render")
 def context_render(
     project_dir: Path = typer.Argument(..., help="Project directory."),
@@ -261,6 +385,11 @@ def context_render(
         "--force-discard-md-only",
         help="Allow --write to overwrite despite unsafe Markdown-only notes.",
     ),
+    view: str = typer.Option(
+        "full",
+        "--view",
+        help="Render view: full, effective, or provenance.",
+    ),
 ) -> None:
     """Render context.md from context.json (dry run by default)."""
     runtime = _load_runtime_or_exit(project_dir, profile=profile, require_profile=True)
@@ -272,6 +401,7 @@ def context_render(
             write=write,
             stdout=stdout,
             force_discard_md_only=force_discard_md_only,
+            view=view,
         )
     except BooktxError as exc:
         _handle_booktx_error(exc)

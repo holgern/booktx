@@ -792,23 +792,18 @@ def _render_chapter_notes_section(chapters: list[ChapterContext]) -> list[str]:
     return lines
 
 
-def render_context_markdown(context: TranslationContext) -> str:
-    """Render a short, agent-readable markdown view of ``context``.
+def _render_global_rules_section(rules: list[str]) -> list[str]:
+    if not rules:
+        return []
+    lines = ["## Global rules", ""]
+    for rule in rules:
+        lines.append(f"- {rule}")
+    lines.append("")
+    return lines
 
-    The markdown is always derived from ``context``; it is never authoritative.
-    """
-    lines: list[str] = []
-    lines.extend(_render_header(context))
-    lines.extend(_render_style_section(context.style))
-    lines.extend(_render_glossary_section(context.glossary))
-    lines.extend(_render_questions_section(context.questions))
-    if context.global_rules:
-        lines += ["## Global rules", ""]
-        for rule in context.global_rules:
-            lines.append(f"- {rule}")
-        lines.append("")
-    lines.extend(_render_chapter_notes_section(context.chapter_contexts))
-    lines += [
+
+def _render_agent_rules_section() -> list[str]:
+    return [
         "## Rules for agents",
         "",
         "- Read this file before translating every new chapter.",
@@ -820,6 +815,60 @@ def render_context_markdown(context: TranslationContext) -> str:
         "- Update chapter notes after completing a chapter.",
         "",
     ]
+
+
+def _render_effective_chapter_memory(chapters: list[ChapterContext]) -> list[str]:
+    if not chapters:
+        return []
+    lines = ["## Chapter memory", ""]
+    has_decisions = False
+    for ch in chapters:
+        title = f" — {ch.title}" if ch.title else ""
+        lines.append(f"### {ch.chapter_id}{title}")
+        if ch.source_summary:
+            lines.append(f"- Source summary: {ch.source_summary}")
+        if ch.translation_summary:
+            lines.append(f"- Translation summary: {ch.translation_summary}")
+        for issue in ch.open_issues:
+            lines.append(f"- Open issue: {issue}")
+        if ch.decisions_added:
+            has_decisions = True
+    if has_decisions:
+        lines.append("")
+        lines.append(
+            "Note: chapter decisions exist as provenance. Review candidates"
+            " with `booktx context doctor`."
+        )
+    lines.append("")
+    return lines
+
+
+def render_context_markdown(
+    context: TranslationContext,
+    *,
+    view: Literal["full", "effective", "provenance"] = "full",
+) -> str:
+    """Render a short, agent-readable markdown view of ``context``.
+
+    The markdown is always derived from ``context``; it is never authoritative.
+    """
+    lines: list[str] = []
+    lines.extend(_render_header(context))
+    if view == "provenance":
+        lines.extend(_render_questions_section(context.questions))
+        lines.extend(_render_chapter_notes_section(context.chapter_contexts))
+        lines.extend(_render_agent_rules_section())
+        return "\n".join(lines)
+
+    lines.extend(_render_style_section(context.style))
+    lines.extend(_render_glossary_section(context.glossary))
+    lines.extend(_render_global_rules_section(context.global_rules))
+    if view == "effective":
+        lines.extend(_render_effective_chapter_memory(context.chapter_contexts))
+    else:
+        lines.extend(_render_questions_section(context.questions))
+        lines.extend(_render_chapter_notes_section(context.chapter_contexts))
+    lines.extend(_render_agent_rules_section())
     return "\n".join(lines)
 
 

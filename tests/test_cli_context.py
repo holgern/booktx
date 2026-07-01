@@ -1269,3 +1269,145 @@ def test_context_sync_write_blocks_on_conflict_without_mutation(tmp_path: Path):
         mode="json"
     )
     assert after == before
+
+
+def test_context_doctor_json_reports_single_profile_issue(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    runner.invoke(app, ["context", "init", str(project_dir), "--non-interactive"])
+    res = runner.invoke(
+        app,
+        [
+            "context",
+            "add-term",
+            str(project_dir),
+            "empire",
+            "--target",
+            "Imperium",
+            "--enforce",
+            "error",
+        ],
+    )
+    assert res.exit_code == 0, res.output
+
+    doctor = runner.invoke(app, ["context", "doctor", str(project_dir), "--json"])
+
+    assert doctor.exit_code == 0, doctor.output
+    payload = json.loads(doctor.output)
+    assert payload["summary"]["warning"] >= 1
+    assert any(
+        issue["code"] == "advisory_entry_looks_binding" for issue in payload["issues"]
+    )
+
+
+def test_context_doctor_compare_profiles_json_reports_divergence(tmp_path: Path):
+    project_dir = _make_sync_project(tmp_path)
+    for profile in ("de_source", "de_flash"):
+        runner.invoke(
+            app,
+            [
+                "context",
+                "init",
+                str(project_dir),
+                "--profile",
+                profile,
+                "--non-interactive",
+            ],
+        )
+    for profile, target in (
+        ("de_source", "Gottesanbeter"),
+        ("de_flash", "Gottesanbeterin"),
+    ):
+        res = runner.invoke(
+            app,
+            [
+                "context",
+                "add-term",
+                str(project_dir),
+                "mantis",
+                "--profile",
+                profile,
+                "--target",
+                target,
+            ],
+        )
+        assert res.exit_code == 0, res.output
+
+    doctor = runner.invoke(
+        app, ["context", "doctor", str(project_dir), "--compare-profiles", "--json"]
+    )
+
+    assert doctor.exit_code == 0, doctor.output
+    payload = json.loads(doctor.output)
+    assert any(
+        issue["code"] == "profile_glossary_target_divergence"
+        for issue in payload["issues"]
+    )
+
+
+def test_context_doctor_compare_profiles_rejected_in_isolated_mode(
+    tmp_path: Path, monkeypatch
+):
+    project_dir = _make_sync_project(tmp_path)
+    profile = "de_source"
+    runner.invoke(
+        app,
+        [
+            "context",
+            "init",
+            str(project_dir),
+            "--profile",
+            profile,
+            "--non-interactive",
+        ],
+    )
+    profile_dir = project_dir / "translations" / profile
+    monkeypatch.chdir(profile_dir)
+
+    res = runner.invoke(app, ["context", "doctor", ".", "--compare-profiles"])
+
+    assert res.exit_code == 1
+    assert "isolated profile-root mode" in res.output
+
+
+def test_context_doctor_write_report_uses_safe_location(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    runner.invoke(app, ["context", "init", str(project_dir), "--non-interactive"])
+    report = Path.cwd() / ".context-organization-report-test.md"
+    report.unlink(missing_ok=True)
+    try:
+        res = runner.invoke(
+            app,
+            [
+                "context",
+                "doctor",
+                str(project_dir),
+                "--write-report",
+                str(report),
+            ],
+        )
+
+        assert res.exit_code == 0, res.output
+        assert report.is_file()
+        assert "Context organization report" in report.read_text("utf-8")
+    finally:
+        report.unlink(missing_ok=True)
+
+
+def test_context_render_effective_view_omits_answered_questions(tmp_path: Path):
+    project_dir = _make_project(tmp_path)
+    runner.invoke(app, ["context", "init", str(project_dir), "--non-interactive"])
+    res = runner.invoke(
+        app, ["context", "answer", str(project_dir), "Q002", "--text", "balanced"]
+    )
+    assert res.exit_code == 0, res.output
+
+    full = runner.invoke(app, ["context", "render", str(project_dir), "--stdout"])
+    effective = runner.invoke(
+        app, ["context", "render", str(project_dir), "--view", "effective", "--stdout"]
+    )
+
+    assert full.exit_code == 0, full.output
+    assert effective.exit_code == 0, effective.output
+    assert "## Answered questions" in full.output
+    assert "## Answered questions" not in effective.output
+    assert "## Style" in effective.output

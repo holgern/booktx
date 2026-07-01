@@ -19,6 +19,42 @@ translations/<profile>/context-history/views/<sha>/{context.json,context.md,mani
 7. Chapter-note appends change the next task's effective context, but they do not create a new dotted version by themselves.
 8. Each new translation task snapshots its composed effective context view under `context-history/views/<sha>/` and accepted candidates preserve that task-time evidence.
 
+## Source of truth and organization doctor
+
+`context.json` is the source of truth. Structured `style`, `global_rules`, and
+glossary entries are active policy. Setup questions and chapter notes are
+provenance unless their decisions are promoted into structured policy with
+context commands such as `context approve`, `context mandate-term`,
+`context add-term`, or `context reset-term`.
+
+Use the report-only organization doctor to find duplicated or hidden policy:
+
+```bash
+booktx context doctor ./book --profile PROFILE
+booktx context doctor ./book --profile PROFILE --json
+booktx context doctor ./book --compare-profiles --json
+booktx context doctor ./book --profile PROFILE --write-report reports/context-organization-report.md
+```
+
+Single-profile doctor works in project-root and isolated profile-root mode.
+`--compare-profiles` is a same-book cross-profile workflow and is rejected in
+isolated profile-root mode. Doctor does not mutate context. It reports issues
+such as Q006 arrow terms, chapter-note terminology candidates, advisory entries
+that look binding, and sibling profile glossary drift.
+
+`context render` supports explicit views:
+
+```bash
+booktx context render ./book --profile PROFILE --view full
+booktx context render ./book --profile PROFILE --view effective --stdout
+booktx context render ./book --profile PROFILE --view provenance --stdout
+```
+
+The default remains `full` for compatibility. Use `effective` to inspect a
+cleaner agent prompt that omits answered setup questions and treats chapter
+decisions as candidates rather than current policy. Use `provenance` to audit
+setup answers and chapter decisions.
+
 ## Same-book multi-profile context sync
 
 When several sibling profiles translate the same book and language pair, keep

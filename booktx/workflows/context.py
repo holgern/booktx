@@ -353,9 +353,15 @@ def render_context_command(
     write: bool,
     stdout: bool,
     force_discard_md_only: bool,
+    view: str = "full",
 ) -> dict[str, Any]:
     """Implement the ``context render`` command; return a render result."""
-    rendered = render_context_markdown(ctx)
+    if view not in {"full", "effective", "provenance"}:
+        raise _err(
+            "context_render_view",
+            "--view must be one of full, effective, or provenance",
+        )
+    rendered = render_context_markdown(ctx, view=view)  # type: ignore[arg-type]
     if stdout:
         return {"kind": "stdout", "rendered": rendered}
     md_path = context_markdown_path(proj)
@@ -368,7 +374,9 @@ def render_context_command(
     if write:
         if drift.unsafe_to_overwrite and not force_discard_md_only:
             raise _err("context_markdown_drift", _drift_unsafe_message(drift))
-        write_context_markdown(proj, ctx)
+        from booktx.io_utils import write_text_atomic
+
+        write_text_atomic(md_path, rendered)
         return {
             "kind": "wrote",
             "path": md_path,
