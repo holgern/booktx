@@ -55,6 +55,9 @@ __all__ = [
     "TranslationTodoChapter",
     "TranslationTodo",
     "NamesFile",
+    "SourceAnalysisPatternsConfig",
+    "SourceAnalysisGenericLemmasConfig",
+    "SourceAnalysisConfig",
     "SourceConfig",
     "ProfileIdentityConfig",
     "ProfileConfig",
@@ -827,6 +830,43 @@ class NamesFile(BaseModel):
     protected_terms: list[str] = Field(default_factory=list)
 
 
+class SourceAnalysisPatternsConfig(BaseModel):
+    """Optional source-analysis pattern configuration.
+
+    Stored under ``[source_analysis.patterns]`` in ``.booktx/source-config.toml``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    world_morphemes: list[str] = Field(default_factory=list)
+    include_regex: list[str] = Field(default_factory=list)
+    exclude_regex: list[str] = Field(default_factory=list)
+
+
+class SourceAnalysisGenericLemmasConfig(BaseModel):
+    """Optional project-local generic-lemma additions for source analysis."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    extra: list[str] = Field(default_factory=list)
+
+
+class SourceAnalysisConfig(BaseModel):
+    """Optional translation-risk mining configuration for source analysis."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    include_singletons: bool = True
+    max_per_bucket: int = Field(default=80, ge=1)
+    min_risk_score: float = 3.0
+    patterns: SourceAnalysisPatternsConfig = Field(
+        default_factory=SourceAnalysisPatternsConfig
+    )
+    generic_lemmas: SourceAnalysisGenericLemmasConfig = Field(
+        default_factory=SourceAnalysisGenericLemmasConfig
+    )
+
+
 class SourceConfig(BaseModel):
     """Source-only config stored in ``.booktx/source-config.toml``."""
 
@@ -837,6 +877,7 @@ class SourceConfig(BaseModel):
     source_file: str = Field(default="", description="Filename inside source/")
     format: str = Field(default="markdown", description="Document format")
     chunk_size: int = Field(default=50, ge=1, description="Max records per chunk")
+    source_analysis: SourceAnalysisConfig | None = None
 
     @field_validator("format")
     @classmethod

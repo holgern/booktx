@@ -138,11 +138,10 @@ def test_ignore_survives_reanalysis_and_prefill_is_dry_run_idempotent(
     assert payload != dry_payload
     assert payload["ready"] is False
     assert all(
-        entry.get("source_analysis_candidate_id") != candidate_id
-        for entry in payload["glossary"]
+        entry.get("origin") != "source_analysis" for entry in payload["glossary"]
     )
     assert any(
-        entry.get("origin") == "source_analysis" for entry in payload["glossary"]
+        question.get("origin") == "source_analysis" for question in payload["questions"]
     )
     repeated = runner.invoke(
         app,
@@ -158,6 +157,64 @@ def test_ignore_survives_reanalysis_and_prefill_is_dry_run_idempotent(
     )
     assert repeated.exit_code == 0, repeated.output
     assert json.loads(context_path.read_text()) == payload
+
+
+def test_context_prefill_advisory_requires_opt_in(tmp_path: Path) -> None:
+    source = tmp_path / "advisory.md"
+    source.write_text(
+        "# One\n\nThe silk harbor opened. The silk harbor closed.\n",
+        encoding="utf-8",
+    )
+    root = tmp_path / "advisory"
+    for command in (
+        ["init", str(root), "--target", "de", "--source-file", str(source)],
+        ["extract", str(root)],
+        ["chapters", str(root)],
+        ["context", "init", str(root), "--profile", "de_default"],
+        ["source", "analyze", str(root), "--engine", "simple", "--write"],
+    ):
+        result = runner.invoke(app, command)
+        assert result.exit_code == 0, (command, result.output)
+    context_path = root / "translations" / "de_default" / "context.json"
+
+    default_prefill = runner.invoke(
+        app,
+        [
+            "context",
+            "prefill",
+            str(root),
+            "--profile",
+            "de_default",
+            "--from-source-analysis",
+            "--write",
+        ],
+    )
+    assert default_prefill.exit_code == 0, default_prefill.output
+    default_payload = json.loads(context_path.read_text())
+    assert all(
+        entry.get("origin") != "source_analysis"
+        for entry in default_payload["glossary"]
+    )
+
+    advisory_prefill = runner.invoke(
+        app,
+        [
+            "context",
+            "prefill",
+            str(root),
+            "--profile",
+            "de_default",
+            "--from-source-analysis",
+            "--include-advisory",
+            "--write",
+        ],
+    )
+    assert advisory_prefill.exit_code == 0, advisory_prefill.output
+    advisory_payload = json.loads(context_path.read_text())
+    assert any(
+        entry.get("origin") == "source_analysis"
+        for entry in advisory_payload["glossary"]
+    )
 
 
 def test_promote_candidate_records_profile_reference_and_never_changes_names(

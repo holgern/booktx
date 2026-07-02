@@ -236,6 +236,34 @@ booktx context sync ./book \
 This is dry run by default, reuses the context-pack merge rules, and never
 shares mutable files directly across profiles.
 
+## Source-analysis review queue
+
+Treat `booktx source analyze` as a translation-risk mining pass, not as an
+automatic glossary prefill.
+
+Use:
+
+```bash
+booktx source analyze . --write
+booktx source analyze . --write --sync-profiles
+booktx source analysis .
+booktx context prefill . --profile PROFILE --from-source-analysis
+booktx context prefill . --profile PROFILE --from-source-analysis --include-advisory --write
+booktx context promote-candidate . CAND-... --profile PROFILE --as-question --write
+booktx context promote-candidate . CAND-... --profile PROFILE --target "TARGET" --require-target --enforce error --write
+booktx source ignore-candidate . CAND-... --reason "ordinary vocabulary" --write
+booktx source review-candidate . CAND-... --reason "checked, no glossary decision needed" --write
+```
+
+Rules:
+
+- The JSON report is authoritative; Markdown is a bucketed review queue.
+- Default `context prefill --from-source-analysis` creates review questions for
+  binding-glossary, name-policy, and invented/rare candidates.
+- Advisory glossary entries remain opt-in behind `--include-advisory`.
+- If profile-root `source analysis` reports a missing snapshot, rerun the
+  project-root analysis with `--write --sync-profiles`.
+
 ## Translation workflow
 
 Request a durable block task:

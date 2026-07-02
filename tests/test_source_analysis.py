@@ -473,6 +473,225 @@ class TestSimpleEngine:
         # English corpus still produces a report; this asserts the engine runs.
         assert report.record_count >= 1
 
+    def test_generic_vocabulary_is_suppressed_by_default(self, tmp_path):
+        doc = (
+            "# One\n\nThe man saw the people. The woman moved her lips. "
+            "The man had time.\n"
+        )
+        project_dir = _make_markdown_project(tmp_path, doc)
+        proj = load_source_project(project_dir)
+        report = build_source_analysis(proj, engine_requested="simple", min_count=2)
+        texts = {candidate.text for candidate in report.candidates}
+        assert {"man", "people", "woman", "lips", "time"}.isdisjoint(texts)
+        assert report.suppressed_counts.get("generic_single_token", 0) >= 4
+
+    def test_hyphenated_world_terms_are_binding_candidates(self, tmp_path):
+        doc = "# One\n\nA Spider-kinden envoy met a Fly-kinden pilot.\n"
+        project_dir = _make_markdown_project(tmp_path, doc)
+        proj = load_source_project(project_dir)
+        report = build_source_analysis(proj, engine_requested="simple", min_count=2)
+        buckets = {
+            candidate.text: candidate.review_bucket for candidate in report.candidates
+        }
+        assert buckets["Spider-kinden"] == "binding_glossary"
+        assert buckets["Fly-kinden"] == "binding_glossary"
+        assert "Spider kinden" not in buckets
+        assert "Fly kinden" not in buckets
+
+    def test_rare_calendar_compound_is_emitted(self, tmp_path):
+        doc = "# One\n\nA tenday later, the army returned.\n"
+        project_dir = _make_markdown_project(tmp_path, doc)
+        proj = load_source_project(project_dir)
+        report = build_source_analysis(proj, engine_requested="simple", min_count=2)
+        tenday = next(
+            candidate for candidate in report.candidates if candidate.text == "tenday"
+        )
+        assert tenday.review_bucket in {"invented_or_rare", "binding_glossary"}
+        assert tenday.count == 1
+
+    def test_name_policy_bucket_keeps_rare_title_case_name(self, tmp_path):
+        doc = "# One\n\nDryclaw entered. Dryclaw left.\n"
+        project_dir = _make_markdown_project(tmp_path, doc)
+        proj = load_source_project(project_dir)
+        report = build_source_analysis(proj, engine_requested="simple", min_count=2)
+        dryclaw = next(
+            candidate for candidate in report.candidates if candidate.text == "Dryclaw"
+        )
+        assert dryclaw.review_bucket in {"name_policy", "invented_or_rare"}
+        assert dryclaw.suggested_context_action in {
+            "review_name_policy",
+            "ask_question",
+        }
+
+    def test_phrase_detection_does_not_cross_glossary_comma(self, tmp_path):
+        doc = "# Glossary\n\n<b>Achaeos</b> – Moth-kinden magician, Che’s lover.\n"
+        project_dir = _make_markdown_project(tmp_path, doc)
+        proj = load_source_project(project_dir)
+
+        report = build_source_analysis(
+            proj,
+            engine_requested="simple",
+            min_count=1,
+            ngram_max=4,
+            top=200,
+        )
+        texts = {candidate.text for candidate in report.candidates}
+        normalized = {candidate.normalized for candidate in report.candidates}
+
+        assert report.analysis_ruleset_version == "3"
+        assert "Moth-kinden" in texts
+        assert "Achaeos" in texts
+        assert "Che" in texts
+
+        assert "moth kinden magician che" not in normalized
+        assert "moth-kinden magician che" not in normalized
+        assert "magician che" not in normalized
+
+    def test_phrase_detection_does_not_cross_dialogue_quote_comma(self, tmp_path):
+        doc = "# One\n\n‘You’re like Mantis-kinden,’ Che said.\n"
+        project_dir = _make_markdown_project(tmp_path, doc)
+        proj = load_source_project(project_dir)
+
+        report = build_source_analysis(
+            proj,
+            engine_requested="simple",
+            min_count=1,
+            ngram_max=4,
+            top=200,
+        )
+
+        normalized = {candidate.normalized for candidate in report.candidates}
+        assert "mantis-kinden" in normalized
+        assert "kinden che" not in normalized
+        assert "mantis kinden che said" not in normalized
+        assert "mantis-kinden che said" not in normalized
+
+    def test_phrase_detection_does_not_cross_ellipsis(self, tmp_path):
+        doc = "# One\n\n‘Beetle-kinden . . .’ Thalric started.\n"
+        project_dir = _make_markdown_project(tmp_path, doc)
+        proj = load_source_project(project_dir)
+
+        report = build_source_analysis(
+            proj,
+            engine_requested="simple",
+            min_count=1,
+            ngram_max=4,
+            top=200,
+        )
+
+        normalized = {candidate.normalized for candidate in report.candidates}
+        assert "beetle-kinden" in normalized
+        assert "beetle kinden thalric" not in normalized
+        assert "beetle-kinden thalric" not in normalized
+
+    def test_phrase_detection_does_not_cross_sentence_boundary(self, tmp_path):
+        doc = "# One\n\nTisamon departed. Che arrived.\n"
+        project_dir = _make_markdown_project(tmp_path, doc)
+        proj = load_source_project(project_dir)
+
+        report = build_source_analysis(
+            proj,
+            engine_requested="simple",
+            min_count=1,
+            ngram_max=3,
+            top=200,
+        )
+
+        normalized = {candidate.normalized for candidate in report.candidates}
+        assert "departed che" not in normalized
+        assert "tisamon departed che" not in normalized
+
+    def test_boundary_safe_repeated_phrase_still_emitted(self, tmp_path):
+        doc = (
+            "# One\n\n"
+            "The Apt Empire endured. The Apt Empire expanded. "
+            "The Apt Empire returned.\n"
+        )
+        project_dir = _make_markdown_project(tmp_path, doc)
+        proj = load_source_project(project_dir)
+
+        report = build_source_analysis(
+            proj,
+            engine_requested="simple",
+            min_count=2,
+            ngram_max=2,
+            top=200,
+        )
+
+        normalized = {candidate.normalized for candidate in report.candidates}
+        assert "apt empire" in normalized
+
+    def test_phrase_candidates_do_not_get_singleton_world_morpheme_override(
+        self, tmp_path
+    ):
+        doc = "# One\n\nA Moth-kinden magician, Che arrived.\n"
+        project_dir = _make_markdown_project(tmp_path, doc)
+        proj = load_source_project(project_dir)
+
+        report = build_source_analysis(
+            proj,
+            engine_requested="simple",
+            min_count=2,
+            ngram_max=4,
+            top=200,
+        )
+
+        assert all(
+            not (
+                candidate.kind == "phrase"
+                and "singleton_override" in candidate.reason_codes
+            )
+            for candidate in report.candidates
+        )
+
+
+class TestPhraseBoundaryHelpers:
+    def test_hard_phrase_boundary_rejects_opaque_gap(self):
+        from booktx.source_analysis import (
+            _Span,
+            _Token,
+            _window_crosses_hard_phrase_boundary,
+        )
+
+        text = "Apt code Empire"
+        window = [
+            _Token(
+                surface="Apt",
+                normalized="apt",
+                start=0,
+                end=3,
+                bucket="title",
+                protected=False,
+            ),
+            _Token(
+                surface="Empire",
+                normalized="empire",
+                start=9,
+                end=15,
+                bucket="title",
+                protected=False,
+            ),
+        ]
+
+        assert _window_crosses_hard_phrase_boundary(
+            text,
+            window,
+            opaque_spans=[_Span(4, 8)],
+        )
+
+    def test_phrasplit_clause_offsets_are_exact_for_source_analysis(self):
+        from phrasplit import split_with_offsets
+
+        text = "<b>Achaeos</b> – Moth-kinden magician, Che’s lover"
+        segments = split_with_offsets(text, mode="clause", use_spacy=False)
+
+        assert segments
+        for segment in segments:
+            assert text[segment.char_start : segment.char_end] == segment.text
+
+        assert any(segment.text.endswith("magician,") for segment in segments)
+        assert any(segment.text == "Che’s lover" for segment in segments)
+
 
 # --- style metrics (todo-0012) ----------------------------------------------
 
@@ -539,12 +758,15 @@ class TestSnapshotAndMarkdown:
             tmp_path, "# C\n\nTisamon Tisamon wasp-kinden wasp-kinden.\n"
         )
         proj = load_source_project(project_dir)
-        report = build_source_analysis(proj, min_count=2)
+        report = build_source_analysis(proj, engine_requested="simple", min_count=2)
         md = render_report_markdown(report)
         assert "# booktx source analysis" in md
-        assert "## Highest priority candidates" in md
+        assert "## Review first: binding glossary decisions" in md
+        assert "## Review names and titles" in md
+        assert "## Suppressed/no-action summary" in md
         assert "## Style observations" in md
-        assert "## Full candidates" in md
+        assert "booktx context promote-candidate" in md
+        assert "booktx source review-candidate" in md
         assert report.analysis_sha256 in md
         # No internal absolute paths leak into the rendered view.
         assert str(tmp_path) not in md

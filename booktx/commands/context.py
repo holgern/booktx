@@ -82,6 +82,12 @@ def context_prefill(
     all_compatible: bool = typer.Option(
         False, "--all-compatible", help="Prefill all compatible profiles."
     ),
+    include_advisory: bool = typer.Option(
+        False,
+        "--include-advisory",
+        help="Also create advisory glossary entries for "
+        "low-priority phrase candidates.",
+    ),
     write: bool = typer.Option(False, "--write", help="Commit planned changes."),
 ) -> None:
     """Prefill open context recommendations (dry run by default)."""
@@ -107,6 +113,7 @@ def context_prefill(
             report,
             profiles=profiles,
             write=write,
+            include_advisory=include_advisory,
         )
     except BooktxError as exc:
         _handle_booktx_error(exc)

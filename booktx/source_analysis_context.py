@@ -175,110 +175,190 @@ def _normalized_entry_terms(entry: GlossaryEntry) -> set[str]:
     return {entry.source.casefold(), *(v.casefold() for v in entry.source_variants)}
 
 
+def _prefill_glossary_candidate(
+    context: TranslationContext,
+    candidate: SourceCandidate,
+    result: ProfilePrefillResult,
+) -> None:
+    exact = next(
+        (
+            entry
+            for entry in context.glossary
+            if entry.source_analysis_candidate_id == candidate.id
+        ),
+        None,
+    )
+    fallback = next(
+        (
+            entry
+            for entry in context.glossary
+            if candidate.normalized.casefold() in _normalized_entry_terms(entry)
+        ),
+        None,
+    )
+    existing = exact or fallback
+    if existing is not None:
+        if existing.origin == "source_analysis" and existing.status == "open":
+            if existing.source_analysis_candidate_id is None:
+                existing.source_analysis_candidate_id = candidate.id
+                result.updated += 1
+                result.changed = True
+            else:
+                result.skipped += 1
+        else:
+            result.conflicts += 1
+        return
+    context.glossary.append(
+        GlossaryEntry(
+            source=candidate.text,
+            source_variants=[
+                value
+                for value in (
+                    [*candidate.source_variants, *candidate.surface_forms]
+                    if candidate.source_variants
+                    else candidate.surface_forms
+                )
+                if value != candidate.text
+            ],
+            category=candidate.category_hint or candidate.kind,
+            status="open",
+            notes=candidate.reason,
+            enforce="warn",
+            origin="source_analysis",
+            source_analysis_candidate_id=candidate.id,
+        )
+    )
+    result.added += 1
+    result.changed = True
+
+
+def _ensure_source_analysis_question(
+    context: TranslationContext,
+    report: SourceAnalysisReport,
+    result: ProfilePrefillResult,
+    *,
+    topic: str,
+    candidate_ids: list[str],
+    question: str,
+    recommendation: str,
+    recommendation_reason: str,
+) -> None:
+    if not candidate_ids:
+        return
+    existing_question = next(
+        (
+            q
+            for q in context.questions
+            if q.origin == "source_analysis"
+            and q.topic == topic
+            and set(q.source_analysis_candidate_ids) == set(candidate_ids)
+        ),
+        None,
+    )
+    if existing_question is not None:
+        result.skipped += 1
+        return
+    names = [
+        find_candidate(report, candidate_id).text for candidate_id in candidate_ids[:12]
+    ]
+    rendered_question = question + ": " + ", ".join(names)
+    context.questions.append(
+        ContextQuestion(
+            id=next_question_id(context),
+            topic=topic,
+            question=rendered_question,
+            required=False,
+            status="recommended",
+            origin="source_analysis",
+            recommendation=recommendation,
+            recommendation_reason=recommendation_reason,
+            recommendation_source="booktx source analysis",
+            source_analysis_candidate_ids=candidate_ids,
+        )
+    )
+    result.added += 1
+    result.changed = True
+
+
 def _prefill_one(
     context: TranslationContext,
     report: SourceAnalysisReport,
     ignored: set[str],
     profile: str,
+    *,
+    include_advisory: bool,
 ) -> ProfilePrefillResult:
     result = ProfilePrefillResult(profile=profile)
+    binding_ids: list[str] = []
     name_ids: list[str] = []
+    rare_ids: list[str] = []
     for candidate in report.candidates:
         if candidate.id in ignored:
             result.skipped += 1
             continue
-        if candidate.suggested_context_action == "review_name_policy":
+        if candidate.review_bucket == "no_action":
+            result.skipped += 1
+            continue
+        if candidate.review_bucket == "binding_glossary":
+            binding_ids.append(candidate.id)
+            continue
+        if candidate.review_bucket == "name_policy":
             name_ids.append(candidate.id)
             continue
-        if candidate.suggested_context_action not in {
-            "add_advisory_glossary",
-            "review_for_binding_glossary",
-        }:
+        if candidate.review_bucket == "invented_or_rare":
+            rare_ids.append(candidate.id)
             continue
-        exact = next(
-            (
-                entry
-                for entry in context.glossary
-                if entry.source_analysis_candidate_id == candidate.id
-            ),
-            None,
-        )
-        fallback = next(
-            (
-                entry
-                for entry in context.glossary
-                if candidate.normalized.casefold() in _normalized_entry_terms(entry)
-            ),
-            None,
-        )
-        existing = exact or fallback
-        if existing is not None:
-            if existing.origin == "source_analysis" and existing.status == "open":
-                if existing.source_analysis_candidate_id is None:
-                    existing.source_analysis_candidate_id = candidate.id
-                    result.updated += 1
-                    result.changed = True
-                else:
-                    result.skipped += 1
-            else:
-                result.conflicts += 1
+        if (
+            not include_advisory
+            or candidate.suggested_context_action != "add_advisory_glossary"
+        ):
             continue
-        context.glossary.append(
-            GlossaryEntry(
-                source=candidate.text,
-                source_variants=[
-                    value
-                    for value in candidate.surface_forms
-                    if value != candidate.text
-                ],
-                category=candidate.category_hint or candidate.kind,
-                status="open",
-                notes=candidate.reason,
-                enforce="warn",
-                origin="source_analysis",
-                source_analysis_candidate_id=candidate.id,
-            )
-        )
-        result.added += 1
-        result.changed = True
-    if name_ids:
-        existing_question = next(
-            (
-                q
-                for q in context.questions
-                if q.origin == "source_analysis"
-                and set(q.source_analysis_candidate_ids) == set(name_ids)
-            ),
-            None,
-        )
-        if existing_question is None:
-            names = [
-                find_candidate(report, candidate_id).text
-                for candidate_id in name_ids[:12]
-            ]
-            context.questions.append(
-                ContextQuestion(
-                    id=next_question_id(context),
-                    topic="source-analysis names",
-                    question="Review translation policy for recurring names: "
-                    + ", ".join(names),
-                    required=False,
-                    status="recommended",
-                    origin="source_analysis",
-                    recommendation=(
-                        "Decide which names remain unchanged or need a glossary entry."
-                    ),
-                    recommendation_reason=(
-                        "Recurring source names detected before translation."
-                    ),
-                    recommendation_source="booktx source analysis",
-                    source_analysis_candidate_ids=name_ids,
-                )
-            )
-            result.added += 1
-            result.changed = True
-        else:
-            result.skipped += 1
+        _prefill_glossary_candidate(context, candidate, result)
+    _ensure_source_analysis_question(
+        context,
+        report,
+        result,
+        topic="source-analysis binding glossary",
+        candidate_ids=binding_ids,
+        question="Review binding glossary candidates",
+        recommendation=(
+            "Confirm which terms need a binding glossary decision, then "
+            "promote each approved term with `booktx context promote-candidate`.",
+        ),
+        recommendation_reason=(
+            "Source analysis found likely world-building or terminology "
+            "candidates that should be reviewed before translation.",
+        ),
+    )
+    _ensure_source_analysis_question(
+        context,
+        report,
+        result,
+        topic="source-analysis names",
+        candidate_ids=name_ids,
+        question="Review translation policy for recurring names and titles",
+        recommendation=(
+            "Decide which names remain unchanged, which need transliteration, "
+            "and which should become glossary-backed policy.",
+        ),
+        recommendation_reason="Source analysis found recurring title/name candidates.",
+    )
+    _ensure_source_analysis_question(
+        context,
+        report,
+        result,
+        topic="source-analysis rare terms",
+        candidate_ids=rare_ids,
+        question="Review rare or invented-looking source terms",
+        recommendation=(
+            "Confirm whether these rare terms need a glossary decision, a "
+            "name-policy note, or an explicit ignore/review decision.",
+        ),
+        recommendation_reason=(
+            "Source analysis kept rare singleton or low-frequency candidates "
+            "because they look translation-relevant.",
+        ),
+    )
     return result
 
 
@@ -288,6 +368,7 @@ def prefill_contexts(
     *,
     profiles: list[str],
     write: bool,
+    include_advisory: bool = False,
 ) -> PrefillResult:
     decisions = load_decisions(project)
     ignored = {
@@ -305,7 +386,13 @@ def prefill_contexts(
                     "source_analysis_prefill_context_missing",
                     f"profile {profile!r} has no context; run context init first",
                 )
-            result = _prefill_one(context, report, ignored, profile)
+            result = _prefill_one(
+                context,
+                report,
+                ignored,
+                profile,
+                include_advisory=include_advisory,
+            )
             planned.append((profile_project, context, result))
             output.profiles.append(result)
         except (OSError, ValueError) as exc:

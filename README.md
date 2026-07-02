@@ -172,6 +172,36 @@ are never silently overwritten or removed. Use `booktx agents status .` to
 inspect ownership and `booktx agents clean . --mode all` to remove generated
 files.
 
+## Source-analysis review queue
+
+Use source analysis to mine translation-risk terms before real translation
+starts:
+
+```bash
+booktx source analyze ./demo --write
+booktx source analyze ./demo --write --sync-profiles
+booktx source analysis ./demo/translations/de_gpt5_5
+```
+
+This is a review queue, not an approval step. The canonical JSON is
+authoritative and the Markdown is a readable bucketed queue for binding
+glossary candidates, names/titles, rare terms, and suppressed noise.
+
+To turn reviewed candidates into context state:
+
+```bash
+booktx context prefill ./demo --profile de_gpt5_5 --from-source-analysis
+booktx context prefill ./demo --profile de_gpt5_5 --from-source-analysis --include-advisory --write
+booktx context promote-candidate ./demo CAND-... --profile de_gpt5_5 --as-question --write
+booktx context promote-candidate ./demo CAND-... --profile de_gpt5_5 --target "Imperium" --require-target --enforce error --write
+booktx source ignore-candidate ./demo CAND-... --reason "ordinary vocabulary" --write
+```
+
+Default `context prefill --from-source-analysis` creates review questions for
+binding/name/rare candidates and does **not** open advisory glossary entries by
+default. If a profile-root `source analysis` read reports a missing snapshot,
+rerun project-root analysis with `--write --sync-profiles`.
+
 ## Bounded agent runs
 
 When asking an agent to continue for several chapters, create a durable todo:

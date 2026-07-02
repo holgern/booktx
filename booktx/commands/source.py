@@ -186,9 +186,10 @@ def _print_analysis_human(
         console.print("top candidates:")
         for cand in report.candidates[:10]:
             console.print(
-                f"  {cand.id} {cand.text!r} kind={cand.kind} "
-                f"count={cand.count} chapters={cand.chapter_frequency} "
-                f"action={cand.suggested_context_action}"
+                f"  {cand.id} {cand.text!r} bucket={cand.review_bucket} "
+                f"kind={cand.kind} count={cand.count} "
+                f"chapters={cand.chapter_frequency} "
+                f"action={cand.suggested_context_action} risk={cand.risk_score:.2f}"
             )
 
 

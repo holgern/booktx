@@ -86,6 +86,23 @@ def test_sync_profiles_requires_write(tmp_path: Path) -> None:
     assert "requires --write" in result.output
 
 
+def test_profile_analysis_missing_snapshot_hint_mentions_sync_profiles(
+    tmp_path: Path,
+) -> None:
+    root = _project(tmp_path)
+    written = runner.invoke(app, ["source", "analyze", str(root), "--write"])
+    assert written.exit_code == 0, written.output
+    snapshot_path = root / "translations" / "de_default" / "source-analysis.json"
+    if snapshot_path.exists():
+        snapshot_path.unlink()
+    result = runner.invoke(
+        app,
+        ["source", "analysis", str(root / "translations" / "de_default")],
+    )
+    assert result.exit_code != 0
+    assert "--sync-profiles" in result.output
+
+
 def test_profile_creation_copies_current_analysis(tmp_path: Path) -> None:
     root = _project(tmp_path)
     written = runner.invoke(app, ["source", "analyze", str(root), "--write"])

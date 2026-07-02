@@ -89,6 +89,41 @@ Use `context export-pack` / `import-pack` when you need to move reusable policy
 between different books. Use `context sync` when the source and targets are
 sibling profiles inside the same book project.
 
+## Source-analysis review queue
+
+`booktx source analyze` is a source-review command, not a glossary approval
+command. The canonical JSON and generated Markdown are a translation-risk review
+queue for names, world-building terms, titles, and rare terms that may need a
+decision before translation starts.
+
+```bash
+booktx source analyze ./book --write
+booktx source analyze ./book --write --sync-profiles
+booktx source analysis ./book/translations/PROFILE
+```
+
+- The JSON report is authoritative; Markdown is a readable review queue.
+- Profile-root `source analysis` reads only the current profile snapshot. If it
+  says the snapshot is missing or stale, refresh from the project root with
+  `booktx source analyze . --write --sync-profiles`.
+- Default review buckets suppress ordinary vocabulary and contraction fragments.
+
+To turn reviewed candidates into durable context state, use explicit commands:
+
+```bash
+booktx context prefill ./book --profile PROFILE --from-source-analysis
+booktx context prefill ./book --profile PROFILE --from-source-analysis --include-advisory --write
+booktx context promote-candidate ./book CAND-... --profile PROFILE --as-question --write
+booktx context promote-candidate ./book CAND-... --profile PROFILE --target "TARGET" --require-target --enforce error --write
+booktx source ignore-candidate ./book CAND-... --reason "ordinary vocabulary" --write
+booktx source review-candidate ./book CAND-... --reason "checked, no glossary decision needed" --write
+```
+
+Default `context prefill --from-source-analysis` creates **review questions**
+for binding-glossary, name-policy, and invented/rare candidates. It does not
+open advisory glossary entries by default. Use `--include-advisory` only when
+you explicitly want low-priority phrase candidates to seed open glossary rows.
+
 ## Typical workflow
 
 ```bash

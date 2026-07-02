@@ -271,10 +271,16 @@ def read_source_analysis(project: Project, *, isolated: bool) -> SourceAnalysisR
                 "profile-root read requires an active profile",
             )
         snap_path = profile_source_analysis_path(project)
+        canonical = read_canonical_report(project)
         try:
             # Isolated mode deliberately reads only the current profile's
             # snapshot. Runtime resolution has already validated its marker.
-            read = read_snapshot(snap_path)
+            read = read_snapshot(
+                snap_path,
+                expected_analysis_sha256=(
+                    canonical.analysis_sha256 if canonical is not None else None
+                ),
+            )
         except SnapshotValidationError as exc:
             if exc.code == "source_analysis_snapshot_missing":
                 return SourceAnalysisRead(kind="snapshot", missing=True, hint=str(exc))

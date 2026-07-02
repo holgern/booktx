@@ -23,7 +23,9 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
+from functools import cache
 from hashlib import sha256
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -80,7 +82,7 @@ IDENTITY_RULESET_VERSION = "1"
 
 #: Analysis-ruleset version. Covers scoring constants, detector behaviour,
 #: normalization, phrase-boundary/overlap rules, and bundled common-word data.
-ANALYSIS_RULESET_VERSION = "1"
+ANALYSIS_RULESET_VERSION = "3"
 
 #: Version stamp of the bundled common-word lists (feeds the analysis ruleset).
 COMMON_WORDS_VERSION = "2026.07"
@@ -98,6 +100,21 @@ _PHRASE_KINDS = frozenset({"phrase", "title_candidate", "hyphenated_term"})
 _COMMON_PENALTY = 0.2
 _SNIPPET_WIDTH = 120
 _MAX_EXAMPLES_PER_CANDIDATE = 3
+_DEFAULT_MAX_PER_BUCKET = 80
+_DEFAULT_MIN_RISK_SCORE = 3.0
+_DEFAULT_WORLD_MORPHEMES = ("kinden", "opter")
+_DEFAULT_INCLUDE_PATTERNS = (r"(?i)^ten-?day$", r"(?i).*-kinden$")
+_DEFAULT_EXCLUDE_PATTERNS: tuple[str, ...] = ()
+
+SourceReviewBucket = Literal[
+    "binding_glossary",
+    "name_policy",
+    "invented_or_rare",
+    "domain_phrase",
+    "style_signal",
+    "maybe",
+    "no_action",
+]
 
 
 # --- Data models ------------------------------------------------------------
@@ -183,6 +200,16 @@ class SourceCandidate(BaseModel):
         "review_name_policy",
         "review_for_binding_glossary",
     ] = "none"
+    review_bucket: SourceReviewBucket = "maybe"
+    risk_score: float = 0.0
+    genericity_score: float = 0.0
+    rarity_score: float = 0.0
+    morphology_flags: list[str] = Field(default_factory=list)
+    suppression_reason: str | None = None
+    canonical_surface: str | None = None
+    source_variants: list[str] = Field(default_factory=list)
+    token_count: int = 0
+    external_frequency: float | None = None
 
 
 class SourceStyleMetrics(BaseModel):
@@ -223,6 +250,7 @@ class SourceAnalysisReport(BaseModel):
     candidates: list[SourceCandidate]
     style_metrics: SourceStyleMetrics
     warnings: list[str] = Field(default_factory=list)
+    suppressed_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class SourceAnalysisSnapshot(BaseModel):
@@ -295,6 +323,102 @@ def common_words_metadata(language: str) -> dict[str, str]:
     }
 
 
+@cache
+def _bundled_generic_lemmas(language: str) -> frozenset[str]:
+    """Return bundled generic lemmas for ``language``.
+
+    The file is package data because it is part of the ruleset, not user state.
+    Missing bundled data is treated as a code/package error for supported
+    languages so the failure is explicit instead of silently disabling the
+    suppression signal.
+    """
+
+    lang = (language or "").lower().split("-")[0]
+    if lang != "en":
+        return frozenset()
+    path = Path(__file__).with_name("data") / f"common_lemmas_{lang}.txt"
+    try:
+        raw = path.read_text("utf-8")
+    except OSError as exc:  # pragma: no cover - packaging/runtime guard
+        raise _err(
+            "source_analysis_common_lemmas_missing",
+            f"bundled generic-lemma data is unavailable: {path.name}",
+        ) from exc
+    values = [line.strip().casefold() for line in raw.splitlines()]
+    return frozenset(value for value in values if value and not value.startswith("#"))
+
+
+@dataclass(frozen=True)
+class _SourceAnalysisRuntimeConfig:
+    include_singletons: bool
+    max_per_bucket: int
+    min_risk_score: float
+    world_morphemes: tuple[str, ...]
+    include_patterns: tuple[re.Pattern[str], ...]
+    exclude_patterns: tuple[re.Pattern[str], ...]
+    generic_lemmas: frozenset[str]
+
+
+def _compile_patterns(values: list[str], *, label: str) -> tuple[re.Pattern[str], ...]:
+    compiled: list[re.Pattern[str]] = []
+    for value in values:
+        try:
+            compiled.append(re.compile(value))
+        except re.error as exc:
+            raise _err(
+                "source_analysis_bad_config",
+                f"invalid source-analysis {label} regex {value!r}: {exc}",
+            ) from exc
+    return tuple(compiled)
+
+
+def _runtime_source_analysis_config(
+    project: Project, source_language: str
+) -> _SourceAnalysisRuntimeConfig:
+    """Resolve project-local source-analysis config with deterministic defaults."""
+
+    configured = project.source_config.source_analysis
+    patterns = configured.patterns if configured is not None else None
+    lemmas = configured.generic_lemmas if configured is not None else None
+    world_morphemes = tuple(
+        item.casefold()
+        for item in (
+            patterns.world_morphemes
+            if patterns is not None
+            else _DEFAULT_WORLD_MORPHEMES
+        )
+        if item.strip()
+    )
+    include_regex = list(
+        patterns.include_regex if patterns is not None else _DEFAULT_INCLUDE_PATTERNS
+    )
+    exclude_regex = list(
+        patterns.exclude_regex if patterns is not None else _DEFAULT_EXCLUDE_PATTERNS
+    )
+    extra_lemmas = frozenset(
+        item.casefold() for item in (lemmas.extra if lemmas is not None else []) if item
+    )
+    return _SourceAnalysisRuntimeConfig(
+        include_singletons=(
+            configured.include_singletons if configured is not None else True
+        ),
+        max_per_bucket=(
+            configured.max_per_bucket
+            if configured is not None
+            else _DEFAULT_MAX_PER_BUCKET
+        ),
+        min_risk_score=(
+            configured.min_risk_score
+            if configured is not None
+            else _DEFAULT_MIN_RISK_SCORE
+        ),
+        world_morphemes=world_morphemes,
+        include_patterns=_compile_patterns(include_regex, label="include"),
+        exclude_patterns=_compile_patterns(exclude_regex, label="exclude"),
+        generic_lemmas=_bundled_generic_lemmas(source_language) | extra_lemmas,
+    )
+
+
 # --- Canonical hashing helpers ----------------------------------------------
 
 
@@ -316,6 +440,8 @@ def _sha256_text(text: str) -> str:
 _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 # Hyphenated compound: two or more alphabetic runs joined by ASCII hyphens.
 _HYPHENATED_RE = re.compile(r"[^\W\d_]+(?:-[^\W\d_]+)+", re.UNICODE)
+_HARD_PHRASE_GAP_RE = re.compile(r"(?:\.\s*){2,}|[,;:!?…]|[—–]|[\"“”‘’]")
+_PHRASE_TOKEN_RE = re.compile(r"[^\W\d_]+(?:-[^\W\d_]+)+|[^\W\d_]+", re.UNICODE)
 # Matches a placeholder token OR, for EPUB records, a residual inline XHTML tag.
 _TOKEN_OR_XHTML_RE = re.compile(r"__(?:NAME|TAG)_(\d+)__|<[^>]*>")
 _TOKEN_ONLY_RE = re.compile(r"__(?:NAME|TAG)_(\d+)__")
@@ -811,6 +937,80 @@ def _tokenize_prepared(prepared: PreparedRecord) -> list[_Token]:
     return tokens
 
 
+def _phrasplit_model_for_source(source_language: str) -> str:
+    # Reuse the deterministic language-model mapping already used by chunking.
+    from booktx.chunking import _language_model
+
+    return _language_model(source_language)
+
+
+def _phrase_units(prepared: PreparedRecord, source_language: str) -> list[_Span]:
+    text = prepared.visible_text
+    if not text.strip():
+        return []
+
+    from phrasplit import split_with_offsets
+
+    segments = split_with_offsets(
+        text,
+        mode="clause",
+        use_spacy=False,
+        language_model=_phrasplit_model_for_source(source_language),
+    )
+    spans = [
+        _Span(int(segment.char_start), int(segment.char_end)) for segment in segments
+    ]
+    return [span for span in spans if span.start < span.end]
+
+
+def _tokenize_phrase_unit(prepared: PreparedRecord, span: _Span) -> list[_Token]:
+    text = prepared.visible_text
+    tokens: list[_Token] = []
+    for match in _PHRASE_TOKEN_RE.finditer(text, span.start, span.end):
+        start, end = match.start(), match.end()
+        if _in_any_span(start, prepared.opaque_spans) or _in_any_span(
+            (start + end) // 2, prepared.opaque_spans
+        ):
+            continue
+        surface = match.group(0)
+        protected = _in_any_span(start, prepared.protected_spans) or _in_any_span(
+            end - 1, prepared.protected_spans
+        )
+        tokens.append(
+            _Token(
+                surface=surface,
+                normalized=normalize_token(surface),
+                start=start,
+                end=end,
+                bucket=case_bucket(surface),
+                protected=protected,
+            )
+        )
+    return tokens
+
+
+def _gap_contains_opaque_span(gap_start: int, gap_end: int, spans: list[_Span]) -> bool:
+    return any(span.start < gap_end and gap_start < span.end for span in spans)
+
+
+def _window_crosses_hard_phrase_boundary(
+    text: str,
+    window: list[_Token],
+    opaque_spans: list[_Span],
+) -> bool:
+    for left, right in zip(window, window[1:], strict=False):
+        gap = text[left.end : right.start]
+        if _HARD_PHRASE_GAP_RE.search(gap):
+            return True
+        if _gap_contains_opaque_span(left.end, right.start, opaque_spans):
+            return True
+    return False
+
+
+def _window_contains_hyphenated_token(window: list[_Token]) -> bool:
+    return any("-" in token.surface for token in window)
+
+
 def _hyphenated_spans(prepared: PreparedRecord) -> list[tuple[int, int, str]]:
     """Hyphenated compounds with positions, skipping opaque spans."""
     text = prepared.visible_text
@@ -854,9 +1054,54 @@ class _Accum:
     records: set[str] = field(default_factory=set)
     chapters: set[str] = field(default_factory=set)
     surfaces: dict[str, int] = field(default_factory=dict)
+    variant_surfaces: dict[str, int] = field(default_factory=dict)
     first_record_id: str | None = None
     examples: list[SourceAnalysisOccurrence] = field(default_factory=list)
     already_protected: bool = False
+
+
+@dataclass(frozen=True)
+class CandidateFeatures:
+    token_count: int
+    has_hyphen: bool
+    has_title_case: bool
+    has_mixed_case: bool
+    lemma: str | None
+    in_common_lemma_list: bool
+    contains_known_world_morpheme: bool
+    matches_include_pattern: bool
+    matches_exclude_pattern: bool
+
+
+@dataclass(frozen=True)
+class _Classification:
+    review_bucket: SourceReviewBucket
+    suggested_action: Literal[
+        "none",
+        "ask_question",
+        "add_advisory_glossary",
+        "review_name_policy",
+        "review_for_binding_glossary",
+    ]
+    risk_score: float
+    genericity_score: float
+    rarity_score: float
+    morphology_flags: tuple[str, ...]
+    suppression_reason: str | None
+    canonical_surface: str
+    source_variants: tuple[str, ...]
+    include: bool
+
+
+_BUCKET_ORDER: tuple[SourceReviewBucket, ...] = (
+    "binding_glossary",
+    "name_policy",
+    "invented_or_rare",
+    "domain_phrase",
+    "style_signal",
+    "maybe",
+    "no_action",
+)
 
 
 _KIND_PRECEDENCE = {
@@ -1009,65 +1254,74 @@ def _detect_phrases(
     if ngram_max < 2:
         return
     for prepared in prepared_records:
-        tokens = _tokenize_prepared(prepared)
-        n = len(tokens)
-        for size in range(2, ngram_max + 1):
-            for i in range(0, n - size + 1):
-                window = tokens[i : i + size]
-                # Trim leading/trailing boundary (common/short) tokens.
-                lo, hi = 0, len(window)
-                while lo < hi - 1 and _is_phrase_boundary_token(
-                    window[lo].normalized, common
-                ):
-                    lo += 1
-                while hi > lo + 1 and _is_phrase_boundary_token(
-                    window[hi - 1].normalized, common
-                ):
-                    hi -= 1
-                trimmed = window[lo:hi]
-                if len(trimmed) < 2:
-                    continue
-                # Require every surviving token to be non-boundary.
-                if any(
-                    _is_phrase_boundary_token(t.normalized, common) for t in trimmed
-                ):
-                    continue
-                surfaces = [t.surface for t in trimmed]
-                norms = [t.normalized for t in trimmed]
-                joined = " ".join(norms)
-                bucket = _phrase_bucket(surfaces)
-                kind = "title_candidate" if bucket == "title" else "phrase"
-                detector = "title_span" if kind == "title_candidate" else "ngram"
-                identity = candidate_id_from_identity(
-                    source_language=source_language,
-                    normalized=joined,
-                    tokens=norms,
-                    case_bucket_value=bucket,
-                )
-                start = trimmed[0].start
-                end = trimmed[-1].end
-                accum = accum_by_id.get(identity)
-                if accum is None:
-                    accum = _Accum(
-                        identity=identity,
-                        text=" ".join(surfaces),
+        for unit in _phrase_units(prepared, source_language):
+            tokens = _tokenize_phrase_unit(prepared, unit)
+            n = len(tokens)
+            for size in range(2, ngram_max + 1):
+                for i in range(0, n - size + 1):
+                    window = tokens[i : i + size]
+                    # Trim leading/trailing boundary (common/short) tokens.
+                    lo, hi = 0, len(window)
+                    while lo < hi - 1 and _is_phrase_boundary_token(
+                        window[lo].normalized, common
+                    ):
+                        lo += 1
+                    while hi > lo + 1 and _is_phrase_boundary_token(
+                        window[hi - 1].normalized, common
+                    ):
+                        hi -= 1
+                    trimmed = window[lo:hi]
+                    if len(trimmed) < 2:
+                        continue
+                    # Require every surviving token to be non-boundary.
+                    if any(
+                        _is_phrase_boundary_token(t.normalized, common) for t in trimmed
+                    ):
+                        continue
+                    if _window_crosses_hard_phrase_boundary(
+                        prepared.visible_text,
+                        trimmed,
+                        prepared.opaque_spans,
+                    ):
+                        continue
+                    if _window_contains_hyphenated_token(trimmed):
+                        continue
+                    surfaces = [t.surface for t in trimmed]
+                    norms = [t.normalized for t in trimmed]
+                    joined = " ".join(norms)
+                    bucket = _phrase_bucket(surfaces)
+                    kind = "title_candidate" if bucket == "title" else "phrase"
+                    detector = "title_span" if kind == "title_candidate" else "ngram"
+                    identity = candidate_id_from_identity(
+                        source_language=source_language,
                         normalized=joined,
                         tokens=norms,
-                        bucket=bucket,
-                        kind=kind,
-                        detector=detector,
-                        reason_codes=[],
+                        case_bucket_value=bucket,
                     )
-                    accum_by_id[identity] = accum
-                else:
-                    accum.kind = _merge_kind(accum.kind, kind)
-                _add_occurrence(
-                    accum,
-                    prepared=prepared,
-                    surface=" ".join(surfaces),
-                    start=start,
-                    end=end,
-                )
+                    start = trimmed[0].start
+                    end = trimmed[-1].end
+                    accum = accum_by_id.get(identity)
+                    if accum is None:
+                        accum = _Accum(
+                            identity=identity,
+                            text=" ".join(surfaces),
+                            normalized=joined,
+                            tokens=norms,
+                            bucket=bucket,
+                            kind=kind,
+                            detector=detector,
+                            reason_codes=[],
+                        )
+                        accum_by_id[identity] = accum
+                    else:
+                        accum.kind = _merge_kind(accum.kind, kind)
+                    _add_occurrence(
+                        accum,
+                        prepared=prepared,
+                        surface=" ".join(surfaces),
+                        start=start,
+                        end=end,
+                    )
 
 
 _ENTITY_KINDS = {
@@ -1097,6 +1351,21 @@ def _mark_linguistic_candidate(
     if not tokens:
         return
     bucket = _phrase_bucket(_WORD_RE.findall(surface))
+    if detector == "spacy_noun_chunk" and len(tokens) == 1:
+        identity = candidate_id_from_identity(
+            source_language=source_language,
+            normalized=normalized,
+            tokens=tokens,
+            case_bucket_value=bucket,
+        )
+        accum = accum_by_id.get(identity)
+        if accum is None:
+            return
+        accum.detectors.add(detector)
+        accum.reason_codes.append(detector)
+        if lemma and not accum.lemma:
+            accum.lemma = lemma
+        return
     identity = candidate_id_from_identity(
         source_language=source_language,
         normalized=normalized,
@@ -1266,53 +1535,437 @@ def _build_style_metrics(
 def _score_accum(
     accum: _Accum, common: frozenset[str], include_common: bool
 ) -> float | None:
+    # Compatibility score retained for legacy consumers and rough signal only.
     if accum.count <= 0:
         return None
     is_common = accum.normalized in common or all(tok in common for tok in accum.tokens)
-    if is_common and not include_common and accum.kind in {"word"}:
-        # Plain common words are suppressed unless --include-common is set.
-        return None
     uncommon_score = _COMMON_PENALTY if is_common else 1.0
     phrase_bonus = _PHRASE_BONUS if accum.kind in _PHRASE_KINDS else 1.0
-    score = (
+    return (
         math.log(1 + accum.count)
         * (1 + math.log(1 + len(accum.chapters)))
         * uncommon_score
         * phrase_bonus
     )
+
+
+def _all_surfaces(accum: _Accum) -> list[tuple[str, int]]:
+    counts = dict(accum.surfaces)
+    for surface, count in accum.variant_surfaces.items():
+        counts[surface] = counts.get(surface, 0) + count
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+
+
+def _candidate_features(
+    accum: _Accum,
+    *,
+    common: frozenset[str],
+    runtime: _SourceAnalysisRuntimeConfig,
+) -> CandidateFeatures:
+    surfaces = [surface for surface, _ in _all_surfaces(accum)]
+    haystacks = [accum.text, accum.normalized, *surfaces]
+    lemma = accum.lemma.casefold() if accum.lemma else None
+    normalized_no_separators = accum.normalized.replace("-", "").replace(" ", "")
+    contains_known_world_morpheme = any(
+        morpheme in normalized_no_separators
+        or any(morpheme in token for token in accum.tokens)
+        for morpheme in runtime.world_morphemes
+    )
+    matches_include_pattern = any(
+        pattern.search(value)
+        for pattern in runtime.include_patterns
+        for value in haystacks
+    )
+    matches_exclude_pattern = any(
+        pattern.search(value)
+        for pattern in runtime.exclude_patterns
+        for value in haystacks
+    )
+    in_common_lemma_list = (
+        accum.normalized in common
+        or accum.normalized in runtime.generic_lemmas
+        or (lemma in runtime.generic_lemmas if lemma else False)
+        or any(token in runtime.generic_lemmas for token in accum.tokens)
+    )
+    return CandidateFeatures(
+        token_count=len(accum.tokens),
+        has_hyphen=any("-" in surface for surface in haystacks),
+        has_title_case=accum.bucket == "title",
+        has_mixed_case=accum.bucket == "mixed",
+        lemma=lemma,
+        in_common_lemma_list=in_common_lemma_list,
+        contains_known_world_morpheme=contains_known_world_morpheme,
+        matches_include_pattern=matches_include_pattern,
+        matches_exclude_pattern=matches_exclude_pattern,
+    )
+
+
+def _genericity_score(
+    accum: _Accum,
+    *,
+    features: CandidateFeatures,
+    common: frozenset[str],
+    runtime: _SourceAnalysisRuntimeConfig,
+) -> float:
+    score = 0.0
+    if accum.normalized in common or all(token in common for token in accum.tokens):
+        score += 1.0
+    if features.in_common_lemma_list:
+        score += 1.2 if features.token_count == 1 else 0.5
+    generic_token_hits = sum(
+        1
+        for token in accum.tokens
+        if token in common or token in runtime.generic_lemmas
+    )
+    if generic_token_hits:
+        score += (
+            0.8 if features.token_count == 1 else min(1.4, 0.6 * generic_token_hits)
+        )
+    if features.token_count > 1 and accum.tokens[0] in common:
+        score += 0.6
+    if features.token_count > 1 and accum.tokens[-1] in runtime.generic_lemmas:
+        score += 0.8
+    if features.token_count == 1 and accum.kind == "word":
+        score += 0.4
+    if features.token_count == 1 and "spacy_pos_verb" in accum.reason_codes:
+        score += 0.3
     return score
 
 
-def _suggested_action(kind: str, already_protected: bool) -> str:
-    if kind in {"proper_name", "place_name"} and not already_protected:
-        return "review_name_policy"
-    if kind in {"hyphenated_term", "invented_term", "title_candidate"}:
-        return "review_for_binding_glossary"
-    if kind == "phrase":
-        return "add_advisory_glossary"
-    return "none"
+def _rarity_score(accum: _Accum) -> float:
+    if accum.count <= 1:
+        return 1.6
+    if accum.count == 2:
+        return 1.4
+    if accum.count <= 4:
+        return 1.0
+    if accum.count <= 8:
+        return 0.7
+    return 0.3
+
+
+def _detector_priority(accum: _Accum, features: CandidateFeatures) -> float:
+    if accum.kind == "hyphenated_term":
+        return 1.6
+    if features.matches_include_pattern or features.contains_known_world_morpheme:
+        return 1.4
+    if accum.kind in {"proper_name", "place_name", "title_candidate"}:
+        return 1.2
+    if accum.kind == "invented_term":
+        return 1.1
+    if accum.kind == "phrase":
+        return 0.6
+    return 0.2
+
+
+def _build_morphology_flags(accum: _Accum, features: CandidateFeatures) -> list[str]:
+    flags: list[str] = []
+    if features.token_count == 1:
+        flags.append("single_token")
+    if features.has_hyphen:
+        flags.append("hyphenated")
+    if features.has_title_case:
+        flags.append("title_case")
+    if features.has_mixed_case:
+        flags.append("mixed_case")
+    if features.contains_known_world_morpheme:
+        flags.append("world_morpheme")
+    if features.matches_include_pattern:
+        flags.append("include_pattern")
+    if accum.already_protected:
+        flags.append("already_protected")
+    return flags
+
+
+def _compute_high_risk_singleton(
+    accum: _Accum,
+    features: CandidateFeatures,
+    runtime: _SourceAnalysisRuntimeConfig,
+    genericity: float,
+) -> bool:
+    if accum.kind == "phrase":
+        return False
+    return (
+        runtime.include_singletons
+        and accum.count == 1
+        and (
+            accum.kind == "hyphenated_term"
+            or (
+                accum.kind in {"proper_name", "place_name"}
+                and not features.in_common_lemma_list
+            )
+            or (
+                accum.kind == "title_candidate"
+                and genericity < 1.0
+                and features.token_count <= 2
+            )
+            or features.contains_known_world_morpheme
+            or features.matches_include_pattern
+            or (features.has_mixed_case and features.token_count == 1)
+        )
+    )
+
+
+def _compute_candidate_scores(
+    accum: _Accum,
+    features: CandidateFeatures,
+    genericity: float,
+    rarity: float,
+) -> tuple[float, float, float, float, float, float]:
+    morphology = 0.0
+    if features.has_hyphen:
+        morphology += 1.4
+    if features.contains_known_world_morpheme:
+        morphology += 1.2
+    if features.matches_include_pattern:
+        morphology += 1.0
+    if features.has_mixed_case:
+        morphology += 0.8
+    if features.has_title_case:
+        morphology += 0.6
+    name_score = 0.0
+    if accum.kind in {"proper_name", "place_name", "title_candidate"}:
+        name_score += 1.6
+    if features.has_title_case and not accum.already_protected:
+        name_score += 0.8
+    termhood = 0.4
+    if features.token_count > 1:
+        termhood += 0.6
+    if accum.kind in {"hyphenated_term", "invented_term", "title_candidate"}:
+        termhood += 0.5
+    if features.token_count == 1 and "spacy_noun_chunk" in accum.detectors:
+        termhood -= 0.5
+    dispersion = min(len(accum.chapters), 3) / 3.0
+    grammar_noise = (
+        1.0 if features.token_count == 1 and len(accum.normalized) <= 1 else 0.0
+    )
+    risk_score = (
+        4.0 * _detector_priority(accum, features)
+        + 2.5 * rarity
+        + 2.0 * morphology
+        + 2.0 * name_score
+        + 1.5 * termhood
+        + 1.0 * min(math.log(1 + accum.count), 2.0)
+        + 0.5 * dispersion
+        - 3.0 * genericity
+        - 2.0 * grammar_noise
+    )
+    return morphology, name_score, termhood, dispersion, grammar_noise, risk_score
+
+
+def _classify_review_bucket(
+    accum: _Accum,
+    features: CandidateFeatures,
+    runtime: _SourceAnalysisRuntimeConfig,
+    genericity: float,
+    is_fragment: bool,
+    high_risk_singleton: bool,
+    min_count: int,
+    risk_score: float,
+) -> tuple[str, str, str | None]:
+    review_bucket: SourceReviewBucket = "maybe"
+    suggested_action: Literal[
+        "none",
+        "ask_question",
+        "add_advisory_glossary",
+        "review_name_policy",
+        "review_for_binding_glossary",
+    ] = "none"
+    suppression_reason: str | None = None
+
+    if features.matches_exclude_pattern:
+        review_bucket = "no_action"
+        suppression_reason = "excluded_by_pattern"
+    elif is_fragment:
+        review_bucket = "no_action"
+        suppression_reason = "fragment"
+    elif (
+        features.token_count == 1
+        and features.in_common_lemma_list
+        and not (
+            features.contains_known_world_morpheme or features.matches_include_pattern
+        )
+    ):
+        review_bucket = "no_action"
+        suppression_reason = "generic_single_token"
+    elif accum.kind == "hyphenated_term":
+        review_bucket = "binding_glossary"
+        suggested_action = "review_for_binding_glossary"
+    elif accum.kind in {"proper_name", "place_name", "title_candidate"} and not (
+        features.token_count == 1 and features.in_common_lemma_list
+    ):
+        review_bucket = "name_policy"
+        suggested_action = "review_name_policy"
+    elif (
+        accum.kind == "phrase"
+        and "spacy_noun_chunk" in accum.detectors
+        and features.has_hyphen
+    ):
+        review_bucket = "no_action"
+        suppression_reason = "contextual_noun_chunk"
+    elif features.matches_include_pattern or high_risk_singleton:
+        review_bucket = "invented_or_rare"
+        suggested_action = "ask_question"
+    elif accum.kind == "phrase" and features.token_count > 1 and genericity < 1.0:
+        review_bucket = "domain_phrase"
+        suggested_action = "add_advisory_glossary"
+    elif (
+        accum.kind == "phrase"
+        and features.token_count <= 2
+        and any(token in runtime.generic_lemmas for token in accum.tokens)
+        and not (
+            features.contains_known_world_morpheme or features.matches_include_pattern
+        )
+    ):
+        review_bucket = "no_action"
+        suppression_reason = "generic_phrase"
+    elif accum.kind == "phrase" and features.token_count <= 3 and genericity >= 1.2:
+        review_bucket = "no_action"
+        suppression_reason = "generic_phrase"
+    elif genericity >= 1.0 and features.token_count == 1:
+        review_bucket = "no_action"
+        suppression_reason = "generic_single_token"
+
+    if (
+        review_bucket != "no_action"
+        and accum.count < min_count
+        and not high_risk_singleton
+    ):
+        review_bucket = "no_action"
+        suppression_reason = "below_min_count"
+    if (
+        review_bucket
+        not in {"no_action", "binding_glossary", "name_policy", "invented_or_rare"}
+        and risk_score < runtime.min_risk_score
+    ):
+        review_bucket = "no_action"
+        suppression_reason = suppression_reason or "below_risk_threshold"
+        suggested_action = "none"
+    if review_bucket == "no_action":
+        suggested_action = "none"
+
+    return review_bucket, suggested_action, suppression_reason
+
+
+def _classify_candidate(
+    accum: _Accum,
+    *,
+    common: frozenset[str],
+    include_common: bool,
+    min_count: int,
+    runtime: _SourceAnalysisRuntimeConfig,
+) -> _Classification:
+    features = _candidate_features(accum, common=common, runtime=runtime)
+    morphology_flags = _build_morphology_flags(accum, features)
+    genericity = _genericity_score(
+        accum, features=features, common=common, runtime=runtime
+    )
+    rarity = _rarity_score(accum)
+    (morphology, name_score, termhood, dispersion, grammar_noise, risk_score) = (
+        _compute_candidate_scores(accum, features, genericity, rarity)
+    )
+
+    is_fragment = features.token_count == 1 and len(accum.normalized) <= 1
+    high_risk_singleton = _compute_high_risk_singleton(
+        accum, features, runtime, genericity
+    )
+    if high_risk_singleton:
+        morphology_flags.append("singleton_override")
+
+    review_bucket, suggested_action, suppression_reason = _classify_review_bucket(
+        accum,
+        features,
+        runtime,
+        genericity,
+        is_fragment,
+        high_risk_singleton,
+        min_count,
+        risk_score,
+    )
+
+    include = review_bucket != "no_action" or include_common
+    if review_bucket == "no_action" and include_common:
+        morphology_flags.append("included_common")
+
+    canonical_surface = accum.text
+    source_variants = tuple(
+        surface for surface, _ in _all_surfaces(accum) if surface != canonical_surface
+    )
+    return _Classification(
+        review_bucket=review_bucket,
+        suggested_action=suggested_action,
+        risk_score=risk_score,
+        genericity_score=genericity,
+        rarity_score=rarity,
+        morphology_flags=tuple(dict.fromkeys(morphology_flags)),
+        suppression_reason=suppression_reason,
+        canonical_surface=canonical_surface,
+        source_variants=source_variants,
+        include=include,
+    )
+
+
+def _merge_hyphenated_variants(accum_by_id: dict[str, _Accum]) -> None:
+    hyphenated_by_phrase: dict[tuple[tuple[str, ...], CaseBucket], _Accum] = {}
+    hyphenated_by_normalized: dict[tuple[str, tuple[str, ...]], _Accum] = {}
+    for accum in accum_by_id.values():
+        if accum.kind == "hyphenated_term":
+            hyphenated_by_phrase[(tuple(accum.tokens), accum.bucket)] = accum
+            hyphenated_by_normalized[(accum.normalized, tuple(accum.tokens))] = accum
+    remove_ids: set[str] = set()
+    for identity, accum in accum_by_id.items():
+        if accum.kind == "hyphenated_term":
+            continue
+        normalized_target = hyphenated_by_normalized.get(
+            (accum.normalized, tuple(accum.tokens))
+        )
+        if normalized_target is not None:
+            remove_ids.add(identity)
+            continue
+        target = hyphenated_by_phrase.get((tuple(accum.tokens), accum.bucket))
+        if target is None:
+            continue
+        if accum.normalized != target.normalized.replace("-", " "):
+            continue
+        for surface, count in accum.surfaces.items():
+            if surface not in target.surfaces:
+                target.variant_surfaces[surface] = (
+                    target.variant_surfaces.get(surface, 0) + count
+                )
+        remove_ids.add(identity)
+    for identity in remove_ids:
+        accum_by_id.pop(identity, None)
 
 
 def _finalize_candidate(
     accum: _Accum,
     score: float,
     common: frozenset[str],
+    classification: _Classification,
 ) -> SourceCandidate:
     is_common = accum.normalized in common or all(tok in common for tok in accum.tokens)
     uncommon_score = _COMMON_PENALTY if is_common else 1.0
-    surface_forms = [
-        s for s, _ in sorted(accum.surfaces.items(), key=lambda kv: (-kv[1], kv[0]))
-    ]
+    surface_forms = [surface for surface, _ in _all_surfaces(accum)]
     detectors = sorted(
         accum.detectors
         | {accum.detector, *(["protected_name"] if accum.already_protected else [])}
     )
-    reason_codes = sorted(set(accum.reason_codes) | {accum.detector})
+    reason_codes = sorted(
+        set(accum.reason_codes)
+        | {accum.detector}
+        | {f"bucket_{classification.review_bucket}"}
+        | (
+            {f"suppressed_{classification.suppression_reason}"}
+            if classification.suppression_reason
+            else set()
+        )
+        | set(classification.morphology_flags)
+    )
     if accum.already_protected and "already_protected" not in reason_codes:
         reason_codes.append("already_protected")
     return SourceCandidate(
         id=accum.identity,
-        text=accum.text,
+        text=classification.canonical_surface,
         normalized=accum.normalized,
         surface_forms=surface_forms,
         lemma=accum.lemma,
@@ -1326,31 +1979,62 @@ def _finalize_candidate(
         first_record_id=accum.first_record_id,
         examples=accum.examples,
         reason_codes=reason_codes,
-        reason=_reason_text(accum),
+        reason=_reason_text(accum, classification),
         already_protected=accum.already_protected,
-        suggested_context_action=_suggested_action(accum.kind, accum.already_protected),  # type: ignore[arg-type]
+        suggested_context_action=classification.suggested_action,
+        review_bucket=classification.review_bucket,
+        risk_score=round(classification.risk_score, 6),
+        genericity_score=round(classification.genericity_score, 6),
+        rarity_score=round(classification.rarity_score, 6),
+        morphology_flags=list(classification.morphology_flags),
+        suppression_reason=classification.suppression_reason,
+        canonical_surface=classification.canonical_surface,
+        source_variants=list(classification.source_variants),
+        token_count=len(accum.tokens),
+        external_frequency=None,
     )
 
 
-def _reason_text(accum: _Accum) -> str:
+def _reason_text(accum: _Accum, classification: _Classification) -> str:
     parts: list[str] = []
-    if accum.kind == "proper_name":
-        parts.append("recurring title-case entity")
-    elif accum.kind == "hyphenated_term":
-        parts.append("repeated hyphenated term")
-    elif accum.kind == "title_candidate":
-        parts.append("repeated title-case span")
+    if classification.review_bucket == "binding_glossary":
+        parts.append("binding glossary review candidate")
+    elif classification.review_bucket == "name_policy":
+        parts.append("name or title policy review candidate")
+    elif classification.review_bucket == "invented_or_rare":
+        parts.append("rare or invented term review candidate")
+    elif classification.review_bucket == "domain_phrase":
+        parts.append("domain phrase worth later review")
+    elif (
+        classification.review_bucket == "no_action"
+        and classification.suppression_reason
+    ):
+        parts.append(
+            f"suppressed: {classification.suppression_reason.replace('_', ' ')}"
+        )
     elif accum.kind == "phrase":
         parts.append("repeated phrase")
     else:
         parts.append("frequent term")
+    if classification.morphology_flags:
+        parts.append(
+            ", ".join(
+                flag.replace("_", " ") for flag in classification.morphology_flags
+            )
+        )
     if accum.already_protected:
         parts.append("already protected at extraction time")
     return "; ".join(parts)
 
 
-def _sort_key(candidate: SourceCandidate) -> tuple[float, int, str, str]:
-    return (-candidate.score, -candidate.count, candidate.normalized, candidate.id)
+def _sort_key(candidate: SourceCandidate) -> tuple[int, float, int, str, str]:
+    return (
+        _BUCKET_ORDER.index(candidate.review_bucket),
+        -candidate.risk_score,
+        -candidate.count,
+        candidate.normalized,
+        candidate.id,
+    )
 
 
 # --- Preflight --------------------------------------------------------------
@@ -1469,6 +2153,7 @@ def build_source_analysis(
     prepared = prepare_records(chunks, chapter_by_record)
     raw_sources = [record.source for chunk in chunks for record in chunk.records]
     common = common_word_set(source_language)
+    runtime_config = _runtime_source_analysis_config(project, source_language)
 
     warnings: list[str] = []
     warnings.extend(runtime.warnings)
@@ -1476,6 +2161,14 @@ def build_source_analysis(
         warnings.append(
             f"no bundled common-word list for source language '{source_language}'; "
             "running with corpus-internal signals only"
+        )
+    if (
+        source_language.lower().split("-")[0] != "en"
+        and not runtime_config.generic_lemmas
+    ):
+        warnings.append(
+            f"no bundled generic-lemma list for source language '{source_language}'; "
+            "generic single-token suppression will rely on common words and morphology"
         )
 
     accum_by_id: dict[str, _Accum] = {}
@@ -1492,27 +2185,39 @@ def build_source_analysis(
             capabilities=capabilities,
             accum_by_id=accum_by_id,
         )
+    _merge_hyphenated_variants(accum_by_id)
 
-    # Apply min_count + scoring, then global --top after merging.
-    scored: list[tuple[_Accum, float]] = []
+    # Classify after evidence collection, then form bucketed review output.
+    suppressed_counts: dict[str, int] = {}
+    emitted_by_bucket: dict[SourceReviewBucket, list[SourceCandidate]] = {
+        bucket: [] for bucket in _BUCKET_ORDER
+    }
     for accum in accum_by_id.values():
-        if accum.count < min_count:
-            continue
         score = _score_accum(accum, common, include_common)
         if score is None:
             continue
-        scored.append((accum, score))
-    scored.sort(
-        key=lambda pair: (
-            -pair[1],
-            -pair[0].count,
-            pair[0].normalized,
-            pair[0].identity,
+        classification = _classify_candidate(
+            accum,
+            common=common,
+            include_common=include_common,
+            min_count=min_count,
+            runtime=runtime_config,
         )
-    )
-    scored = scored[:top]
-
-    candidates = [_finalize_candidate(accum, score, common) for accum, score in scored]
+        if not classification.include:
+            key = classification.suppression_reason or "suppressed"
+            suppressed_counts[key] = suppressed_counts.get(key, 0) + 1
+            continue
+        candidate = _finalize_candidate(accum, score, common, classification)
+        emitted_by_bucket[candidate.review_bucket].append(candidate)
+        if candidate.review_bucket == "no_action":
+            key = candidate.suppression_reason or "suppressed"
+            suppressed_counts[key] = suppressed_counts.get(key, 0) + 1
+    candidates: list[SourceCandidate] = []
+    for bucket in _BUCKET_ORDER:
+        bucket_candidates = emitted_by_bucket[bucket]
+        bucket_candidates.sort(key=_sort_key)
+        candidates.extend(bucket_candidates[: runtime_config.max_per_bucket])
+    candidates = candidates[:top]
     candidates.sort(key=_sort_key)
 
     style_metrics = _build_style_metrics(prepared, raw_sources, capability_warnings)
@@ -1544,6 +2249,7 @@ def build_source_analysis(
         candidates=candidates,
         style_metrics=style_metrics,
         warnings=warnings,
+        suppressed_counts=suppressed_counts,
     )
     report.analysis_sha256 = compute_analysis_sha256(report)
     return report
@@ -1682,6 +2388,50 @@ def _capabilities_label(cap: AnalysisCapabilities) -> str:
     return ", ".join(names) if names else "(none)"
 
 
+def _markdown_bucket_title(bucket: SourceReviewBucket) -> str:
+    return {
+        "binding_glossary": "## Review first: binding glossary decisions",
+        "name_policy": "## Review names and titles",
+        "invented_or_rare": "## Possible invented / rare terms",
+        "domain_phrase": "## Maybe review later",
+        "maybe": "## Maybe review later",
+        "style_signal": "## Style signals",
+        "no_action": "## Suppressed / no action candidates",
+    }[bucket]
+
+
+def _markdown_cell(text: str) -> str:
+    return text.replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _candidate_example(candidate: SourceCandidate) -> str:
+    if not candidate.examples:
+        return ""
+    return _markdown_cell(candidate.examples[0].snippet)
+
+
+def _candidate_command(candidate: SourceCandidate) -> str:
+    if candidate.review_bucket == "binding_glossary":
+        return (
+            f"`booktx context promote-candidate . {candidate.id} --profile PROFILE "
+            '--target "TARGET" --require-target --enforce error --write`'
+        )
+    if candidate.review_bucket in {"name_policy", "invented_or_rare"}:
+        return (
+            f"`booktx context promote-candidate . {candidate.id} "
+            "--profile PROFILE --as-question --write`"
+        )
+    if candidate.review_bucket == "no_action":
+        return (
+            f"`booktx source ignore-candidate . {candidate.id} "
+            '--reason "ordinary vocabulary" --write`'
+        )
+    return (
+        f"`booktx source review-candidate . {candidate.id} "
+        '--reason "checked; no glossary decision needed" --write`'
+    )
+
+
 def render_report_markdown(report: SourceAnalysisReport) -> str:
     """Render a deterministic Markdown view of the report (JSON authoritative)."""
     lines: list[str] = []
@@ -1708,25 +2458,50 @@ def render_report_markdown(report: SourceAnalysisReport) -> str:
             lines.append(f"- {warning}")
         lines.append("")
 
-    top_candidates = report.candidates[:20]
-    lines.append("## Highest priority candidates")
-    lines.append("")
-    if top_candidates:
+    by_bucket: dict[SourceReviewBucket, list[SourceCandidate]] = {
+        bucket: [] for bucket in _BUCKET_ORDER
+    }
+    for candidate in report.candidates:
+        by_bucket[candidate.review_bucket].append(candidate)
+    rendered_any = False
+    for bucket in _BUCKET_ORDER:
+        if bucket == "no_action":
+            continue
+        bucket_candidates = by_bucket[bucket]
+        if not bucket_candidates:
+            continue
+        rendered_any = True
+        lines.append(_markdown_bucket_title(bucket))
+        lines.append("")
         lines.append(
-            "| ID | Candidate | Kind | Count | Records | Chapters | Suggested action | Reason |"
+            "| ID | Candidate | Type | Count | Chapters | Why | Example | Suggested command |"
         )
-        lines.append("|---|---|---|---:|---:|---:|---|---|")
-        for cand in top_candidates:
-            reason = cand.reason or cand.kind
+        lines.append("|---|---|---|---:|---:|---|---|---|")
+        for cand in bucket_candidates:
             lines.append(
-                f"| {cand.id} | {cand.text} | {cand.kind} | {cand.count} | "
-                f"{cand.record_frequency} | {cand.chapter_frequency} | "
-                f"{cand.suggested_context_action} | {reason} |"
+                f"| {cand.id} | {_markdown_cell(cand.text)} | {cand.kind} | "
+                f"{cand.count} | {cand.chapter_frequency} | {_markdown_cell(cand.reason or cand.kind)} | "
+                f"{_candidate_example(cand)} | {_candidate_command(cand)} |"
             )
         lines.append("")
-    else:
-        lines.append("_No candidates above the current thresholds._")
+    if not rendered_any:
+        lines.append("_No review candidates above the current thresholds._")
         lines.append("")
+
+    lines.append("## Suppressed/no-action summary")
+    lines.append("")
+    if report.suppressed_counts:
+        for reason, count in sorted(
+            report.suppressed_counts.items(), key=lambda item: (-item[1], item[0])
+        ):
+            lines.append(f"- {count} suppressed as `{reason}`")
+    else:
+        lines.append("- no suppressed candidates recorded")
+    if by_bucket["no_action"]:
+        lines.append(
+            f"- {len(by_bucket['no_action'])} no-action candidate(s) kept in JSON because `--include-common` was enabled"
+        )
+    lines.append("")
 
     metrics = report.style_metrics
     lines.append("## Style observations")
@@ -1753,22 +2528,5 @@ def render_report_markdown(report: SourceAnalysisReport) -> str:
         for warning in metrics.capability_warnings:
             lines.append(f"- capability: {warning}")
     lines.append("")
-
-    if report.candidates:
-        lines.append("## Full candidates")
-        lines.append("")
-        lines.append(
-            "| ID | Candidate | Kind | Count | Records | Chapters | Score | Uncommon | Protected | Detectors |"
-        )
-        lines.append("|---|---|---|---:|---:|---:|---:|---:|:---:|---|")
-        for cand in report.candidates:
-            detectors = ", ".join(cand.detectors)
-            lines.append(
-                f"| {cand.id} | {cand.text} | {cand.kind} | {cand.count} | "
-                f"{cand.record_frequency} | {cand.chapter_frequency} | {cand.score:.4f} | "
-                f"{cand.uncommon_score:.2f} | {'yes' if cand.already_protected else 'no'} | "
-                f"{detectors} |"
-            )
-        lines.append("")
 
     return "\n".join(lines)
